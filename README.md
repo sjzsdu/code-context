@@ -192,6 +192,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/search` | `q`, `kind?`, `limit?` | Search symbols by name |
 | GET | `/api/symbols` | `file` | List symbols in a file |
 | GET | `/api/definitions` | `name` | Find symbol definitions |
+| GET | `/api/references` | `name` | Find references to a symbol |
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
