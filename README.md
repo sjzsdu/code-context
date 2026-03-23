@@ -208,6 +208,86 @@ Response format:
 }
 ```
 
+## MCP Server
+
+Expose code-context as a Model Context Protocol server for AI agents like Claude Desktop, Cursor, etc.
+
+### Installation
+
+Download from [Releases](https://github.com/sjzsdu/code-context/releases) or build from source:
+
+```bash
+go build -o code-context-mcp ./cmd/mcp
+```
+
+### Configuration
+
+Add to your AI client config:
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "code-context": {
+      "command": "/path/to/code-context-mcp",
+      "args": ["--root", "/path/to/your/project"]
+    }
+  }
+}
+```
+
+**Cursor** (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "code-context": {
+      "command": "/path/to/code-context-mcp",
+      "args": ["--root", "/path/to/your/project"]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `index` | Index the codebase for search | - |
+| `search` | Search symbols by name | `query` |
+| `find_def` | Find where a symbol is defined | `name` |
+| `find_refs` | Find all references to a symbol | `name` |
+| `files` | List indexed files | `language?` |
+| `imports` | Show imports of a file | `file` |
+| `importers` | Find files importing a source | `source` |
+| `stats` | Show index statistics | - |
+| `map` | Show project architecture overview | - |
+| `explain` | Show file summary with symbols | `file` |
+| `context` | Show symbol profile | `symbol` |
+| `snapshot` | Generate LLM context for a query | `query`, `limit?` |
+| `diff_impact` | Analyze change impact for a file | `file`, `depth?` |
+| `trace` | Trace call chain between symbols | `from`, `to` |
+
+### Usage Example
+
+```bash
+# First, index your project
+code-context index
+
+# Or via MCP tool
+code-context:index
+
+# Then search
+code-context:search "Server"
+
+# Get project overview
+code-context:map
+
+# Generate context for a feature
+code-context:snapshot "authentication"
+```
+
 ## Architecture
 
 ```

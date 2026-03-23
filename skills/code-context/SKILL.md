@@ -200,6 +200,50 @@ code-context serve                      # default port 9090
 code-context serve --port 8080
 ```
 
+## MCP Server
+
+Use MCP server to expose code-context capabilities to AI agents (Claude Desktop, Cursor, etc.).
+
+### Build
+
+```bash
+go build -o code-context-mcp ./cmd/mcp
+```
+
+### Configuration
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "code-context": {
+      "command": "/path/to/code-context-mcp",
+      "args": ["--root", "/path/to/your/project"]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `index` | Index the codebase | - |
+| `search` | Search symbols by name | `query` |
+| `find_def` | Find symbol definition | `name` |
+| `find_refs` | Find symbol references | `name` |
+| `files` | List indexed files | `language?` |
+| `imports` | Show file imports | `file` |
+| `importers` | Find importing files | `source` |
+| `stats` | Index statistics | - |
+| `map` | Project architecture | - |
+| `explain` | File summary | `file` |
+| `context` | Symbol profile | `symbol` |
+| `snapshot` | Generate LLM context | `query`, `limit?` |
+| `diff_impact` | Change impact analysis | `file`, `depth?` |
+| `trace` | Call chain tracing | `from`, `to` |
+
 ## Tips
 
 - Run `code-context index` first before any search commands
