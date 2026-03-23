@@ -3,7 +3,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/sjzsdu/code-memory/internal/api"
+	"github.com/sjzsdu/code-context/internal/api"
 )
 
 func TestDetectLanguage_SupportedExtensions(t *testing.T) {

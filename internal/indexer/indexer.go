@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/parser"
-	"github.com/sjzsdu/code-memory/internal/store"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/parser"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 type Indexer struct {

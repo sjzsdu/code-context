@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/graph"
-	"github.com/sjzsdu/code-memory/internal/indexer"
-	"github.com/sjzsdu/code-memory/internal/lang"
-	"github.com/sjzsdu/code-memory/internal/parser"
-	"github.com/sjzsdu/code-memory/internal/search"
-	"github.com/sjzsdu/code-memory/internal/store"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/graph"
+	"github.com/sjzsdu/code-context/internal/indexer"
+	"github.com/sjzsdu/code-context/internal/lang"
+	"github.com/sjzsdu/code-context/internal/parser"
+	"github.com/sjzsdu/code-context/internal/search"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 type Engine struct {
@@ -37,7 +37,7 @@ func New(root string, dbPath string) (*Engine, error) {
 	root, _ = filepath.Abs(root)
 
 	if dbPath == "" {
-		dbPath = filepath.Join(root, ".github.com/sjzsdu/code-memory", "index.db")
+		dbPath = filepath.Join(root, ".github.com/sjzsdu/code-context", "index.db")
 		os.MkdirAll(filepath.Dir(dbPath), 0o755)
 	}
 

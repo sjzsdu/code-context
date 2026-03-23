@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/store"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 func setupSearchStore(t *testing.T) (store.Store, string, []string, func()) {

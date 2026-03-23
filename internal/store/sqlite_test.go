@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sjzsdu/code-memory/internal/api"
+	"github.com/sjzsdu/code-context/internal/api"
 )
 
 // newTestStore creates a temporary SQLite DB, initializes the store

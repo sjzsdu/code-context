@@ -1,4 +1,4 @@
-module github.com/sjzsdu/code-memory
+module github.com/sjzsdu/code-context
 
 go 1.25.0
 

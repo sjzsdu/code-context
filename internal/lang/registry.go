@@ -5,7 +5,7 @@ import (
 
 	sitter "github.com/smacker/go-tree-sitter"
 
-	"github.com/sjzsdu/code-memory/internal/api"
+	"github.com/sjzsdu/code-context/internal/api"
 )
 
 // SymbolQuery defines a tree-sitter query for extracting one kind of symbol.

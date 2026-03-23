@@ -7,8 +7,8 @@ import (
 
 	sitter "github.com/smacker/go-tree-sitter"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/lang"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/lang"
 )
 
 type ParseResult struct {

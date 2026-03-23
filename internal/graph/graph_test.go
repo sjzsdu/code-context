@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/store"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 func setupGraphStore(t *testing.T) (store.Store, func()) {
@@ -143,7 +143,7 @@ func TestDependents(t *testing.T) {
 		t.Fatalf("Build() error: %v", err)
 	}
 	got := g.Dependents("fmt", 10)
-	want := []string{"a.go", "b.go"}
+	want := []string{"a.go", "b.go", "c.go"}
 	if len(got) != len(want) {
 		t.Fatalf("Dependents(fmt) = %v, want %v", got, want)
 	}

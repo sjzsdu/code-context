@@ -1,14 +1,15 @@
-# code-memory
+# code-context
 
-A code memory system that reads entire codebases, indexes them structurally using tree-sitter, and provides efficient retrieval — symbol search, definition lookup, reference finding, and import graph traversal. Pure Go, single binary.
+A code context system that reads entire codebases, indexes them structurally using tree-sitter, and provides efficient retrieval for AI agents and LLMs. Pure Go, single binary.
 
 ## Features
 
 - **Structural parsing** — tree-sitter AST, not regex
 - **FTS5 symbol search** — fast full-text search on symbol names
-- **Definition & reference lookup** — find where symbols are defined and used
+- **Definition lookup** — find where symbols are defined
 - **Import graph** — dependency analysis with BFS traversal and related-file scoring
-- **Text search** — line-level grep across indexed files
+- **Context generation** — generate code context for LLM consumption
+- **Trace & impact analysis** — understand code flow and change impact
 - **HTTP API** — 9 endpoints for programmatic access
 - **Incremental indexing** — only reindex changed files (content-hash based)
 - **Pure Go SQLite** — `modernc.org/sqlite`, no external DB
@@ -28,34 +29,43 @@ A code memory system that reads entire codebases, indexes them structurally usin
 ## Installation
 
 ```bash
-go install github.com/sjzsdu/code-memory/cmd/code-memory@latest
+go install github.com/sjzsdu/code-context/cmd/code-context@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/sjzsdu/code-memory.git
-cd code-memory
-go build -o code-memory ./cmd/code-memory
+git clone https://github.com/sjzsdu/code-context.git
+cd code-context
+go build -o code-context ./cmd/code-context
 ```
 
 ## Quick Start
 
 ```bash
 # Index your project
-code-memory index
+code-context index
+
+# Get project overview
+code-context map
 
 # Search for symbols
-code-memory search "Server"
+code-context search "Server"
 
 # Find where a function is defined
-code-memory find-def "NewRouter"
+code-context find-def "NewRouter"
+
+# Generate LLM context
+code-context snapshot "authentication"
+
+# Analyze change impact
+code-context diff-impact internal/store/sqlite.go
 
 # Show index stats
-code-memory stats
+code-context stats
 
 # Start HTTP server
-code-memory serve --port 9090
+code-context serve --port 9090
 ```
 
 ## CLI Commands
@@ -63,53 +73,97 @@ code-memory serve --port 9090
 ### `index` — Index the codebase
 
 ```bash
-code-memory index                       # full index
-code-memory index --incremental         # only changed files
-code-memory index --incremental -v      # with per-file progress
+code-context index                       # full index
+code-context index --incremental         # only changed files
+code-context index -v                    # verbose progress
 ```
+
+### `map` — Project architecture overview
+
+```bash
+code-context map
+```
+
+Shows directory structure with file/symbol counts.
 
 ### `search <query>` — Search symbols by name
 
 ```bash
-code-memory search "Handler"
-code-memory search "parse" --kind function --limit 20
+code-context search "Handler"
+code-context search "parse" --kind function --limit 20
 ```
 
 ### `find-def <name>` — Find definition of a symbol
 
 ```bash
-code-memory find-def "NewServer"
+code-context find-def "NewServer"
 ```
 
-### `find-ref <name>` — Find references to a symbol
+### `explain <file>` — File summary
 
 ```bash
-code-memory find-ref "Config"
+code-context explain internal/engine/engine.go
 ```
+
+Shows symbols, imports, and importers for a file.
+
+### `context <symbol>` — Symbol profile
+
+```bash
+code-context context Engine
+```
+
+Shows definition, methods, and related symbols.
+
+### `snapshot <query>` — Generate LLM context
+
+```bash
+code-context snapshot "authentication"
+code-context snapshot "parser" --limit 5
+```
+
+Generates a context package for LLM consumption.
+
+### `trace <from> <to>` — Call chain tracing
+
+```bash
+code-context trace "main" "Engine"
+```
+
+Traces the path between two symbols through imports.
+
+### `diff-impact <file>` — Change impact analysis
+
+```bash
+code-context diff-impact internal/store/sqlite.go
+code-context diff-impact internal/store/sqlite.go --depth 2
+```
+
+Shows dependencies and recommended test files.
 
 ### `files` — List indexed files
 
 ```bash
-code-memory files
-code-memory files --lang go
+code-context files
+code-context files --lang go
 ```
 
 ### `imports <file>` — Show imports of a file
 
 ```bash
-code-memory imports internal/server/server.go
+code-context imports internal/server/server.go
 ```
 
 ### `importers <source>` — Show files that import a given source
 
 ```bash
-code-memory importers "fmt"
+code-context importers "fmt"
 ```
 
 ### `stats` — Show index statistics
 
 ```bash
-code-memory stats
+code-context stats
 # Files:   42
 # Symbols: 318
 # Imports: 156
@@ -118,8 +172,8 @@ code-memory stats
 ### `serve` — Start HTTP server
 
 ```bash
-code-memory serve              # default port 9090
-code-memory serve --port 8080
+code-context serve              # default port 9090
+code-context serve --port 8080
 ```
 
 ### Global Flags
@@ -127,18 +181,17 @@ code-memory serve --port 8080
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--root` | `-r` | `.` | Codebase root directory |
-| `--db` | | `<root>/.code-memory/index.db` | Database path |
+| `--db` | | `<root>/.code-context/index.db` | Database path |
 
 ## HTTP API
 
-Start the server with `code-memory serve`, then:
+Start the server with `code-context serve`, then:
 
 | Method | Endpoint | Parameters | Description |
 |---|---|---|---|
 | GET | `/api/search` | `q`, `kind?`, `limit?` | Search symbols by name |
 | GET | `/api/symbols` | `file` | List symbols in a file |
 | GET | `/api/definitions` | `name` | Find symbol definitions |
-| GET | `/api/references` | `name` | Find symbol references |
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
@@ -157,33 +210,51 @@ Response format:
 ## Architecture
 
 ```
-cmd/code-memory/       CLI entry point (cobra)
+cmd/code-context/      CLI entry point (cobra)
 internal/
 ├── api/               Core types: Symbol, FileInfo, ImportEdge, IndexStats
 ├── parser/            Tree-sitter parsing + language detection
 ├── lang/              Language definitions (queries per language)
 ├── store/             SQLite storage with FTS5 full-text index
 ├── indexer/           Parallel file walking + parsing + sequential writes
-├── search/            Symbol search, text grep, definition/reference lookup
+├── search/            Symbol search, text grep, definition lookup
 ├── graph/             Import dependency graph with BFS + related scoring
 ├── engine/            Orchestration: wires all subsystems together
 └── server/            HTTP API (net/http)
 ```
 
-## How It Works
+## Use Cases
 
-1. **Walk** — recursively scan project, skip `node_modules`/`vendor`/dot-dirs
-2. **Detect** — map file extension to language
-3. **Parse** — tree-sitter AST queries extract symbols (functions, types, classes) and imports
-4. **Store** — upsert into SQLite with FTS5 triggers for symbol name indexing
-5. **Serve** — CLI commands or HTTP API query the store and import graph
+### For AI Agents / LLMs
 
-Indexing is parallelized: files are parsed concurrently (up to 16 workers), results are written sequentially to SQLite.
+```bash
+# Generate context for a feature
+code-context snapshot "user authentication"
+
+# Understand project structure
+code-context map
+
+# Find implementation details
+code-context context "AuthService"
+```
+
+### For Developers
+
+```bash
+# What files might break if I change this?
+code-context diff-impact internal/store/sqlite.go
+
+# How does this code flow work?
+code-context trace "handleRequest" "database.Query"
+
+# What's in this file?
+code-context explain internal/api/types.go
+```
 
 ## Storage
 
 - **Engine**: `modernc.org/sqlite` (pure Go, no CGo for SQLite itself)
-- **Default path**: `<project-root>/.code-memory/index.db`
+- **Default path**: `<project-root>/.code-context/index.db`
 - **FTS5**: full-text index on symbol names and signatures
 - **Cascade deletes**: removing a file automatically removes its symbols and imports
 - **Content hashing**: SHA-256 for incremental change detection

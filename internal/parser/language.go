@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sjzsdu/code-memory/internal/api"
+	"github.com/sjzsdu/code-context/internal/api"
 )
 
 // extMap maps file extensions to supported languages.

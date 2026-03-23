@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/sjzsdu/code-memory/internal/api"
+	"github.com/sjzsdu/code-context/internal/api"
 )
 
 type Store interface {

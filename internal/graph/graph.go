@@ -4,7 +4,7 @@ import (
 	"context"
 	"sort"
 
-	"github.com/sjzsdu/code-memory/internal/store"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 type Graph struct {
@@ -70,15 +70,20 @@ func (g *Graph) Dependents(file string, depth int) []string {
 	for d := 0; d < depth && len(queue) > 0; d++ {
 		var next []string
 		for _, f := range queue {
-			imports := g.forward[f]
-			for _, imp := range imports {
-				importers := g.reverse[imp]
-				for _, impFile := range importers {
-					if !visited[impFile] {
-						visited[impFile] = true
-						result = append(result, impFile)
-						next = append(next, impFile)
-					}
+			var importers []string
+			if _, ok := g.forward[f]; ok {
+				imports := g.forward[f]
+				for _, imp := range imports {
+					importers = append(importers, g.reverse[imp]...)
+				}
+			} else {
+				importers = g.reverse[f]
+			}
+			for _, impFile := range importers {
+				if !visited[impFile] {
+					visited[impFile] = true
+					result = append(result, impFile)
+					next = append(next, impFile)
 				}
 			}
 		}

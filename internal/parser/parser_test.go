@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/lang"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/lang"
 )
 
 func newTestParser() Parser {

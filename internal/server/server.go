@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/sjzsdu/code-memory/internal/api"
-	"github.com/sjzsdu/code-memory/internal/engine"
+	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/engine"
 )
 
 type Server struct {
@@ -22,7 +22,7 @@ func New(eng *engine.Engine, port int) *Server {
 
 func (s *Server) Run() error {
 	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("github.com/sjzsdu/code-memory server listening on %s\n", addr)
+	log.Printf("github.com/sjzsdu/code-context server listening on %s\n", addr)
 	return http.ListenAndServe(addr, s.Handler())
 }
 
