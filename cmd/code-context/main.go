@@ -25,7 +25,7 @@ func main() {
 	}
 
 	cmd.PersistentFlags().StringVarP(&root, "root", "r", ".", "codebase root directory")
-	cmd.PersistentFlags().StringVar(&dbPath, "db", "", "database path (default: <root>/.github.com/sjzsdu/code-context/index.db)")
+	cmd.PersistentFlags().StringVar(&dbPath, "db", "", "database path (default: <root>/.code-context/index.db)")
 
 	cmd.AddCommand(
 		newIndexCmd(),
