@@ -57,11 +57,35 @@ func (g *Graph) Dependencies(file string, depth int) []string {
 	return dedup(g.bfs(g.forward, file, depth))
 }
 
-func (g *Graph) Dependents(source string, depth int) []string {
+func (g *Graph) Dependents(file string, depth int) []string {
 	if depth <= 0 {
 		depth = 10
 	}
-	return dedup(g.bfs(g.reverse, source, depth))
+
+	visited := make(map[string]bool)
+	visited[file] = true
+	queue := []string{file}
+	var result []string
+
+	for d := 0; d < depth && len(queue) > 0; d++ {
+		var next []string
+		for _, f := range queue {
+			imports := g.forward[f]
+			for _, imp := range imports {
+				importers := g.reverse[imp]
+				for _, impFile := range importers {
+					if !visited[impFile] {
+						visited[impFile] = true
+						result = append(result, impFile)
+						next = append(next, impFile)
+					}
+				}
+			}
+		}
+		queue = next
+	}
+
+	return dedup(result)
 }
 
 func (g *Graph) Related(file string, topN int) []string {
@@ -145,4 +169,46 @@ func dedup(items []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func (g *Graph) TraceFiles(from, to string, maxDepth int) []string {
+	if from == to {
+		return []string{from}
+	}
+
+	type pathNode struct {
+		file string
+		path []string
+	}
+
+	queue := []pathNode{{file: from, path: []string{from}}}
+	visited := make(map[string]bool)
+	visited[from] = true
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if len(current.path) >= maxDepth {
+			continue
+		}
+
+		imports := g.forward[current.file]
+		for _, imp := range imports {
+			importers := g.reverse[imp]
+			for _, impFile := range importers {
+				if impFile == to {
+					return append(current.path, impFile)
+				}
+				if !visited[impFile] {
+					visited[impFile] = true
+					newPath := make([]string, len(current.path))
+					copy(newPath, current.path)
+					queue = append(queue, pathNode{file: impFile, path: append(newPath, impFile)})
+				}
+			}
+		}
+	}
+
+	return nil
 }
