@@ -29,7 +29,36 @@ func (sr *Searcher) FindDefinition(ctx context.Context, name string) ([]api.Symb
 }
 
 func (sr *Searcher) FindReferences(ctx context.Context, name string) ([]api.Symbol, error) {
-	return sr.store.SearchSymbols(ctx, name, nil, 500)
+	// First find where the symbol is defined
+	defs, err := sr.store.FindDefinitions(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(defs) == 0 {
+		return nil, nil
+	}
+
+	// Get the definition to know its kind and file
+	def := defs[0]
+
+	// Find all symbols with the same name across ALL files
+	// This finds usages (not just definitions)
+	refs, err := sr.store.FindReferences(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out the definition itself
+	var result []api.Symbol
+	for _, r := range refs {
+		// Exclude the definition file's same-name symbol
+		if r.FilePath == def.FilePath && r.Line == def.Line {
+			continue
+		}
+		result = append(result, r)
+	}
+
+	return result, nil
 }
 
 func (sr *Searcher) GetFileSymbols(ctx context.Context, path string) ([]api.Symbol, error) {

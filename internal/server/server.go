@@ -21,6 +21,15 @@ func New(eng *engine.Engine, port int) *Server {
 }
 
 func (s *Server) Run() error {
+	addr := fmt.Sprintf(":%d", s.port)
+	log.Printf("github.com/sjzsdu/code-memory server listening on %s\n", addr)
+	return http.ListenAndServe(addr, s.Handler())
+}
+
+// Handler returns the HTTP handler for testing and running the server without
+// binding to a network port. This allows tests to exercise the API without
+// starting a real server.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/symbols", s.handleFileSymbols)
@@ -31,10 +40,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/api/importers", s.handleImporters)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/index", s.handleIndex)
-
-	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("github.com/sjzsdu/code-memory server listening on %s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	return mux
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

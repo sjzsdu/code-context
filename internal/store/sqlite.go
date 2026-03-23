@@ -184,6 +184,19 @@ func (s *sqliteStore) FindDefinitions(ctx context.Context, name string) ([]api.S
 	return scanSymbols(rows)
 }
 
+func (s *sqliteStore) FindReferences(ctx context.Context, name string) ([]api.Symbol, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT s.name, s.kind, f.path, s.line, s.end_line, s.signature, s.parent
+		 FROM symbols s JOIN files f ON f.id = s.file_id
+		 WHERE s.name = ?
+		 ORDER BY s.kind`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSymbols(rows)
+}
+
 func (s *sqliteStore) GetFileSymbols(ctx context.Context, path string) ([]api.Symbol, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT s.name, s.kind, f.path, s.line, s.end_line, s.signature, s.parent

@@ -16,6 +16,7 @@ type Store interface {
 	ReplaceImports(ctx context.Context, fileID int64, imports []api.ImportEdge) error
 	SearchSymbols(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error)
 	FindDefinitions(ctx context.Context, name string) ([]api.Symbol, error)
+	FindReferences(ctx context.Context, name string) ([]api.Symbol, error)
 	GetFileSymbols(ctx context.Context, path string) ([]api.Symbol, error)
 	GetImports(ctx context.Context, filePath string) ([]api.ImportEdge, error)
 	GetImporters(ctx context.Context, importSource string) ([]api.ImportEdge, error)

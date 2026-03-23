@@ -47,6 +47,10 @@ func New(root string, dbPath string) (*Engine, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
+	if err := s.Init(context.Background()); err != nil {
+		return nil, fmt.Errorf("init store: %w", err)
+	}
+
 	idx := indexer.New(p, s, root)
 	sr := search.New(s, root)
 	g := graph.New(s)
