@@ -64,39 +64,58 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 	go idx.parseAll(ctx, files, results)
 
 	var indexed, skipped, failed, syms, imps int64
+	sem := make(chan struct{}, idx.workers)
+	var wg sync.WaitGroup
+
 	for pr := range results {
 		if pr.err != nil {
-			failed++
+			atomic.AddInt64(&failed, 1)
 			if verbose {
 				fmt.Fprintf(os.Stderr, "  skip %s: %v\n", pr.path, pr.err)
 			}
 			continue
 		}
 		if pr.result == nil {
-			skipped++
+			atomic.AddInt64(&skipped, 1)
 			continue
 		}
 
 		hash := sha256Hex(pr.content)
 		existing, _ := idx.store.GetFile(ctx, pr.path)
 		if existing != nil && existing.ContentHash == hash {
+			atomic.AddInt64(&skipped, 1)
 			continue
 		}
 
-		fileID, err := idx.store.UpsertFile(ctx, &api.FileInfo{
-			Path: pr.path, Language: pr.lang, ContentHash: hash, Size: int64(len(pr.content)),
-		})
-		if err != nil {
-			failed++
-			continue
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(pr parseResult) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		idx.store.ReplaceSymbols(ctx, fileID, pr.result.Symbols)
-		idx.store.ReplaceImports(ctx, fileID, pr.result.Imports)
-		syms += int64(len(pr.result.Symbols))
-		imps += int64(len(pr.result.Imports))
-		indexed++
+			fileID, err := idx.store.UpsertFile(ctx, &api.FileInfo{
+				Path: pr.path, Language: pr.lang, ContentHash: hash, Size: int64(len(pr.content)),
+			})
+			if err != nil {
+				atomic.AddInt64(&failed, 1)
+				return
+			}
+
+			if err := idx.store.ReplaceSymbols(ctx, fileID, pr.result.Symbols); err != nil {
+				atomic.AddInt64(&failed, 1)
+				return
+			}
+			if err := idx.store.ReplaceImports(ctx, fileID, pr.result.Imports); err != nil {
+				atomic.AddInt64(&failed, 1)
+				return
+			}
+
+			atomic.AddInt64(&syms, int64(len(pr.result.Symbols)))
+			atomic.AddInt64(&imps, int64(len(pr.result.Imports)))
+			atomic.AddInt64(&indexed, 1)
+		}(pr)
 	}
+	wg.Wait()
 
 	// Remove deleted files from store
 	existingFiles, _ := idx.store.ListFiles(ctx, nil)
@@ -107,7 +126,7 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 	for _, f := range existingFiles {
 		if !fileSet[f.Path] {
 			idx.store.DeleteFile(ctx, f.Path)
-			skipped++
+			atomic.AddInt64(&skipped, 1)
 		}
 	}
 
