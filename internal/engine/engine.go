@@ -37,7 +37,7 @@ func New(root string, dbPath string) (*Engine, error) {
 	root, _ = filepath.Abs(root)
 
 	if dbPath == "" {
-		dbPath = filepath.Join(root, ".github.com/sjzsdu/code-context", "index.db")
+		dbPath = filepath.Join(root, ".code-context", "index.db")
 		os.MkdirAll(filepath.Dir(dbPath), 0o755)
 	}
 
