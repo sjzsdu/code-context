@@ -219,7 +219,7 @@ go build -o code-context-mcp ./cmd/mcp
   "mcpServers": {
     "code-context": {
       "command": "/path/to/code-context-mcp",
-      "args": ["--root", "/path/to/your/project"]
+      "args": ["--root", "."]
     }
   }
 }

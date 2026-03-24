@@ -231,7 +231,7 @@ Add to your AI client config:
   "mcpServers": {
     "code-context": {
       "command": "/path/to/code-context-mcp",
-      "args": ["--root", "/path/to/your/project"]
+      "args": ["--root", "."]
     }
   }
 }
@@ -244,7 +244,7 @@ Add to your AI client config:
   "mcpServers": {
     "code-context": {
       "command": "/path/to/code-context-mcp",
-      "args": ["--root", "/path/to/your/project"]
+      "args": ["--root", "."]
     }
   }
 }
