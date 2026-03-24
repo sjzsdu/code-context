@@ -42,6 +42,16 @@ func main() {
 	// Register all tools
 	registerTools(srv, eng)
 
+	// Auto-index on startup
+	log.Println("Indexing codebase...")
+	stats, err := eng.Index(context.Background(), false)
+	if err != nil {
+		log.Printf("Warning: auto-index failed: %v", err)
+	} else {
+		log.Printf("Auto-index completed: %d files, %d symbols, %d imports (%.1fs)",
+			stats.IndexedFiles, stats.TotalSymbols, stats.TotalImports, stats.Duration)
+	}
+
 	// Run with stdio transport (for Claude Desktop, Cursor, etc.)
 	if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("Server error: %v", err)
