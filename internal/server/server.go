@@ -32,12 +32,23 @@ func (s *Server) Run() error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/search", s.handleSearch)
+	mux.HandleFunc("/api/semantic-search", s.handleSemanticSearch)
 	mux.HandleFunc("/api/symbols", s.handleFileSymbols)
 	mux.HandleFunc("/api/definitions", s.handleDefinitions)
 	mux.HandleFunc("/api/references", s.handleReferences)
 	mux.HandleFunc("/api/text", s.handleTextSearch)
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
+	mux.HandleFunc("/api/map", s.handleMap)
+	mux.HandleFunc("/api/explain", s.handleExplain)
+	mux.HandleFunc("/api/context", s.handleContext)
+	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
+	mux.HandleFunc("/api/git/files", s.handleGitFiles)
+	mux.HandleFunc("/api/git/diff", s.handleGitDiff)
+	mux.HandleFunc("/api/snapshot-git", s.handleSnapshotGit)
+	mux.HandleFunc("/api/trace", s.handleTrace)
+	mux.HandleFunc("/api/diff-impact", s.handleDiffImpact)
+	mux.HandleFunc("/api/diff-impact-git", s.handleDiffImpactGit)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/index", s.handleIndex)
 	return mux
@@ -55,6 +66,14 @@ func writeError(w http.ResponseWriter, err error, code int) {
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	s.handleSearchWithMode(w, r, r.URL.Query().Get("hybrid") == "true")
+}
+
+func (s *Server) handleSemanticSearch(w http.ResponseWriter, r *http.Request) {
+	s.handleSearchWithMode(w, r, true)
+}
+
+func (s *Server) handleSearchWithMode(w http.ResponseWriter, r *http.Request, hybrid bool) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		writeError(w, fmt.Errorf("missing 'q' parameter"), 400)
@@ -71,7 +90,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	results, err := s.eng.SearchSymbols(r.Context(), q, kind, limit)
+	var (
+		results []api.Symbol
+		err     error
+	)
+	if hybrid {
+		results, err = s.eng.SearchSymbolsHybrid(r.Context(), q, kind, limit)
+	} else {
+		results, err = s.eng.SearchSymbols(r.Context(), q, kind, limit)
+	}
 	if err != nil {
 		writeError(w, err, 500)
 		return
@@ -175,6 +202,166 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, stats)
+}
+
+func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
+	result, err := s.eng.Map(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleExplain(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	if file == "" {
+		writeError(w, fmt.Errorf("missing 'file' parameter"), 400)
+		return
+	}
+
+	result, err := s.eng.Explain(r.Context(), file)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, fmt.Errorf("missing 'name' parameter"), 400)
+		return
+	}
+
+	result, err := s.eng.Context(r.Context(), name)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		writeError(w, fmt.Errorf("missing 'q' parameter"), 400)
+		return
+	}
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	result, err := s.eng.Snapshot(r.Context(), q, limit)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
+	from := r.URL.Query().Get("from")
+	if from == "" {
+		writeError(w, fmt.Errorf("missing 'from' parameter"), 400)
+		return
+	}
+
+	to := r.URL.Query().Get("to")
+	if to == "" {
+		writeError(w, fmt.Errorf("missing 'to' parameter"), 400)
+		return
+	}
+
+	result, err := s.eng.Trace(r.Context(), from, to)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGitFiles(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+
+	results, err := s.eng.GitChangedFiles(r.Context(), state)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+
+	contextLines, _ := strconv.Atoi(r.URL.Query().Get("context"))
+	if contextLines < 0 {
+		contextLines = 0
+	}
+
+	results, err := s.eng.GitDiff(r.Context(), state, contextLines)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleSnapshotGit(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	result, err := s.eng.SnapshotGit(r.Context(), state, limit)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleDiffImpact(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	if file == "" {
+		writeError(w, fmt.Errorf("missing 'file' parameter"), 400)
+		return
+	}
+
+	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
+	result, err := s.eng.DiffImpact(r.Context(), file, depth)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleDiffImpactGit(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+
+	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
+	results, err := s.eng.DiffImpactGit(r.Context(), state, depth)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

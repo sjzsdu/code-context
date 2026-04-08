@@ -1,0 +1,8 @@
+root: .
+db: .code-context/index.db
+server:
+  port: 9090
+watch:
+  enabled: false
+  interval: 2s
+  debounce: 250ms

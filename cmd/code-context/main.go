@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/config"
 	"github.com/sjzsdu/code-context/internal/engine"
 	"github.com/sjzsdu/code-context/internal/search"
 	"github.com/sjzsdu/code-context/internal/server"
@@ -18,10 +20,22 @@ var (
 	dbPath string
 )
 
+type runtimeConfig struct {
+	serverPort int
+}
+
 func main() {
 	cmd := &cobra.Command{
 		Use:   "github.com/sjzsdu/code-context",
 		Short: "A code memory system for intelligent codebase indexing and search",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadRuntimeConfig(root)
+			if err != nil {
+				return err
+			}
+			applyPersistentDefaults(cmd, cfg)
+			return nil
+		},
 	}
 
 	cmd.PersistentFlags().StringVarP(&root, "root", "r", ".", "codebase root directory")
@@ -31,6 +45,8 @@ func main() {
 		newIndexCmd(),
 		newSearchCmd(),
 		newFindDefCmd(),
+		newGitFilesCmd(),
+		newGitDiffCmd(),
 		newFilesCmd(),
 		newImportsCmd(),
 		newImportersCmd(),
@@ -39,13 +55,77 @@ func main() {
 		newExplainCmd(),
 		newContextCmd(),
 		newSnapshotCmd(),
+		newSnapshotGitCmd(),
 		newTraceCmd(),
 		newDiffImpactCmd(),
+		newDiffImpactGitCmd(),
 		newServeCmd(),
 	)
 
+	attachServeConfig(cmd)
+
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+func loadRuntimeConfig(startDir string) (*runtimeConfig, error) {
+	loaded, err := config.Load(startDir)
+	if err != nil {
+		if err == config.ErrNotFound {
+			return &runtimeConfig{}, nil
+		}
+		return nil, err
+	}
+
+	return &runtimeConfig{
+		serverPort: loaded.Config.Server.Port,
+	}, nil
+}
+
+func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
+	if !cmd.Flags().Changed("root") {
+		if loaded, err := config.Load(root); err == nil && loaded.Config.Root != "" {
+			root = loaded.Config.Root
+		}
+	}
+	if !cmd.Flags().Changed("db") {
+		if loaded, err := config.Load(root); err == nil && loaded.Config.DB != "" {
+			dbPath = loaded.Config.DB
+		}
+	}
+	_ = cfg
+}
+
+func attachServeConfig(rootCmd *cobra.Command) {
+	serveCmd, _, err := rootCmd.Find([]string{"serve"})
+	if err != nil || serveCmd == nil {
+		return
+	}
+	prev := serveCmd.PreRunE
+	serveCmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(cmd, args); err != nil {
+				return err
+			}
+		}
+		if cmd.Flags().Changed("port") {
+			return nil
+		}
+		loaded, err := config.Load(root)
+		if err != nil {
+			if err == config.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+		if loaded.Config.Server.Port > 0 {
+			flag := cmd.Flags().Lookup("port")
+			if flag != nil {
+				_ = flag.Value.Set(fmt.Sprintf("%d", loaded.Config.Server.Port))
+			}
+		}
+		return nil
 	}
 }
 
@@ -86,6 +166,7 @@ func newIndexCmd() *cobra.Command {
 func newSearchCmd() *cobra.Command {
 	var kind string
 	var limit int
+	var hybrid bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search symbols by name",
@@ -102,7 +183,12 @@ func newSearchCmd() *cobra.Command {
 				v := api.SymbolKind(kind)
 				k = &v
 			}
-			results, err := eng.SearchSymbols(context.Background(), args[0], k, limit)
+			var results []api.Symbol
+			if hybrid {
+				results, err = eng.SearchSymbolsHybrid(context.Background(), args[0], k, limit)
+			} else {
+				results, err = eng.SearchSymbols(context.Background(), args[0], k, limit)
+			}
 			if err != nil {
 				return err
 			}
@@ -113,6 +199,7 @@ func newSearchCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by kind (function,method,class,type,interface)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max results")
+	cmd.Flags().BoolVar(&hybrid, "hybrid", false, "use hybrid retrieval (FTS5 + semantic ranking)")
 	return cmd
 }
 
@@ -137,6 +224,97 @@ func newFindDefCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newGitFilesCmd() *cobra.Command {
+	var state string
+	cmd := &cobra.Command{
+		Use:   "git-files",
+		Short: "List files changed in local git state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+
+			files, err := eng.GitChangedFiles(context.Background(), gitState)
+			if err != nil {
+				return err
+			}
+
+			for _, f := range files {
+				fmt.Printf("  %s\n", f)
+			}
+			fmt.Printf("\n%d changed files (%s)\n", len(files), gitState)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
+	return cmd
+}
+
+func newGitDiffCmd() *cobra.Command {
+	var state string
+	var contextLines int
+	cmd := &cobra.Command{
+		Use:   "git-diff",
+		Short: "Show git diff hunks with line-level changes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+
+			diffs, err := eng.GitDiff(context.Background(), gitState, contextLines)
+			if err != nil {
+				return err
+			}
+
+			for _, d := range diffs {
+				fmt.Printf("File: %s\n", d.Path)
+				for _, h := range d.Hunks {
+					fmt.Printf("  @@ -%d,%d +%d,%d @@\n", h.OldStart, h.OldLines, h.NewStart, h.NewLines)
+					if h.Content != "" {
+						for _, line := range strings.Split(h.Content, "\n") {
+							fmt.Printf("    %s\n", line)
+						}
+					}
+				}
+				if len(d.Snippets) > 0 {
+					fmt.Printf("  snippets (%d):\n", len(d.Snippets))
+					for i, snippet := range d.Snippets {
+						fmt.Printf("    [%d]\n", i+1)
+						for _, line := range strings.Split(snippet, "\n") {
+							fmt.Printf("      %s\n", line)
+						}
+					}
+				}
+				fmt.Println()
+			}
+
+			totalHunks := 0
+			for _, d := range diffs {
+				totalHunks += len(d.Hunks)
+			}
+			fmt.Printf("%d changed files, %d hunks (%s, context=%d)\n", len(diffs), totalHunks, gitState, contextLines)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
+	cmd.Flags().IntVar(&contextLines, "context", 3, "context lines around changed lines")
+	return cmd
 }
 
 func newFilesCmd() *cobra.Command {
@@ -331,10 +509,7 @@ func newContextCmd() *cobra.Command {
 			}
 			if len(c.Related) > 0 {
 				fmt.Printf("\nRelated (%d):\n", len(c.Related))
-				n := 10
-				if len(c.Related) < 10 {
-					n = len(c.Related)
-				}
+				n := min(len(c.Related), 10)
 				fmt.Println(search.FormatSymbols(c.Related[:n]))
 			}
 			return nil
@@ -369,10 +544,7 @@ func newSnapshotCmd() *cobra.Command {
 				fmt.Printf("--- %s ---\n", f.Path)
 				fmt.Printf("Language: %s\n", f.Language)
 				fmt.Printf("Symbols (%d):\n", len(f.Symbols))
-				symLimit := 5
-				if len(f.Symbols) < 5 {
-					symLimit = len(f.Symbols)
-				}
+				symLimit := min(len(f.Symbols), 5)
 				for _, sym := range f.Symbols[:symLimit] {
 					fmt.Printf("  %s (%s)\n", sym.Name, sym.Kind)
 				}
@@ -383,6 +555,53 @@ func newSnapshotCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&limit, "limit", 5, "max files")
+	return cmd
+}
+
+func newSnapshotGitCmd() *cobra.Command {
+	var limit int
+	var state string
+	cmd := &cobra.Command{
+		Use:   "snapshot-git",
+		Short: "Generate context snapshot from git changed files",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+
+			s, err := eng.SnapshotGit(context.Background(), gitState, limit)
+			if err != nil {
+				return err
+			}
+
+			fmt.Println("=== Code Snapshot (Git) ===")
+			fmt.Printf("Query: %s\n", s.Query)
+			fmt.Printf("Summary: %s\n\n", s.Summary)
+
+			for _, f := range s.Files {
+				fmt.Printf("--- %s ---\n", f.Path)
+				fmt.Printf("Language: %s\n", f.Language)
+				fmt.Printf("Symbols (%d):\n", len(f.Symbols))
+				symLimit := min(len(f.Symbols), 5)
+				for _, sym := range f.Symbols[:symLimit] {
+					fmt.Printf("  %s (%s)\n", sym.Name, sym.Kind)
+				}
+				if len(f.Symbols) > 5 {
+					fmt.Printf("  ... and %d more\n", len(f.Symbols)-5)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
 	cmd.Flags().IntVar(&limit, "limit", 5, "max files")
 	return cmd
 }
@@ -466,11 +685,62 @@ func newDiffImpactCmd() *cobra.Command {
 	return cmd
 }
 
-func printMap(m *engine.ModuleMap, indent int) {
-	prefix := ""
-	for i := 0; i < indent; i++ {
-		prefix += "  "
+func newDiffImpactGitCmd() *cobra.Command {
+	var depth int
+	var state string
+	cmd := &cobra.Command{
+		Use:   "diff-impact-git",
+		Short: "Analyze impact for files changed in local git state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+
+			impacts, err := eng.DiffImpactGit(context.Background(), gitState, depth)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Analyzed %d changed files (%s)\n\n", len(impacts), gitState)
+			for _, d := range impacts {
+				fmt.Printf("File: %s\n", d.File)
+				fmt.Printf("Direct imports (%d):\n", len(d.DirectDeps))
+				for _, dep := range d.DirectDeps {
+					fmt.Printf("  %s\n", dep)
+				}
+				fmt.Printf("All dependencies (%d):\n", len(d.AllDeps))
+				for _, dep := range d.AllDeps {
+					fmt.Printf("  %s\n", dep)
+				}
+				fmt.Printf("Dependents - files that import this (%d):\n", len(d.Dependents))
+				for _, dep := range d.Dependents {
+					fmt.Printf("  %s\n", dep)
+				}
+				if len(d.Recommends) > 0 {
+					fmt.Printf("Recommended test files to run:\n")
+					for _, r := range d.Recommends {
+						fmt.Printf("  %s\n", r)
+					}
+				}
+				fmt.Println()
+			}
+			return nil
+		},
 	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
+	cmd.Flags().IntVar(&depth, "depth", 3, "dependency depth")
+	return cmd
+}
+
+func printMap(m *engine.ModuleMap, indent int) {
+	prefix := strings.Repeat("  ", indent)
 	if m.Path == "" {
 		fmt.Printf("%s[root]\n", prefix)
 	} else {

@@ -79,6 +79,10 @@ func (e *Engine) SearchSymbols(ctx context.Context, query string, kind *api.Symb
 	return e.search.SearchSymbols(ctx, query, kind, limit)
 }
 
+func (e *Engine) SearchSymbolsHybrid(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error) {
+	return e.search.SearchSymbolsHybrid(ctx, query, kind, limit)
+}
+
 func (e *Engine) FindDef(ctx context.Context, name string) ([]api.Symbol, error) {
 	return e.search.FindDefinition(ctx, name)
 }

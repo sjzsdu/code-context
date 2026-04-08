@@ -81,8 +81,8 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 		}
 
 		hash := sha256Hex(pr.content)
-		existing, _ := idx.store.GetFile(ctx, pr.path)
-		if existing != nil && existing.ContentHash == hash {
+		existing, err := idx.store.GetFile(ctx, pr.path)
+		if err == nil && existing != nil && existing.ContentHash == hash {
 			atomic.AddInt64(&skipped, 1)
 			continue
 		}
@@ -286,8 +286,8 @@ func (idx *Indexer) indexOneFile(ctx context.Context, path string) (nSyms, nImps
 	}
 
 	hash := sha256Hex(content)
-	existing, _ := idx.store.GetFile(ctx, path)
-	if existing != nil && existing.ContentHash == hash {
+	existing, err := idx.store.GetFile(ctx, path)
+	if err == nil && existing != nil && existing.ContentHash == hash {
 		return 0, 0, false, nil
 	}
 

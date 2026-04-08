@@ -9,6 +9,7 @@ import (
 	"log"
 
 	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/config"
 	"github.com/sjzsdu/code-context/internal/engine"
 	"github.com/sjzsdu/code-context/internal/search"
 
@@ -24,6 +25,7 @@ func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
 	flag.Parse()
+	applyConfigDefaults()
 
 	// Initialize the engine
 	eng, err := engine.New(root, db)
@@ -55,6 +57,25 @@ func main() {
 	// Run with stdio transport (for Claude Desktop, Cursor, etc.)
 	if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("Server error: %v", err)
+	}
+}
+
+func applyConfigDefaults() {
+	loaded, err := config.Load(root)
+	if err != nil {
+		return
+	}
+
+	visited := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+
+	if !visited["root"] && loaded.Config.Root != "" {
+		root = loaded.Config.Root
+	}
+	if !visited["db"] && loaded.Config.DB != "" {
+		db = loaded.Config.DB
 	}
 }
 
@@ -154,6 +175,9 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 	type FilesArgs struct {
 		Language string `json:"language,omitempty"`
 	}
+	type GitStateArgs struct {
+		State string `json:"state,omitempty"`
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "files",
 		Description: "List indexed files, optionally filtered by language (go,typescript,python,rust,java)",
@@ -172,6 +196,28 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 			output += fmt.Sprintf("  %-6s  %s\n", f.Language, f.Path)
 		}
 		output += fmt.Sprintf("\n%d files\n", len(files))
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: output}},
+		}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "git_files",
+		Description: "List files changed in local git state (unstaged, staged, all)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GitStateArgs) (*mcp.CallToolResult, any, error) {
+		gitState, err := engine.ParseGitState(args.State)
+		if err != nil {
+			return nil, nil, err
+		}
+		files, err := eng.GitChangedFiles(ctx, gitState)
+		if err != nil {
+			return nil, nil, fmt.Errorf("git_files failed: %w", err)
+		}
+		output := ""
+		for _, f := range files {
+			output += fmt.Sprintf("  %s\n", f)
+		}
+		output += fmt.Sprintf("\n%d changed files (%s)\n", len(files), gitState)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: output}},
 		}, nil, nil
@@ -330,6 +376,10 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		Query string `json:"query"`
 		Limit int    `json:"limit,omitempty"`
 	}
+	type SnapshotGitArgs struct {
+		State string `json:"state,omitempty"`
+		Limit int    `json:"limit,omitempty"`
+	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "snapshot",
 		Description: "Generate LLM context package for a query",
@@ -365,9 +415,49 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		}, nil, nil
 	})
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "snapshot_git",
+		Description: "Generate context snapshot from git changed files",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args SnapshotGitArgs) (*mcp.CallToolResult, any, error) {
+		gitState, err := engine.ParseGitState(args.State)
+		if err != nil {
+			return nil, nil, err
+		}
+		limit := 5
+		if args.Limit > 0 {
+			limit = args.Limit
+		}
+		s, err := eng.SnapshotGit(ctx, gitState, limit)
+		if err != nil {
+			return nil, nil, fmt.Errorf("snapshot_git failed: %w", err)
+		}
+		output := fmt.Sprintf("Query: %s\nSummary: %s\n\n", s.Query, s.Summary)
+		for _, f := range s.Files {
+			output += fmt.Sprintf("--- %s ---\n", f.Path)
+			output += fmt.Sprintf("Language: %s\n", f.Language)
+			symLimit := 5
+			if len(f.Symbols) < 5 {
+				symLimit = len(f.Symbols)
+			}
+			for _, sym := range f.Symbols[:symLimit] {
+				output += fmt.Sprintf("  %s (%s)\n", sym.Name, sym.Kind)
+			}
+			if len(f.Symbols) > 5 {
+				output += fmt.Sprintf("  ... and %d more\n", len(f.Symbols)-5)
+			}
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: output}},
+		}, nil, nil
+	})
+
 	// Diff impact tool
 	type DiffImpactArgs struct {
 		File  string `json:"file"`
+		Depth int    `json:"depth,omitempty"`
+	}
+	type DiffImpactGitArgs struct {
+		State string `json:"state,omitempty"`
 		Depth int    `json:"depth,omitempty"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
@@ -402,6 +492,51 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 			for _, r := range d.Recommends {
 				output += fmt.Sprintf("  %s\n", r)
 			}
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: output}},
+		}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "diff_impact_git",
+		Description: "Analyze impact for files changed in local git state",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args DiffImpactGitArgs) (*mcp.CallToolResult, any, error) {
+		gitState, err := engine.ParseGitState(args.State)
+		if err != nil {
+			return nil, nil, err
+		}
+		depth := 3
+		if args.Depth > 0 {
+			depth = args.Depth
+		}
+		impacts, err := eng.DiffImpactGit(ctx, gitState, depth)
+		if err != nil {
+			return nil, nil, fmt.Errorf("diff_impact_git failed: %w", err)
+		}
+
+		output := fmt.Sprintf("Analyzed %d changed files (%s)\n\n", len(impacts), gitState)
+		for _, d := range impacts {
+			output += fmt.Sprintf("File: %s\n", d.File)
+			output += fmt.Sprintf("Direct imports (%d):\n", len(d.DirectDeps))
+			for _, dep := range d.DirectDeps {
+				output += fmt.Sprintf("  %s\n", dep)
+			}
+			output += fmt.Sprintf("All dependencies (%d):\n", len(d.AllDeps))
+			for _, dep := range d.AllDeps {
+				output += fmt.Sprintf("  %s\n", dep)
+			}
+			output += fmt.Sprintf("Dependents - files that import this (%d):\n", len(d.Dependents))
+			for _, dep := range d.Dependents {
+				output += fmt.Sprintf("  %s\n", dep)
+			}
+			if len(d.Recommends) > 0 {
+				output += "Recommended test files to run:\n"
+				for _, r := range d.Recommends {
+					output += fmt.Sprintf("  %s\n", r)
+				}
+			}
+			output += "\n"
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: output}},

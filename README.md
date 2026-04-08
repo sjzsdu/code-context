@@ -10,7 +10,7 @@ A code context system that reads entire codebases, indexes them structurally usi
 - **Import graph** — dependency analysis with BFS traversal and related-file scoring
 - **Context generation** — generate code context for LLM consumption
 - **Trace & impact analysis** — understand code flow and change impact
-- **HTTP API** — 9 endpoints for programmatic access
+- **HTTP API** — 15 endpoints with CLI parity for programmatic access
 - **Incremental indexing** — only reindex changed files (content-hash based)
 - **Pure Go SQLite** — `modernc.org/sqlite`, no external DB
 - **Single binary** — no runtime dependencies
@@ -66,6 +66,27 @@ code-context stats
 
 # Start HTTP server
 code-context serve --port 9090
+```
+
+## Configuration
+
+`code-context` supports a project config file at `.code-context.yaml`.
+
+Supported options:
+
+| Key | Type | Description |
+|---|---|---|
+| `root` | string | Codebase root directory |
+| `db` | string | SQLite database path |
+| `server.port` | int | HTTP server port |
+
+Example (`.code-context.yaml`):
+
+```yaml
+root: .
+db: .code-context/index.db
+server:
+  port: 9090
 ```
 
 ## CLI Commands
@@ -176,6 +197,28 @@ code-context serve              # default port 9090
 code-context serve --port 8080
 ```
 
+## Git-aware Commands
+
+### `git-files` — List files tracked by git
+
+```bash
+code-context git-files
+```
+
+### `snapshot-git <query>` — Generate LLM context from git-tracked files
+
+```bash
+code-context snapshot-git "authentication"
+code-context snapshot-git "parser" --limit 5
+```
+
+### `diff-impact-git <file>` — Analyze impact using git-aware scope
+
+```bash
+code-context diff-impact-git internal/store/sqlite.go
+code-context diff-impact-git internal/store/sqlite.go --depth 2
+```
+
 ### Global Flags
 
 | Flag | Short | Default | Description |
@@ -196,6 +239,12 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
+| GET | `/api/map` | — | Project architecture overview |
+| GET | `/api/explain` | `file` | File summary with symbols and imports |
+| GET | `/api/context` | `symbol` | Symbol profile with related context |
+| GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package |
+| GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
+| GET | `/api/diff-impact` | `file`, `depth?` | Analyze change impact and related tests |
 | GET | `/api/stats` | — | Index statistics |
 | POST | `/api/index` | `incremental?` | Trigger re-indexing |
 
