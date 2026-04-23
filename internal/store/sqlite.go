@@ -24,10 +24,15 @@ func NewSQLiteStore(dbPath string) (Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	return &sqliteStore{db: db}, nil
 }
 
 func (s *sqliteStore) Init(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, schemaSQL)
 	return err
 }

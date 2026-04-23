@@ -1,5 +1,7 @@
 # code-context 产品需求文档
 
+> 最后更新：2026-04-23（基于代码逆向分析）
+
 ## 1. 项目概述
 
 ### 1.1 项目背景
@@ -74,6 +76,14 @@ code-context 是一个纯 Go 语言实现的代码上下文系统，旨在为 AI
 | `trace` | 追踪调用链 |
 | `diff-impact` | 分析变更影响 |
 | `serve` | 启动 HTTP 服务器 |
+| `git-files` | 列出 git 变更文件 |
+| `git-diff` | 显示 git diff hunks |
+| `snapshot-git` | 生成 git 变更文件上下文 |
+| `diff-impact-git` | 分析 git 变更文件影响 |
+| `graph` | 导出依赖图为 JSON |
+| `graph path` | 查找文件级路径 |
+| `graph neighbors` | 图邻居上下文 |
+| `graph subgraph` | 局部子图导出 |
 
 ### 2.3 HTTP API
 
@@ -125,6 +135,114 @@ type Symbol struct {
     Parent    string     // 父级类/结构体
 }
 ```
+
+支持 types：function、method、class、type、interface、variable、constant、module、import、package
+
+#### FileInfo（文件信息）
+
+```go
+type FileInfo struct {
+    Path        string   // 文件路径
+    Language    Language // 语言类型
+    ContentHash string   // 内容哈希
+    Size        int64    // 文件大小
+}
+```
+
+#### ImportEdge（导入边）
+
+```go
+type ImportEdge struct {
+    FromFile string // 源文件
+    ToSource string // 导入的源
+    Line     int    // 导入语句所在行
+}
+```
+
+#### IndexStats（索引统计）
+
+```go
+type IndexStats struct {
+    TotalFiles   int     // 总文件数
+    IndexedFiles int     // 已索引文件数
+    SkippedFiles int     // 跳过的文件数
+    FailedFiles  int     // 失败的文件数
+    TotalSymbols int     // 总符号数
+    TotalImports int     // 总导入数
+    Duration     float64 // 耗时（秒）
+}
+```
+
+### 3.2 图数据类型
+
+#### GraphNode（图节点）
+
+```go
+type GraphNode struct {
+    ID       string   // 节点ID
+    Type     string   // 节点类型
+    Label    string   // 显示标签
+    FilePath string   // 文件路径（file 类型）
+    Name     string   // 符号名称（symbol 类型）
+    Kind     string   // 符号类型（symbol 类型）
+    Language Language // 语言类型
+    Line     int      // 行号
+}
+```
+
+#### GraphEdge（图边）
+
+```go
+type GraphEdge struct {
+    Source     string // 源节点
+    Target     string // 目标节点
+    Type       string // 边类型（imports/defines）
+    Evidence   string // 证据
+    Confidence string // 置信度
+    Line       int    // 行号
+}
+```
+
+#### GraphNeighborsResult（图邻居结果）
+
+```go
+type GraphNeighborsResult struct {
+    Target       string   // 查询目标
+    ResolvedFile string   // 解析后的文件
+    Resolution   string   // 解析说明
+    Symbols      []string // 符号列表
+    Imports      []string // 导入列表
+    RelatedFiles []string // 相关文件
+    Summary      string   // 摘要
+}
+```
+
+#### GraphSubgraphResult（子图结果）
+
+```go
+type GraphSubgraphResult struct {
+    Target       string       // 查询目标
+    ResolvedFile string       // 解析后的文件
+    Resolution   string       // 解析说明
+    Depth        int          // 查询深度
+    Graph        *GraphExport // 导出的子图
+    Files        []string     // 包含的文件
+    Summary      string       // 摘要
+}
+```
+
+#### GraphPathResult（路径结果）
+
+```go
+type GraphPathResult struct {
+    From       string   // 起始点
+    To         string   // 目标点
+    FromFile   string   // 起始文件
+    ToFile    string   // 目标文件
+    Files     []string // 路径上的文件
+    PathFound bool     // 是否找到路径
+    Summary  string   // 摘要
+}
 
 支持的符号类型：function、method、class、type、interface、variable、constant、module、import、package
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -52,6 +53,7 @@ func main() {
 		newImportersCmd(),
 		newStatsCmd(),
 		newMapCmd(),
+		newGraphCmd(),
 		newExplainCmd(),
 		newContextCmd(),
 		newSnapshotCmd(),
@@ -438,9 +440,150 @@ func newMapCmd() *cobra.Command {
 				return err
 			}
 			printMap(m, 0)
+			if m.Analysis != nil {
+				printGraphAnalysis(m.Analysis)
+			}
 			return nil
 		},
 	}
+	return cmd
+}
+
+func newGraphCmd() *cobra.Command {
+	var focus string
+	cmd := &cobra.Command{
+		Use:   "graph",
+		Short: "Export repository graph as JSON",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			g, err := eng.ExportGraph(context.Background(), focus)
+			if err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(g)
+		},
+	}
+	cmd.Flags().StringVar(&focus, "focus", "", "limit graph export to a file path or symbol name")
+	cmd.AddCommand(newGraphPathCmd(), newGraphNeighborsCmd(), newGraphSubgraphCmd())
+	return cmd
+}
+
+func newGraphPathCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "path <from> <to>",
+		Short: "Find a file-level path through the graph",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			result, err := eng.GraphPath(context.Background(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Graph path: %s -> %s\n", result.From, result.To)
+			fmt.Printf("Resolved: %s -> %s\n", result.FromFile, result.ToFile)
+			if result.Resolution != "" {
+				fmt.Printf("Details: %s\n", result.Resolution)
+			}
+			fmt.Printf("Summary: %s\n", result.Summary)
+			if len(result.Files) > 0 {
+				fmt.Printf("\nFiles (%d):\n", len(result.Files))
+				for i, file := range result.Files {
+					fmt.Printf("  %d. %s\n", i+1, file)
+				}
+			}
+			return nil
+		},
+	}
+	return cmd
+}
+
+func newGraphNeighborsCmd() *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "neighbors <target>",
+		Short: "Show adjacent graph context for a file or symbol",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			result, err := eng.GraphNeighbors(context.Background(), args[0], limit)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Graph neighbors: %s\n", result.Target)
+			fmt.Printf("Resolved file: %s\n", result.ResolvedFile)
+			if result.Resolution != "" {
+				fmt.Printf("Details: %s\n", result.Resolution)
+			}
+			fmt.Printf("Summary: %s\n", result.Summary)
+			if len(result.Symbols) > 0 {
+				fmt.Printf("\nSymbols (%d):\n", len(result.Symbols))
+				for _, sym := range result.Symbols {
+					fmt.Printf("  - %s\n", sym)
+				}
+			}
+			if len(result.Imports) > 0 {
+				fmt.Printf("\nImports (%d):\n", len(result.Imports))
+				for _, imp := range result.Imports {
+					fmt.Printf("  - %s\n", imp)
+				}
+			}
+			if len(result.RelatedFiles) > 0 {
+				fmt.Printf("\nRelated files (%d):\n", len(result.RelatedFiles))
+				for _, file := range result.RelatedFiles {
+					fmt.Printf("  - %s\n", file)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 5, "max symbols, imports, and related files to show")
+	return cmd
+}
+
+func newGraphSubgraphCmd() *cobra.Command {
+	var depth int
+	cmd := &cobra.Command{
+		Use:   "subgraph <target>",
+		Short: "Export a local graph around a file or symbol",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			result, err := eng.GraphSubgraph(context.Background(), args[0], depth)
+			if err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result)
+		},
+	}
+	cmd.Flags().IntVar(&depth, "depth", 1, "graph neighborhood depth to include")
 	return cmd
 }
 
@@ -512,6 +655,18 @@ func newContextCmd() *cobra.Command {
 				n := min(len(c.Related), 10)
 				fmt.Println(search.FormatSymbols(c.Related[:n]))
 			}
+			if c.GraphSummary != "" {
+				fmt.Printf("\nGraph: %s\n", c.GraphSummary)
+			}
+			if len(c.RelatedFiles) > 0 {
+				fmt.Printf("Related files: %s\n", strings.Join(c.RelatedFiles, ", "))
+			}
+			if len(c.RecommendedFiles) > 0 {
+				fmt.Printf("Recommended next files: %s\n", strings.Join(c.RecommendedFiles, ", "))
+			}
+			if c.Analysis != nil {
+				printGraphAnalysis(c.Analysis)
+			}
 			return nil
 		},
 	}
@@ -538,11 +693,21 @@ func newSnapshotCmd() *cobra.Command {
 
 			fmt.Println("=== Code Snapshot ===")
 			fmt.Printf("Query: %s\n", s.Query)
-			fmt.Printf("Summary: %s\n\n", s.Summary)
+			fmt.Printf("Summary: %s\n", s.Summary)
+			if len(s.RecommendedFiles) > 0 {
+				fmt.Printf("Recommended next files: %s\n", strings.Join(s.RecommendedFiles, ", "))
+			}
+			fmt.Println()
 
 			for _, f := range s.Files {
 				fmt.Printf("--- %s ---\n", f.Path)
 				fmt.Printf("Language: %s\n", f.Language)
+				if f.GraphSummary != "" {
+					fmt.Printf("Graph: %s\n", f.GraphSummary)
+				}
+				if len(f.RecommendedFiles) > 0 {
+					fmt.Printf("Recommended: %s\n", strings.Join(f.RecommendedFiles, ", "))
+				}
 				fmt.Printf("Symbols (%d):\n", len(f.Symbols))
 				symLimit := min(len(f.Symbols), 5)
 				for _, sym := range f.Symbols[:symLimit] {
@@ -551,6 +716,10 @@ func newSnapshotCmd() *cobra.Command {
 				if len(f.Symbols) > 5 {
 					fmt.Printf("  ... and %d more\n", len(f.Symbols)-5)
 				}
+			}
+			if s.Analysis != nil {
+				fmt.Println()
+				printGraphAnalysis(s.Analysis)
 			}
 			return nil
 		},
@@ -752,6 +921,28 @@ func printMap(m *engine.ModuleMap, indent int) {
 	}
 	for _, c := range m.Children {
 		printMap(&c, indent+1)
+	}
+}
+
+func printGraphAnalysis(analysis *api.GraphAnalysis) {
+	if analysis == nil {
+		return
+	}
+	fmt.Println("\nGraph analysis:")
+	if len(analysis.TopImports) > 0 {
+		fmt.Println("  Top imports:")
+		for _, item := range analysis.TopImports {
+			fmt.Printf("    - %s (%d)\n", item.Name, item.Count)
+		}
+	}
+	if len(analysis.MostConnectedFiles) > 0 {
+		fmt.Println("  Most connected files:")
+		for _, item := range analysis.MostConnectedFiles {
+			fmt.Printf("    - %s (%d)\n", item.Name, item.Count)
+		}
+	}
+	if len(analysis.RecommendedFiles) > 0 {
+		fmt.Printf("  Recommended files: %s\n", strings.Join(analysis.RecommendedFiles, ", "))
 	}
 }
 

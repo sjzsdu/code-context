@@ -37,12 +37,29 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	}
 
 	file1 := filepath.Join(tmpDir, "a.go")
-	file1Content := "package a\nimport \"fmt\"\nfunc Foo() { fmt.Println(\"foo\") }"
+	file1Content := strings.Join([]string{
+		"package a",
+		"",
+		"import \"fmt\"",
+		"",
+		"func Foo() {",
+		"\tfmt.Println(\"foo\")",
+		"}",
+	}, "\n")
 	if err := os.WriteFile(file1, []byte(file1Content), 0o644); err != nil {
 		t.Fatalf("failed to write go file: %v", err)
 	}
 	file2 := filepath.Join(tmpDir, "b.go")
-	file2Content := "package a\nfunc Bar() int { return 42 }"
+	file2Content := strings.Join([]string{
+		"package a",
+		"",
+		"import \"fmt\"",
+		"",
+		"func Bar() int {",
+		"\tfmt.Println(\"bar\")",
+		"\treturn 42",
+		"}",
+	}, "\n")
 	if err := os.WriteFile(file2, []byte(file2Content), 0o644); err != nil {
 		t.Fatalf("failed to write go file: %v", err)
 	}
@@ -298,6 +315,207 @@ func TestMapEndpoint(t *testing.T) {
 	if _, ok := payload["path"]; !ok {
 		t.Fatalf("expected 'path' in response, got: %v", payload)
 	}
+	if _, ok := payload["analysis"]; !ok {
+		t.Fatalf("expected 'analysis' in map response, got: %v", payload)
+	}
+}
+
+func TestGraphEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload api.GraphExport
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Version == "" {
+		t.Fatalf("expected graph version in response")
+	}
+	if len(payload.Nodes) == 0 {
+		t.Fatalf("expected graph nodes in response")
+	}
+	if len(payload.Edges) == 0 {
+		t.Fatalf("expected graph edges in response")
+	}
+	if payload.Analysis == nil {
+		t.Fatalf("expected graph analysis in response")
+	}
+	if len(payload.Analysis.TopImports) == 0 {
+		t.Fatalf("expected top imports analysis in response")
+	}
+}
+
+func TestGraphEndpointWithFocus(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph?focus=a.go")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var payload map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		t.Fatalf("expected 200, got %d payload=%v", resp.StatusCode, payload)
+	}
+
+	var payload api.GraphExport
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Focus != "a.go" {
+		t.Fatalf("expected focus to be preserved, got %q", payload.Focus)
+	}
+	for _, node := range payload.Nodes {
+		if node.Type == "file" && node.FilePath != "a.go" {
+			t.Fatalf("expected focused graph to include only a.go file nodes, got %q", node.FilePath)
+		}
+	}
+}
+
+func TestGraphPathEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/path?from=a.go&to=b.go")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var payload map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		t.Fatalf("expected 200, got %d payload=%v", resp.StatusCode, payload)
+	}
+
+	var payload api.GraphPathResult
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.FromFile != "a.go" || payload.ToFile != "b.go" {
+		t.Fatalf("unexpected graph path endpoints: %+v", payload)
+	}
+	if !payload.PathFound {
+		t.Fatalf("expected path to be found, got %+v", payload)
+	}
+	if len(payload.Files) != 2 || payload.Files[0] != "a.go" || payload.Files[1] != "b.go" {
+		t.Fatalf("unexpected graph path files: %+v", payload.Files)
+	}
+}
+
+func TestGraphPathEndpointMissingParam(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/path?from=Foo")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestGraphNeighborsEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/neighbors?target=Foo&limit=2")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var payload map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		t.Fatalf("expected 200, got %d payload=%v", resp.StatusCode, payload)
+	}
+
+	var payload api.GraphNeighborsResult
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.ResolvedFile != "a.go" {
+		t.Fatalf("expected resolved file a.go, got %+v", payload)
+	}
+	if len(payload.Symbols) == 0 {
+		t.Fatalf("expected symbol neighbors, got %+v", payload)
+	}
+	if len(payload.Imports) == 0 || payload.Imports[0] != "fmt" {
+		t.Fatalf("expected import neighbors, got %+v", payload.Imports)
+	}
+}
+
+func TestGraphSubgraphEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/subgraph?target=Foo&depth=1")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var payload map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		t.Fatalf("expected 200, got %d payload=%v", resp.StatusCode, payload)
+	}
+
+	var payload api.GraphSubgraphResult
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.ResolvedFile != "a.go" {
+		t.Fatalf("expected resolved file a.go, got %+v", payload)
+	}
+	if payload.Depth != 1 {
+		t.Fatalf("expected depth 1, got %+v", payload)
+	}
+	if len(payload.Files) != 2 || payload.Files[0] != "a.go" || payload.Files[1] != "b.go" {
+		t.Fatalf("unexpected subgraph files: %+v", payload.Files)
+	}
+	if payload.Graph == nil || len(payload.Graph.Nodes) == 0 || len(payload.Graph.Edges) == 0 {
+		t.Fatalf("expected subgraph graph payload, got %+v", payload.Graph)
+	}
+}
+
+func TestGraphNeighborsEndpointMissingParam(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/neighbors")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestGraphSubgraphEndpointMissingParam(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/subgraph")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
 }
 
 func TestExplainEndpoint(t *testing.T) {
@@ -310,7 +528,9 @@ func TestExplainEndpoint(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+		var payload map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		t.Fatalf("expected 200, got %d payload=%v", resp.StatusCode, payload)
 	}
 
 	var payload map[string]interface{}
@@ -346,7 +566,9 @@ func TestContextEndpoint(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+		var payload map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		t.Fatalf("expected 200, got %d payload=%v", resp.StatusCode, payload)
 	}
 
 	var payload map[string]interface{}
@@ -355,6 +577,12 @@ func TestContextEndpoint(t *testing.T) {
 	}
 	if _, ok := payload["definition"]; !ok {
 		t.Fatalf("expected 'definition' in response, got: %v", payload)
+	}
+	if payload["graph_summary"] == "" {
+		t.Fatalf("expected graph_summary in context response, got: %v", payload)
+	}
+	if _, ok := payload["related_files"]; !ok {
+		t.Fatalf("expected related_files in context response, got: %v", payload)
 	}
 }
 
@@ -391,6 +619,12 @@ func TestSnapshotEndpoint(t *testing.T) {
 	}
 	if payload["query"] != "Foo" {
 		t.Fatalf("expected query Foo, got: %v", payload["query"])
+	}
+	if payload["analysis"] == nil {
+		t.Fatalf("expected analysis in snapshot response, got: %v", payload)
+	}
+	if _, ok := payload["recommended_files"]; !ok {
+		t.Fatalf("expected recommended_files in snapshot response, got: %v", payload)
 	}
 }
 

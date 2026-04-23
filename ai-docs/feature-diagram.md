@@ -27,6 +27,12 @@ mindmap
         文件摘要
         调用链追踪
         变更影响分析
+      图导出
+        完整依赖图
+        图路径查询
+        图邻居上下文
+        局部子图导出
+        图分析洞察
     CLI 命令
       index
       search
@@ -42,6 +48,14 @@ mindmap
       trace
       diff-impact
       serve
+      git-files
+      git-diff
+      snapshot-git
+      diff-impact-git
+      graph
+      graph path
+      graph neighbors
+      graph subgraph
     HTTP API
       /api/search
       /api/symbols
@@ -52,6 +66,16 @@ mindmap
       /api/importers
       /api/stats
       /api/index
+      /api/map
+      /api/explain
+      /api/context
+      /api/snapshot
+      /api/trace
+      /api/diff-impact
+      /api/graph
+      /api/graph-neighbors
+      /api/graph-subgraph
+      /api/graph-path
     MCP 服务器
       index
       search
@@ -67,6 +91,7 @@ mindmap
       snapshot
       diff_impact
       trace
+      graph
     支持语言
       Go
       TypeScript

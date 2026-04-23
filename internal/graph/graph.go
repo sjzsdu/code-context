@@ -7,6 +7,11 @@ import (
 	"github.com/sjzsdu/code-context/internal/store"
 )
 
+type scoreItem struct {
+	Key   string
+	Value int
+}
+
 type Graph struct {
 	store   store.Store
 	forward map[string][]string
@@ -103,6 +108,91 @@ func (g *Graph) Related(file string, topN int) []string {
 		impSet[imp] = true
 	}
 
+	sorted := sortScores(g.relatedScores(file, impSet))
+
+	var result []string
+	for i, item := range sorted {
+		if i >= topN {
+			break
+		}
+		result = append(result, item.Key)
+	}
+	return result
+}
+
+func (g *Graph) RelatedScores(file string) map[string]int {
+	impSet := make(map[string]bool)
+	for _, imp := range g.forward[file] {
+		impSet[imp] = true
+	}
+	return g.relatedScores(file, impSet)
+}
+
+func (g *Graph) ImportCounts() map[string]int {
+	counts := make(map[string]int)
+	for _, imports := range g.forward {
+		for _, imp := range dedup(imports) {
+			counts[imp]++
+		}
+	}
+	return counts
+}
+
+func (g *Graph) FileConnectionCounts() map[string]int {
+	counts := make(map[string]int)
+	for file := range g.forward {
+		scores := g.RelatedScores(file)
+		for relatedFile := range scores {
+			counts[file]++
+			counts[relatedFile]++
+		}
+	}
+	return counts
+}
+
+func (g *Graph) FileNeighbors(file string) []string {
+	scores := g.RelatedScores(file)
+	items := sortScores(scores)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.Key)
+	}
+	return result
+}
+
+func (g *Graph) SubgraphFiles(start string, depth int) []string {
+	if depth <= 0 {
+		depth = 1
+	}
+	if start == "" {
+		return nil
+	}
+	visited := map[string]bool{start: true}
+	queue := []string{start}
+
+	for level := 0; level < depth && len(queue) > 0; level++ {
+		var next []string
+		for _, file := range queue {
+			for _, neighbor := range g.FileNeighbors(file) {
+				if visited[neighbor] {
+					continue
+				}
+				visited[neighbor] = true
+				next = append(next, neighbor)
+			}
+		}
+		queue = next
+	}
+
+	result := make([]string, 0, len(visited))
+	for file := range visited {
+		result = append(result, file)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func (g *Graph) relatedScores(file string, impSet map[string]bool) map[string]int {
 	scores := make(map[string]int)
 	for otherFile, otherImports := range g.forward {
 		if otherFile == file {
@@ -118,27 +208,21 @@ func (g *Graph) Related(file string, topN int) []string {
 			scores[otherFile] = count
 		}
 	}
+	return scores
+}
 
-	type kv struct {
-		Key   string
-		Value int
-	}
-	var sorted []kv
+func sortScores(scores map[string]int) []scoreItem {
+	var sorted []scoreItem
 	for k, v := range scores {
-		sorted = append(sorted, kv{k, v})
+		sorted = append(sorted, scoreItem{k, v})
 	}
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Value > sorted[j].Value
-	})
-
-	var result []string
-	for i, item := range sorted {
-		if i >= topN {
-			break
+		if sorted[i].Value != sorted[j].Value {
+			return sorted[i].Value > sorted[j].Value
 		}
-		result = append(result, item.Key)
-	}
-	return result
+		return sorted[i].Key < sorted[j].Key
+	})
+	return sorted
 }
 
 func (g *Graph) bfs(adj map[string][]string, start string, depth int) []string {
@@ -180,6 +264,9 @@ func (g *Graph) TraceFiles(from, to string, maxDepth int) []string {
 	if from == to {
 		return []string{from}
 	}
+	if maxDepth <= 0 {
+		maxDepth = 6
+	}
 
 	type pathNode struct {
 		file string
@@ -198,19 +285,15 @@ func (g *Graph) TraceFiles(from, to string, maxDepth int) []string {
 			continue
 		}
 
-		imports := g.forward[current.file]
-		for _, imp := range imports {
-			importers := g.reverse[imp]
-			for _, impFile := range importers {
-				if impFile == to {
-					return append(current.path, impFile)
-				}
-				if !visited[impFile] {
-					visited[impFile] = true
-					newPath := make([]string, len(current.path))
-					copy(newPath, current.path)
-					queue = append(queue, pathNode{file: impFile, path: append(newPath, impFile)})
-				}
+		for _, neighbor := range g.FileNeighbors(current.file) {
+			if neighbor == to {
+				return append(current.path, neighbor)
+			}
+			if !visited[neighbor] {
+				visited[neighbor] = true
+				newPath := make([]string, len(current.path))
+				copy(newPath, current.path)
+				queue = append(queue, pathNode{file: neighbor, path: append(newPath, neighbor)})
 			}
 		}
 	}

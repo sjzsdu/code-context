@@ -334,6 +334,9 @@ func (idx *Indexer) walk() ([]string, error) {
 			return filepath.SkipDir
 		}
 		if !d.IsDir() {
+			if isTestFile(rel) {
+				return nil
+			}
 			if _, ok := idx.parser.DetectLanguage(rel); !ok {
 				return nil
 			}
@@ -356,4 +359,28 @@ func isSkipDir(name string) bool {
 		"target": true, "build": true, "dist": true, "venv": true, ".venv": true,
 	}
 	return skip[name]
+}
+
+func isTestFile(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.HasSuffix(name, "_test.go"):
+		return true
+	case strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".py"):
+		return true
+	case strings.HasSuffix(name, "_test.py"):
+		return true
+	case strings.HasSuffix(name, ".test.ts"), strings.HasSuffix(name, ".spec.ts"):
+		return true
+	case strings.HasSuffix(name, ".test.tsx"), strings.HasSuffix(name, ".spec.tsx"):
+		return true
+	case strings.HasSuffix(name, ".test.js"), strings.HasSuffix(name, ".spec.js"):
+		return true
+	case strings.HasSuffix(name, ".test.jsx"), strings.HasSuffix(name, ".spec.jsx"):
+		return true
+	case strings.HasSuffix(name, "test.java"), strings.HasSuffix(name, "tests.java"):
+		return true
+	default:
+		return false
+	}
 }

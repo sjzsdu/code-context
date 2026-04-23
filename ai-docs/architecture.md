@@ -1,5 +1,7 @@
 # code-context 架构设计文档
 
+> 最后更新：2026-04-23（基于代码逆向分析）
+
 ## 1. 系统概述
 
 code-context 是一个纯 Go 语言实现的代码上下文系统，采用模块化架构设计，通过结构化解析技术（tree-sitter）为 AI 智能体和大型语言模型提供代码理解与检索能力。
@@ -45,6 +47,15 @@ code-context 是一个纯 Go 语言实现的代码上下文系统，采用模块
 #### cmd/code-context/main.go
 
 CLI 入口点，使用 cobra 框架实现所有命令。负责解析命令行参数、初始化 Engine、调用相应功能。
+
+新增功能：
+- git-files：列出 git 跟踪的变更文件
+- git-diff：显示 git diff hunks
+- snapshot-git：生成 git 变更文件的上下文快照
+- diff-impact-git：分析 git 变更文件的影响
+- graph path：查找文件级调用路径
+- graph neighbors：显示图邻居上下文
+- graph subgraph：导出局部子图
 
 #### cmd/mcp/main.go
 
@@ -136,7 +147,7 @@ symbols_fts (FTS5 全文索引)
 
 ### 3.8 internal/graph/
 
-依赖图模块：
+依赖图模块，新增图导出功能：
 
 - **Graph**：依赖图结构
 - **Build**：从导入数据构建图
@@ -145,10 +156,17 @@ symbols_fts (FTS5 全文索引)
 - **Dependents**：反向依赖（被谁依赖）
 - **Related**：相关性文件
 - **TraceFiles**：追踪文件间的调用路径
+- **FileNeighbors**：文件邻居查询
+- **SubgraphFiles**：子图文件收集
+
+新增类型（internal/api/types.go）：
+- **GraphNeighborsResult**：图邻居上下文结果
+- **GraphSubgraphResult**：子图导出结果
+- **GraphPathResult**：图路径导航结果
 
 ### 3.9 internal/engine/
 
-核心协调层，封装所有子系统：
+核心协调层，封装所有子系统，新增 Git 感知和图导出功能：
 
 - **Engine**：主引擎类
 - **Index/IndexIncremental**：索引操作
@@ -161,6 +179,14 @@ symbols_fts (FTS5 全文索引)
 - **Trace**：调用链追踪
 - **DiffImpact**：变更影响分析
 - **Stats**：统计信息
+- **GitChangedFiles**：获取 git 变更文件
+- **GitDiff**：获取 git diff
+- **SnapshotGit**：git 变更文件的上下文
+- **DiffImpactGit**：git 变更文件影响分析
+- **ExportGraph**：导出依赖图（JSON）
+- **GraphNeighbors**：图邻居上下文
+- **GraphSubgraph**：局部子图导出
+- **GraphPath**：图路径查询
 
 ### 3.10 internal/server/
 

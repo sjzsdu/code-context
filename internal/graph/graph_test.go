@@ -179,6 +179,117 @@ func TestRelated(t *testing.T) {
 	}
 }
 
+func TestFileNeighbors(t *testing.T) {
+	s, cleanup := setupGraphStore(t)
+	defer cleanup()
+
+	g := New(s)
+	if err := g.Build(context.Background()); err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	got := g.FileNeighbors("a.go")
+	want := []string{"b.go", "c.go"}
+	if len(got) != len(want) {
+		t.Fatalf("FileNeighbors(a.go) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("FileNeighbors(a.go)[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSubgraphFiles(t *testing.T) {
+	s, cleanup := setupGraphStore(t)
+	defer cleanup()
+
+	g := New(s)
+	if err := g.Build(context.Background()); err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	got := g.SubgraphFiles("a.go", 1)
+	want := []string{"a.go", "b.go", "c.go"}
+	if len(got) != len(want) {
+		t.Fatalf("SubgraphFiles(a.go,1) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SubgraphFiles(a.go,1)[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestTraceFiles(t *testing.T) {
+	s, cleanup := setupGraphStore(t)
+	defer cleanup()
+
+	g := New(s)
+	if err := g.Build(context.Background()); err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	got := g.TraceFiles("a.go", "b.go", 5)
+	want := []string{"a.go", "b.go"}
+	if len(got) != len(want) {
+		t.Fatalf("TraceFiles(a.go,b.go) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("TraceFiles(a.go,b.go)[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestImportCounts(t *testing.T) {
+	s, cleanup := setupGraphStore(t)
+	defer cleanup()
+
+	g := New(s)
+	if err := g.Build(context.Background()); err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	counts := g.ImportCounts()
+	if counts["fmt"] != 2 {
+		t.Fatalf("ImportCounts()[fmt] = %d, want 2", counts["fmt"])
+	}
+	if counts["os"] != 2 {
+		t.Fatalf("ImportCounts()[os] = %d, want 2", counts["os"])
+	}
+}
+
+func TestRelatedScores(t *testing.T) {
+	s, cleanup := setupGraphStore(t)
+	defer cleanup()
+
+	g := New(s)
+	if err := g.Build(context.Background()); err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	scores := g.RelatedScores("a.go")
+	if scores["b.go"] != 1 {
+		t.Fatalf("RelatedScores(a.go)[b.go] = %d, want 1", scores["b.go"])
+	}
+	if scores["c.go"] != 1 {
+		t.Fatalf("RelatedScores(a.go)[c.go] = %d, want 1", scores["c.go"])
+	}
+}
+
+func TestFileConnectionCounts(t *testing.T) {
+	s, cleanup := setupGraphStore(t)
+	defer cleanup()
+
+	g := New(s)
+	if err := g.Build(context.Background()); err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+	counts := g.FileConnectionCounts()
+	if counts["a.go"] == 0 {
+		t.Fatalf("expected a.go to have file connections, got %v", counts)
+	}
+	if counts["b.go"] == 0 {
+		t.Fatalf("expected b.go to have file connections, got %v", counts)
+	}
+}
+
 func TestDedup(t *testing.T) {
 	// directly test dedup function
 	input := []string{"b.go", "a.go", "b.go", "c.go", "a.go"}

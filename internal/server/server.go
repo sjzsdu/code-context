@@ -40,6 +40,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
 	mux.HandleFunc("/api/map", s.handleMap)
+	mux.HandleFunc("/api/graph", s.handleGraph)
+	mux.HandleFunc("/api/graph/path", s.handleGraphPath)
+	mux.HandleFunc("/api/graph/neighbors", s.handleGraphNeighbors)
+	mux.HandleFunc("/api/graph/subgraph", s.handleGraphSubgraph)
 	mux.HandleFunc("/api/explain", s.handleExplain)
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
@@ -206,6 +210,66 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {
 	result, err := s.eng.Map(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	focus := r.URL.Query().Get("focus")
+	result, err := s.eng.ExportGraph(r.Context(), focus)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
+	from := r.URL.Query().Get("from")
+	if from == "" {
+		writeError(w, fmt.Errorf("missing 'from' parameter"), 400)
+		return
+	}
+	to := r.URL.Query().Get("to")
+	if to == "" {
+		writeError(w, fmt.Errorf("missing 'to' parameter"), 400)
+		return
+	}
+
+	result, err := s.eng.GraphPath(r.Context(), from, to)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGraphNeighbors(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		writeError(w, fmt.Errorf("missing 'target' parameter"), 400)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	result, err := s.eng.GraphNeighbors(r.Context(), target, limit)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGraphSubgraph(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		writeError(w, fmt.Errorf("missing 'target' parameter"), 400)
+		return
+	}
+	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
+	result, err := s.eng.GraphSubgraph(r.Context(), target, depth)
 	if err != nil {
 		writeError(w, err, 500)
 		return

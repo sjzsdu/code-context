@@ -1,5 +1,7 @@
 # code-context 入门指南
 
+> 最后更新：2026-04-23（基于代码逆向分析）- 新增 Git 相关命令和图分析命令
+
 ## 1. 快速开始
 
 ### 1.1 安装
@@ -179,6 +181,42 @@ code-context diff-impact internal/store/sqlite.go
 
 # 调整依赖深度
 code-context diff-impact internal/store/sqlite.go --depth 2
+```
+
+### 2.11 图相关命令
+
+```bash
+# 导出完整依赖图为 JSON
+code-context graph
+
+# 查找两个文件之间的路径
+code-context graph path internal/server/server.go internal/store/sqlite.go
+
+# 查看文件的邻居上下文
+code-context graph neighbors internal/engine/engine.go
+
+# 导出局部子图
+code-context graph subgraph internal/engine --depth 2
+```
+
+### 2.12 Git 相关命令
+
+```bash
+# 列出 git 跟踪的变更文件
+code-context git-files
+
+# 查看 git diff hunks
+code-context git-diff
+
+# 生成 git 变更文件的上下文快照
+code-context snapshot-git "authentication"
+
+# 分析 git 变更文件的影响
+code-context diff-impact-git
+
+# 指定 git 状态
+code-context git-files --state staged
+code-context git-files --state all
 ```
 
 ## 3. HTTP API 使用
