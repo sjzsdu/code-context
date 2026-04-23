@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,7 +26,10 @@ var (
 )
 
 type runtimeConfig struct {
-	serverPort int
+	serverPort    int
+	watchEnabled  bool
+	watchInterval time.Duration
+	watchDebounce time.Duration
 }
 
 func main() {
@@ -61,10 +68,12 @@ func main() {
 		newTraceCmd(),
 		newDiffImpactCmd(),
 		newDiffImpactGitCmd(),
+		newWatchCmd(),
 		newServeCmd(),
 	)
 
 	attachServeConfig(cmd)
+	attachWatchConfig(cmd)
 
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
@@ -81,7 +90,10 @@ func loadRuntimeConfig(startDir string) (*runtimeConfig, error) {
 	}
 
 	return &runtimeConfig{
-		serverPort: loaded.Config.Server.Port,
+		serverPort:    loaded.Config.Server.Port,
+		watchEnabled:  loaded.Config.Watch.Enabled,
+		watchInterval: loaded.Config.Watch.Interval,
+		watchDebounce: loaded.Config.Watch.Debounce,
 	}, nil
 }
 
@@ -125,6 +137,44 @@ func attachServeConfig(rootCmd *cobra.Command) {
 			flag := cmd.Flags().Lookup("port")
 			if flag != nil {
 				_ = flag.Value.Set(fmt.Sprintf("%d", loaded.Config.Server.Port))
+			}
+		}
+		return nil
+	}
+}
+
+func attachWatchConfig(rootCmd *cobra.Command) {
+	watchCmd, _, err := rootCmd.Find([]string{"watch"})
+	if err != nil || watchCmd == nil {
+		return
+	}
+	prev := watchCmd.PreRunE
+	watchCmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if prev != nil {
+			if err := prev(cmd, args); err != nil {
+				return err
+			}
+		}
+		loaded, err := config.Load(root)
+		if err != nil {
+			if err == config.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+		if !cmd.Flags().Changed("interval") && loaded.Config.Watch.Interval > 0 {
+			if flag := cmd.Flags().Lookup("interval"); flag != nil {
+				_ = flag.Value.Set(loaded.Config.Watch.Interval.String())
+			}
+		}
+		if !cmd.Flags().Changed("debounce") && loaded.Config.Watch.Debounce > 0 {
+			if flag := cmd.Flags().Lookup("debounce"); flag != nil {
+				_ = flag.Value.Set(loaded.Config.Watch.Debounce.String())
+			}
+		}
+		if !cmd.Flags().Changed("enabled") && loaded.Config.Watch.Enabled {
+			if flag := cmd.Flags().Lookup("enabled"); flag != nil {
+				_ = flag.Value.Set("true")
 			}
 		}
 		return nil
@@ -472,7 +522,30 @@ func newGraphCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&focus, "focus", "", "limit graph export to a file path or symbol name")
-	cmd.AddCommand(newGraphPathCmd(), newGraphNeighborsCmd(), newGraphSubgraphCmd())
+	cmd.AddCommand(newGraphHTMLCmd(), newGraphPathCmd(), newGraphNeighborsCmd(), newGraphSubgraphCmd())
+	return cmd
+}
+
+func newGraphHTMLCmd() *cobra.Command {
+	var focus string
+	cmd := &cobra.Command{
+		Use:   "html",
+		Short: "Render repository graph as an interactive HTML page",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			g, err := eng.ExportGraph(context.Background(), focus)
+			if err != nil {
+				return err
+			}
+			return renderGraphHTML(os.Stdout, g)
+		},
+	}
+	cmd.Flags().StringVar(&focus, "focus", "", "limit graph HTML to a file path or symbol name")
 	return cmd
 }
 
@@ -753,11 +826,21 @@ func newSnapshotGitCmd() *cobra.Command {
 
 			fmt.Println("=== Code Snapshot (Git) ===")
 			fmt.Printf("Query: %s\n", s.Query)
-			fmt.Printf("Summary: %s\n\n", s.Summary)
+			fmt.Printf("Summary: %s\n", s.Summary)
+			if len(s.RecommendedFiles) > 0 {
+				fmt.Printf("Recommended next files: %s\n", strings.Join(s.RecommendedFiles, ", "))
+			}
+			fmt.Println()
 
 			for _, f := range s.Files {
 				fmt.Printf("--- %s ---\n", f.Path)
 				fmt.Printf("Language: %s\n", f.Language)
+				if f.GraphSummary != "" {
+					fmt.Printf("Graph: %s\n", f.GraphSummary)
+				}
+				if len(f.RecommendedFiles) > 0 {
+					fmt.Printf("Recommended: %s\n", strings.Join(f.RecommendedFiles, ", "))
+				}
 				fmt.Printf("Symbols (%d):\n", len(f.Symbols))
 				symLimit := min(len(f.Symbols), 5)
 				for _, sym := range f.Symbols[:symLimit] {
@@ -766,6 +849,10 @@ func newSnapshotGitCmd() *cobra.Command {
 				if len(f.Symbols) > 5 {
 					fmt.Printf("  ... and %d more\n", len(f.Symbols)-5)
 				}
+			}
+			if s.Analysis != nil {
+				fmt.Println()
+				printGraphAnalysis(s.Analysis)
 			}
 			return nil
 		},
@@ -945,6 +1032,258 @@ func printGraphAnalysis(analysis *api.GraphAnalysis) {
 		fmt.Printf("  Recommended files: %s\n", strings.Join(analysis.RecommendedFiles, ", "))
 	}
 }
+
+func newWatchCmd() *cobra.Command {
+	var interval time.Duration
+	var debounce time.Duration
+	var verbose bool
+	var enabled bool
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Continuously refresh the index with incremental reindexing",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !enabled {
+				return fmt.Errorf("watch mode is disabled; pass --enabled or set watch.enabled=true in config")
+			}
+			if interval <= 0 {
+				return fmt.Errorf("watch interval must be greater than zero")
+			}
+			if debounce < 0 {
+				return fmt.Errorf("watch debounce must be zero or greater")
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			fmt.Printf("Starting watch mode for %s\n", root)
+			stats, err := eng.IndexIncremental(ctx, verbose)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Initial sync: %d indexed, %d skipped, %d failed — %d symbols, %d imports (%.1fs)\n",
+				stats.IndexedFiles, stats.SkippedFiles, stats.FailedFiles,
+				stats.TotalSymbols, stats.TotalImports, stats.Duration)
+			fmt.Printf("Watching every %s with %s debounce. Press Ctrl+C to stop.\n", interval, debounce)
+
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			var nextAllowed time.Time
+			for {
+				select {
+				case <-ctx.Done():
+					fmt.Println("Watch stopped.")
+					return nil
+				case <-ticker.C:
+					if time.Now().Before(nextAllowed) {
+						continue
+					}
+					stats, err := eng.IndexIncremental(ctx, verbose)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "watch reindex failed: %v\n", err)
+						nextAllowed = time.Now().Add(debounce)
+						continue
+					}
+					if stats.IndexedFiles == 0 && stats.FailedFiles == 0 {
+						continue
+					}
+					fmt.Printf("Refresh: %d indexed, %d skipped, %d failed — %d symbols, %d imports (%.1fs)\n",
+						stats.IndexedFiles, stats.SkippedFiles, stats.FailedFiles,
+						stats.TotalSymbols, stats.TotalImports, stats.Duration)
+					nextAllowed = time.Now().Add(debounce)
+				}
+			}
+		},
+	}
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "polling interval for incremental reindexing")
+	cmd.Flags().DurationVar(&debounce, "debounce", 250*time.Millisecond, "minimum delay between follow-up refreshes after a change")
+	cmd.Flags().BoolVar(&enabled, "enabled", false, "enable watch mode explicitly or via config")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print per-file indexing progress")
+	return cmd
+}
+
+func renderGraphHTML(w *os.File, graph *api.GraphExport) error {
+	return writeGraphHTML(w, graph)
+}
+
+func writeGraphHTML(w interface{ Write([]byte) (int, error) }, graph *api.GraphExport) error {
+	payload, err := json.Marshal(graph)
+	if err != nil {
+		return err
+	}
+	view := struct {
+		Title       string
+		Focus       string
+		Summary     string
+		NodeCount   int
+		EdgeCount   int
+		GraphJSON   template.JS
+		HasAnalysis bool
+		Analysis    *api.GraphAnalysis
+	}{
+		Title:       "code-context graph view",
+		Focus:       graph.Focus,
+		Summary:     graph.Summary,
+		NodeCount:   len(graph.Nodes),
+		EdgeCount:   len(graph.Edges),
+		GraphJSON:   template.JS(payload),
+		HasAnalysis: graph.Analysis != nil,
+		Analysis:    graph.Analysis,
+	}
+	return graphHTMLTemplate.Execute(w, view)
+}
+
+var graphHTMLTemplate = template.Must(template.New("graph-html").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{.Title}}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #0b1020; color: #e5e7eb; }
+    header { padding: 20px 24px; border-bottom: 1px solid #1f2937; background: #111827; }
+    main { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh - 89px); }
+    aside { padding: 20px 24px; border-right: 1px solid #1f2937; background: #0f172a; overflow: auto; }
+    section { padding: 20px 24px; overflow: auto; }
+    h1, h2, h3 { margin-top: 0; }
+    .meta { color: #94a3b8; font-size: 14px; }
+    .pill { display: inline-block; margin: 4px 6px 0 0; padding: 4px 8px; border-radius: 999px; background: #1f2937; color: #cbd5e1; font-size: 12px; }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    input, select { padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #020617; color: #e5e7eb; }
+    .card { padding: 14px 16px; border: 1px solid #1f2937; border-radius: 12px; background: #111827; margin-bottom: 12px; }
+    .node { cursor: pointer; }
+    .node:hover { background: #172554; }
+    ul { padding-left: 18px; }
+    code { color: #93c5fd; }
+    pre { background: #020617; padding: 12px; border-radius: 10px; overflow: auto; }
+    .muted { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{.Title}}</h1>
+    <div class="meta">{{.Summary}}</div>
+    <div class="meta">Nodes: {{.NodeCount}} · Edges: {{.EdgeCount}}{{if .Focus}} · Focus: <code>{{.Focus}}</code>{{end}}</div>
+  </header>
+  <main>
+    <aside>
+      <div class="card">
+        <h2>Filters</h2>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search nodes">
+          <select id="typeFilter">
+            <option value="">All node types</option>
+          </select>
+        </div>
+        <div class="meta">Click a node to inspect its connected edges.</div>
+      </div>
+      {{if .HasAnalysis}}
+      <div class="card">
+        <h2>Graph analysis</h2>
+        {{if .Analysis.TopImports}}
+        <h3>Top imports</h3>
+        <ul>{{range .Analysis.TopImports}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.MostConnectedFiles}}
+        <h3>Most connected files</h3>
+        <ul>{{range .Analysis.MostConnectedFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.RecommendedFiles}}
+        <h3>Recommended files</h3>
+        <ul>{{range .Analysis.RecommendedFiles}}<li>{{.}}</li>{{end}}</ul>
+        {{end}}
+      </div>
+      {{end}}
+      <div id="nodeList"></div>
+    </aside>
+    <section>
+      <div class="card">
+        <h2>Selected node</h2>
+        <div id="details" class="muted">Pick a node from the list to inspect its attributes and edges.</div>
+      </div>
+      <div class="card">
+        <h2>Graph payload</h2>
+        <pre id="raw"></pre>
+      </div>
+    </section>
+  </main>
+  <script>
+    const graph = {{.GraphJSON}};
+    const search = document.getElementById('search');
+    const typeFilter = document.getElementById('typeFilter');
+    const nodeList = document.getElementById('nodeList');
+    const details = document.getElementById('details');
+    const raw = document.getElementById('raw');
+    raw.textContent = JSON.stringify(graph, null, 2);
+
+    const types = [...new Set(graph.nodes.map(node => node.type))].sort();
+    for (const type of types) {
+      const option = document.createElement('option');
+      option.value = type;
+      option.textContent = type;
+      typeFilter.appendChild(option);
+    }
+
+    function renderList() {
+      const q = search.value.trim().toLowerCase();
+      const type = typeFilter.value;
+      nodeList.innerHTML = '';
+      const filtered = graph.nodes.filter(node => {
+        if (type && node.type !== type) return false;
+        if (!q) return true;
+        return [node.label, node.name, node.file].filter(Boolean).join(' ').toLowerCase().includes(q);
+      });
+      if (!filtered.length) {
+        nodeList.innerHTML = '<div class="card muted">No nodes match the current filters.</div>';
+        return;
+      }
+      for (const node of filtered) {
+        const el = document.createElement('div');
+        el.className = 'card node';
+        const label = node.label || node.id;
+        const meta = node.type + (node.file ? ' · ' + node.file : '');
+        el.innerHTML = '<strong>' + label + '</strong><div class="meta">' + meta + '</div>';
+        el.addEventListener('click', () => renderDetails(node));
+        nodeList.appendChild(el);
+      }
+    }
+
+    function renderDetails(node) {
+      const incoming = graph.edges.filter(edge => edge.target === node.id);
+      const outgoing = graph.edges.filter(edge => edge.source === node.id);
+      details.innerHTML = '';
+      const title = document.createElement('div');
+      title.innerHTML = '<h3>' + (node.label || node.id) + '</h3><div class="meta">' + node.type + '</div>';
+      details.appendChild(title);
+
+      const attrs = document.createElement('div');
+      attrs.innerHTML = [
+        node.file ? '<span class="pill">file: ' + node.file + '</span>' : '',
+        node.name ? '<span class="pill">name: ' + node.name + '</span>' : '',
+        node.kind ? '<span class="pill">kind: ' + node.kind + '</span>' : '',
+        node.language ? '<span class="pill">language: ' + node.language + '</span>' : '',
+        node.line ? '<span class="pill">line: ' + node.line + '</span>' : ''
+      ].join('');
+      details.appendChild(attrs);
+
+      const edges = document.createElement('div');
+      const outgoingHTML = outgoing.map(edge => '<li>' + edge.type + ' → ' + edge.target + '</li>').join('');
+      const incomingHTML = incoming.map(edge => '<li>' + edge.type + ' ← ' + edge.source + '</li>').join('');
+      edges.innerHTML = '<h3>Outgoing (' + outgoing.length + ')</h3><ul>' + outgoingHTML + '</ul><h3>Incoming (' + incoming.length + ')</h3><ul>' + incomingHTML + '</ul>';
+      details.appendChild(edges);
+    }
+
+    search.addEventListener('input', renderList);
+    typeFilter.addEventListener('change', renderList);
+    renderList();
+  </script>
+</body>
+</html>`))
 
 func newServeCmd() *cobra.Command {
 	var port int

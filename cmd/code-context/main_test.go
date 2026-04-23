@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/sjzsdu/code-context/internal/engine"
 )
@@ -254,6 +257,53 @@ func TestGraphSubgraphCmd(t *testing.T) {
 	}
 }
 
+func TestGraphHTMLCmd(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-graph-html-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	path := filepath.Join(tmpDir, "a.go")
+	if err := os.WriteFile(path, []byte("package main\nimport \"fmt\"\nfunc A() { fmt.Println(\"a\") }\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	eng, err := engine.New(root, dbPath)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		t.Fatalf("index repo: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	cmd := newGraphHTMLCmd()
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute graph html cmd: %v", err)
+	}
+	if !strings.Contains(out, "<!DOCTYPE html>") {
+		t.Fatalf("expected html doctype, got:\n%s", out)
+	}
+	if !strings.Contains(out, "code-context graph view") {
+		t.Fatalf("expected graph HTML title, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Graph analysis") {
+		t.Fatalf("expected graph analysis section, got:\n%s", out)
+	}
+}
+
 func TestMapCmdIncludesGraphAnalysis(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-map-analysis-test-*")
 	if err != nil {
@@ -394,6 +444,142 @@ func TestSnapshotCmdIncludesGraphGuidance(t *testing.T) {
 	}
 	if !strings.Contains(out, "Graph analysis:") {
 		t.Fatalf("expected graph analysis in snapshot output, got:\n%s", out)
+	}
+}
+
+func TestSnapshotGitCmdIncludesGraphGuidance(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-snapshot-git-analysis-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	pathA := filepath.Join(tmpDir, "a.go")
+	pathB := filepath.Join(tmpDir, "b.go")
+	for path, body := range map[string]string{
+		pathA: "package main\nimport \"fmt\"\nfunc Foo() { fmt.Println(\"foo\") }\n",
+		pathB: "package main\nimport \"fmt\"\nfunc Bar() { fmt.Println(\"bar\") }\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+	}
+
+	runGitCLI(t, tmpDir, "init")
+	runGitCLI(t, tmpDir, "add", "a.go", "b.go")
+	runGitCLI(t, tmpDir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	if err := os.WriteFile(pathA, []byte("package main\nimport \"fmt\"\nfunc Foo() { fmt.Println(\"foo2\") }\n"), 0o644); err != nil {
+		t.Fatalf("write changed file a.go: %v", err)
+	}
+	if err := os.WriteFile(pathB, []byte("package main\nimport \"fmt\"\nfunc Bar() { fmt.Println(\"bar2\") }\n"), 0o644); err != nil {
+		t.Fatalf("write changed file b.go: %v", err)
+	}
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	eng, err := engine.New(root, dbPath)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		t.Fatalf("index repo: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	cmd := newSnapshotGitCmd()
+	cmd.SetArgs([]string{"--state", "all", "--limit", "2"})
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute snapshot-git cmd: %v", err)
+	}
+	if !strings.Contains(out, "Recommended next files:") {
+		t.Fatalf("expected recommended files in snapshot-git output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Graph analysis:") {
+		t.Fatalf("expected graph analysis in snapshot-git output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Graph:") {
+		t.Fatalf("expected per-file graph summary in snapshot-git output, got:\n%s", out)
+	}
+}
+
+func TestWatchCmdRequiresEnablement(t *testing.T) {
+	prevRoot, prevDB := root, dbPath
+	root = t.TempDir()
+	dbPath = filepath.Join(root, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	cmd := newWatchCmd()
+	cmd.SetArgs(nil)
+	_, err := captureStdout(func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "watch mode is disabled") {
+		t.Fatalf("expected disabled watch error, got %v", err)
+	}
+}
+
+func TestWatchCmdUsesConfigDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".code-context.yaml")
+	content := []byte("watch:\n  enabled: true\n  interval: 3s\n  debounce: 400ms\n")
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	rootCmd := &cobra.Command{Use: "root"}
+	rootCmd.PersistentFlags().StringVarP(&root, "root", "r", ".", "")
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "")
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	watchCmd := newWatchCmd()
+	rootCmd.AddCommand(watchCmd)
+	attachWatchConfig(rootCmd)
+
+	watchFound, _, err := rootCmd.Find([]string{"watch"})
+	if err != nil {
+		t.Fatalf("find watch cmd: %v", err)
+	}
+	if err := watchFound.PreRunE(watchFound, nil); err != nil {
+		t.Fatalf("watch pre-run: %v", err)
+	}
+
+	interval, err := watchFound.Flags().GetDuration("interval")
+	if err != nil {
+		t.Fatalf("get interval: %v", err)
+	}
+	if interval != 3*time.Second {
+		t.Fatalf("interval = %s, want 3s", interval)
+	}
+	debounce, err := watchFound.Flags().GetDuration("debounce")
+	if err != nil {
+		t.Fatalf("get debounce: %v", err)
+	}
+	if debounce != 400*time.Millisecond {
+		t.Fatalf("debounce = %s, want 400ms", debounce)
+	}
+	enabled, err := watchFound.Flags().GetBool("enabled")
+	if err != nil {
+		t.Fatalf("get enabled: %v", err)
+	}
+	if !enabled {
+		t.Fatalf("expected enabled flag from config")
 	}
 }
 

@@ -118,11 +118,20 @@ func (e *Engine) SnapshotGit(ctx context.Context, state GitState, maxFiles int) 
 		symbols = append(symbols, fs.Symbols...)
 	}
 
+	recommendedFiles := snapshotRecommendedFiles(files, maxFiles)
+	analysis := mergeGraphAnalysesFromFiles(files)
+	summary := fmt.Sprintf("Selected %d of %d %s changed files", len(files), len(changed), state)
+	if len(recommendedFiles) > 0 {
+		summary += fmt.Sprintf(". Recommended next files: %s", strings.Join(recommendedFiles, ", "))
+	}
+
 	return &Snapshot{
-		Query:   fmt.Sprintf("git:%s", state),
-		Files:   files,
-		Symbols: symbols,
-		Summary: fmt.Sprintf("Selected %d of %d %s changed files", len(files), len(changed), state),
+		Query:            fmt.Sprintf("git:%s", state),
+		Files:            files,
+		Symbols:          symbols,
+		Summary:          summary,
+		RecommendedFiles: recommendedFiles,
+		Analysis:         analysis,
 	}, nil
 }
 

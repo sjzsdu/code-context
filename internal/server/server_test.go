@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -490,6 +491,37 @@ func TestGraphSubgraphEndpoint(t *testing.T) {
 	}
 }
 
+func TestGraphHTMLEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/graph/html?focus=a.go")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("expected text/html content type, got %q", got)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "<!DOCTYPE html>") {
+		t.Fatalf("expected html doctype, got:\n%s", text)
+	}
+	if !strings.Contains(text, "code-context graph view") {
+		t.Fatalf("expected graph html title, got:\n%s", text)
+	}
+	if !strings.Contains(text, "a.go") {
+		t.Fatalf("expected focused file in html output, got:\n%s", text)
+	}
+}
+
 func TestGraphNeighborsEndpointMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -843,6 +875,23 @@ func TestSnapshotGitEndpoint(t *testing.T) {
 	}
 	if summary, ok := payload["summary"].(string); !ok || !strings.Contains(summary, "changed files") {
 		t.Fatalf("expected changed-files summary, got: %v", payload["summary"])
+	}
+	if payload["analysis"] == nil {
+		t.Fatalf("expected analysis in snapshot-git response, got: %v", payload)
+	}
+	if _, ok := payload["recommended_files"]; !ok {
+		t.Fatalf("expected recommended_files in snapshot-git response, got: %v", payload)
+	}
+	files, ok := payload["files"].([]interface{})
+	if !ok || len(files) == 0 {
+		t.Fatalf("expected files in snapshot-git response, got: %v", payload["files"])
+	}
+	firstFile, ok := files[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected first file object, got: %T", files[0])
+	}
+	if firstFile["graph_summary"] == nil || firstFile["graph_summary"] == "" {
+		t.Fatalf("expected graph_summary in snapshot-git file, got: %v", firstFile)
 	}
 }
 
