@@ -357,6 +357,10 @@ go build -o code-context-mcp ./cmd/mcp
 | `importers` | Find importing files | `source` |
 | `stats` | Index statistics | - |
 | `map` | Project architecture with graph analysis | - |
+| `graph` | Export repository or focused graph JSON | `focus?` |
+| `graph_path` | Find a file-level path through the graph | `from`, `to` |
+| `graph_neighbors` | Show adjacent graph context for a file or symbol | `target`, `limit?` |
+| `graph_subgraph` | Export a local graph around a file or symbol | `target`, `depth?` |
 | `explain` | File summary with graph guidance | `file` |
 | `context` | Symbol profile with graph guidance | `symbol` |
 | `snapshot` | Generate LLM context with recommendations | `query`, `limit?` |
@@ -365,7 +369,12 @@ go build -o code-context-mcp ./cmd/mcp
 | `diff_impact_git` | Impact from git | `state?`, `depth?` |
 | `trace` | Call chain tracing | `from`, `to` |
 
-Note: the MCP server currently exposes the core analysis tools above; `graph`, `graph path`, `graph neighbors`, and `graph subgraph` remain available through the CLI and HTTP API.
+### Example MCP Usage
+
+- `graph` with focus: `{ "focus": "Engine" }`
+- `graph_path`: `{ "from": "Engine", "to": "Server" }`
+- `graph_neighbors`: `{ "target": "Engine", "limit": 5 }`
+- `graph_subgraph`: `{ "target": "Engine", "depth": 2 }`
 
 ## Tips
 

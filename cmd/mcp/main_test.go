@@ -1,15 +1,158 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 
-func TestGitFilesToolScaffold(t *testing.T) {
-	t.Skip("scaffold: add MCP invocation coverage for git_files")
+	"github.com/sjzsdu/code-context/internal/engine"
+)
+
+func TestRunGraphTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runGraphTool(context.Background(), eng, GraphArgs{})
+	if err != nil {
+		t.Fatalf("run graph tool: %v", err)
+	}
+	if !strings.Contains(out, "\"version\": \"graph-export.v1\"") {
+		t.Fatalf("expected graph export version, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"analysis\"") {
+		t.Fatalf("expected graph analysis output, got:\n%s", out)
+	}
 }
 
-func TestSnapshotGitToolScaffold(t *testing.T) {
-	t.Skip("scaffold: add MCP invocation coverage for snapshot_git")
+func TestRunGraphPathTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runGraphPathTool(context.Background(), eng, GraphPathArgs{From: "Foo", To: "Bar"})
+	if err != nil {
+		t.Fatalf("run graph path tool: %v", err)
+	}
+	if !strings.Contains(out, "\"path_found\": true") {
+		t.Fatalf("expected path_found true, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"from_file\": ") {
+		t.Fatalf("expected from_file in output, got:\n%s", out)
+	}
 }
 
-func TestDiffImpactGitToolScaffold(t *testing.T) {
-	t.Skip("scaffold: add MCP invocation coverage for diff_impact_git")
+func TestRunGraphNeighborsTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runGraphNeighborsTool(context.Background(), eng, GraphNeighborsArgs{Target: "Foo", Limit: 2})
+	if err != nil {
+		t.Fatalf("run graph neighbors tool: %v", err)
+	}
+	if !strings.Contains(out, "\"resolved_file\": \"a.go\"") {
+		t.Fatalf("expected resolved file in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"related_files\"") {
+		t.Fatalf("expected related files in output, got:\n%s", out)
+	}
+}
+
+func TestRunGraphSubgraphTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runGraphSubgraphTool(context.Background(), eng, GraphSubgraphArgs{Target: "Foo", Depth: 1})
+	if err != nil {
+		t.Fatalf("run graph subgraph tool: %v", err)
+	}
+	if !strings.Contains(out, "\"resolved_file\": \"a.go\"") {
+		t.Fatalf("expected resolved file in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"graph\"") {
+		t.Fatalf("expected graph payload in output, got:\n%s", out)
+	}
+}
+
+func TestRunGraphPathToolRequiresArgs(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runGraphPathTool(context.Background(), eng, GraphPathArgs{From: "Foo"})
+	if err == nil || !strings.Contains(err.Error(), "missing required parameters") {
+		t.Fatalf("expected missing parameter error, got: %v", err)
+	}
+}
+
+func TestRunGraphNeighborsToolRequiresTarget(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runGraphNeighborsTool(context.Background(), eng, GraphNeighborsArgs{})
+	if err == nil || !strings.Contains(err.Error(), "missing required parameter: target") {
+		t.Fatalf("expected missing target error, got: %v", err)
+	}
+}
+
+func TestRunGraphSubgraphToolRequiresTarget(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runGraphSubgraphTool(context.Background(), eng, GraphSubgraphArgs{})
+	if err == nil || !strings.Contains(err.Error(), "missing required parameter: target") {
+		t.Fatalf("expected missing target error, got: %v", err)
+	}
+}
+
+func newTestEngine(t *testing.T) (*engine.Engine, func()) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "mcp-graph-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+
+	write := func(name string, lines []string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	write("a.go", []string{
+		"package main",
+		"",
+		"import \"fmt\"",
+		"",
+		"func Foo() {",
+		"\tfmt.Println(\"foo\")",
+		"}",
+	})
+	write("b.go", []string{
+		"package main",
+		"",
+		"import \"fmt\"",
+		"",
+		"func Bar() {",
+		"\tfmt.Println(\"bar\")",
+		"}",
+	})
+
+	dbPath := filepath.Join(tmpDir, "index.db")
+	eng, err := engine.New(tmpDir, dbPath)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		os.RemoveAll(tmpDir)
+		t.Fatalf("index repo: %v", err)
+	}
+
+	cleanup := func() {
+		_ = eng.Close()
+		_ = os.RemoveAll(tmpDir)
+	}
+	return eng, cleanup
 }

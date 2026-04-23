@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -20,6 +21,25 @@ var (
 	root string
 	db   string
 )
+
+type GraphArgs struct {
+	Focus string `json:"focus,omitempty"`
+}
+
+type GraphPathArgs struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type GraphNeighborsArgs struct {
+	Target string `json:"target"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type GraphSubgraphArgs struct {
+	Target string `json:"target"`
+	Depth  int    `json:"depth,omitempty"`
+}
 
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
@@ -304,6 +324,50 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: output}},
 		}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "graph",
+		Description: "Export repository graph JSON, optionally focused on a file or symbol",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GraphArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runGraphTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("graph failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "graph_path",
+		Description: "Find a file-level path through the graph between two files or symbols",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GraphPathArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runGraphPathTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("graph_path failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "graph_neighbors",
+		Description: "Show adjacent graph context for a file or symbol",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GraphNeighborsArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runGraphNeighborsTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("graph_neighbors failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "graph_subgraph",
+		Description: "Export a local graph around a file or symbol",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GraphSubgraphArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runGraphSubgraphTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("graph_subgraph failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
 
 	// Explain tool
@@ -593,4 +657,53 @@ func printMap(m *engine.ModuleMap, indent int, output *string) {
 	for _, c := range m.Children {
 		printMap(&c, indent+1, output)
 	}
+}
+
+func runGraphTool(ctx context.Context, eng *engine.Engine, args GraphArgs) (string, error) {
+	result, err := eng.ExportGraph(ctx, args.Focus)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func runGraphPathTool(ctx context.Context, eng *engine.Engine, args GraphPathArgs) (string, error) {
+	if args.From == "" || args.To == "" {
+		return "", fmt.Errorf("missing required parameters: from and to")
+	}
+	result, err := eng.GraphPath(ctx, args.From, args.To)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func runGraphNeighborsTool(ctx context.Context, eng *engine.Engine, args GraphNeighborsArgs) (string, error) {
+	if args.Target == "" {
+		return "", fmt.Errorf("missing required parameter: target")
+	}
+	result, err := eng.GraphNeighbors(ctx, args.Target, args.Limit)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func runGraphSubgraphTool(ctx context.Context, eng *engine.Engine, args GraphSubgraphArgs) (string, error) {
+	if args.Target == "" {
+		return "", fmt.Errorf("missing required parameter: target")
+	}
+	result, err := eng.GraphSubgraph(ctx, args.Target, args.Depth)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func marshalIndentedJSON(v any) (string, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

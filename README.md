@@ -333,13 +333,15 @@ Add to your AI client config:
 | `importers` | Find files importing a source | `source` |
 | `stats` | Show index statistics | - |
 | `map` | Show project architecture overview with graph analysis | - |
+| `graph` | Export repository or focused graph JSON | `focus?` |
+| `graph_path` | Find a file-level path through the graph | `from`, `to` |
+| `graph_neighbors` | Show adjacent graph context for a file or symbol | `target`, `limit?` |
+| `graph_subgraph` | Export a local graph around a file or symbol | `target`, `depth?` |
 | `explain` | Show file summary with graph guidance | `file` |
 | `context` | Show symbol profile with graph guidance | `symbol` |
 | `snapshot` | Generate LLM context for a query | `query`, `limit?` |
 | `diff_impact` | Analyze change impact for a file | `file`, `depth?` |
 | `trace` | Trace call chain between symbols | `from`, `to` |
-
-Note: the MCP server currently exposes the core analysis tools above; graph export/path/neighbors/subgraph remain available through the CLI and HTTP API.
 
 ### Usage Example
 
@@ -353,8 +355,9 @@ code-context:index
 # Then search
 code-context:search "Server"
 
-# Get project overview
-code-context:map
+# Inspect graph navigation via MCP
+code-context:graph_neighbors '{"target":"Engine","limit":5}'
+code-context:graph_path '{"from":"Engine","to":"Server"}'
 
 # Generate context for a feature
 code-context:snapshot "authentication"
