@@ -7,11 +7,13 @@ A code context system that reads entire codebases, indexes them structurally usi
 - **Structural parsing** — tree-sitter AST, not regex
 - **FTS5 symbol search** — fast full-text search on symbol names
 - **Definition lookup** — find where symbols are defined
-- **Import graph** — dependency analysis with BFS traversal and related-file scoring
+- **Import graph** — dependency analysis with BFS traversal, related-file scoring, path lookup, neighbors, and subgraph export
+- **Graph-aware context** — `map`, `context`, and `snapshot` include graph summaries and recommended files
 - **Context generation** — generate code context for LLM consumption
 - **Trace & impact analysis** — understand code flow and change impact
-- **HTTP API** — 15 endpoints with CLI parity for programmatic access
+- **HTTP API** — CLI parity for programmatic access, including graph endpoints
 - **Incremental indexing** — only reindex changed files (content-hash based)
+- **Test-file exclusion by default** — test sources are skipped during indexing to keep graph and context focused on production code
 - **Pure Go SQLite** — `modernc.org/sqlite`, no external DB
 - **Single binary** — no runtime dependencies
 
@@ -46,16 +48,17 @@ go build -o code-context ./cmd/code-context
 # Index your project
 code-context index
 
-# Get project overview
+# Get project overview with graph analysis
 code-context map
 
 # Search for symbols
 code-context search "Server"
 
-# Find where a function is defined
-code-context find-def "NewRouter"
+# Inspect graph relationships around a symbol or file
+code-context graph neighbors Engine
+code-context graph path internal/engine/engine.go internal/server/server.go
 
-# Generate LLM context
+# Generate LLM context with graph recommendations
 code-context snapshot "authentication"
 
 # Analyze change impact
@@ -99,13 +102,15 @@ code-context index --incremental         # only changed files
 code-context index -v                    # verbose progress
 ```
 
+By default, test files are excluded from indexing so graph analysis and context stay focused on production code.
+
 ### `map` — Project architecture overview
 
 ```bash
 code-context map
 ```
 
-Shows directory structure with file/symbol counts.
+Shows directory structure with file/symbol counts plus repository-level graph analysis and recommended files.
 
 ### `search <query>` — Search symbols by name
 
@@ -126,7 +131,7 @@ code-context find-def "NewServer"
 code-context explain internal/engine/engine.go
 ```
 
-Shows symbols, imports, and importers for a file.
+Shows symbols, imports, importers, nearby files, and graph-derived recommendations for a file.
 
 ### `context <symbol>` — Symbol profile
 
@@ -134,7 +139,7 @@ Shows symbols, imports, and importers for a file.
 code-context context Engine
 ```
 
-Shows definition, methods, and related symbols.
+Shows definition, methods, related symbols, related files, and graph-guided reading suggestions.
 
 ### `snapshot <query>` — Generate LLM context
 
@@ -143,7 +148,19 @@ code-context snapshot "authentication"
 code-context snapshot "parser" --limit 5
 ```
 
-Generates a context package for LLM consumption.
+Generates a context package for LLM consumption, including graph summaries and recommended next files.
+
+### `graph` — Export and explore the repository graph
+
+```bash
+code-context graph
+code-context graph --focus Engine
+code-context graph path Engine Server
+code-context graph neighbors internal/engine/engine.go --limit 5
+code-context graph subgraph Engine --depth 2
+```
+
+Exports graph JSON, finds file-level paths, shows neighboring files/symbols, and returns local subgraphs for focused analysis.
 
 ### `trace <from> <to>` — Call chain tracing
 
@@ -239,10 +256,14 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
-| GET | `/api/map` | — | Project architecture overview |
-| GET | `/api/explain` | `file` | File summary with symbols and imports |
-| GET | `/api/context` | `symbol` | Symbol profile with related context |
-| GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package |
+| GET | `/api/map` | — | Project architecture overview with graph analysis |
+| GET | `/api/graph` | `focus?` | Export repository or focused graph JSON |
+| GET | `/api/graph/path` | `from`, `to` | Find a file-level path through the graph |
+| GET | `/api/graph/neighbors` | `target`, `limit?` | Show adjacent graph context for a file or symbol |
+| GET | `/api/graph/subgraph` | `target`, `depth?` | Export a local graph around a file or symbol |
+| GET | `/api/explain` | `file` | File summary with symbols, imports, and graph guidance |
+| GET | `/api/context` | `name` | Symbol profile with related context and graph guidance |
+| GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
 | GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
 | GET | `/api/diff-impact` | `file`, `depth?` | Analyze change impact and related tests |
 | GET | `/api/stats` | — | Index statistics |
@@ -311,12 +332,14 @@ Add to your AI client config:
 | `imports` | Show imports of a file | `file` |
 | `importers` | Find files importing a source | `source` |
 | `stats` | Show index statistics | - |
-| `map` | Show project architecture overview | - |
-| `explain` | Show file summary with symbols | `file` |
-| `context` | Show symbol profile | `symbol` |
+| `map` | Show project architecture overview with graph analysis | - |
+| `explain` | Show file summary with graph guidance | `file` |
+| `context` | Show symbol profile with graph guidance | `symbol` |
 | `snapshot` | Generate LLM context for a query | `query`, `limit?` |
 | `diff_impact` | Analyze change impact for a file | `file`, `depth?` |
 | `trace` | Trace call chain between symbols | `from`, `to` |
+
+Note: the MCP server currently exposes the core analysis tools above; graph export/path/neighbors/subgraph remain available through the CLI and HTTP API.
 
 ### Usage Example
 
@@ -388,6 +411,7 @@ code-context explain internal/api/types.go
 - **FTS5**: full-text index on symbol names and signatures
 - **Cascade deletes**: removing a file automatically removes its symbols and imports
 - **Content hashing**: SHA-256 for incremental change detection
+- **Default indexing scope**: production/source files only; common test file patterns are excluded by default
 
 ## License
 

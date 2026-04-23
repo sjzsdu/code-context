@@ -14,6 +14,7 @@ A code context system that reads entire codebases, indexes them structurally usi
 ## Why Use This Skill
 
 - **For Code Analysis**: Quickly understand unfamiliar codebases with `map`, `explain`, `context`
+- **For Graph Navigation**: Explore repository structure with `graph`, `graph path`, `graph neighbors`, and `graph subgraph`
 - **For Dependency Understanding**: Trace imports and find impact with `diff-impact`, `trace`
 - **For Git-aware Context**: Analyze changes with `git-files`, `git-diff`, `snapshot-git`
 - **For Semantic Search**: Use hybrid search combining keyword and semantic similarity
@@ -45,7 +46,10 @@ code-context search "Handler"
 # 4. Get detailed context
 code-context context Engine
 
-# 5. Generate LLM context
+# 5. Explore graph relationships
+code-context graph neighbors Engine
+
+# 6. Generate LLM context
 code-context snapshot "authentication"
 ```
 
@@ -74,6 +78,8 @@ code-context index --incremental         # only changed files
 code-context index -v                    # verbose progress
 ```
 
+By default, test files are excluded from indexing so graph analysis and recommendations stay focused on production code.
+
 ### Search
 
 ```bash
@@ -95,6 +101,8 @@ code-context find-def "Engine"          # find symbol definition
 code-context map                         # show directory structure with stats
 ```
 
+Includes repository-level graph analysis and recommended files.
+
 ### Explain a File
 
 ```bash
@@ -106,6 +114,7 @@ Shows:
 - All symbols in the file (functions, types, methods)
 - Imports (what this file imports)
 - Importers (what files import this file)
+- Nearby files and graph-derived recommendations
 
 ### Symbol Context
 
@@ -117,6 +126,7 @@ Shows:
 - Definition location and signature
 - Methods (if it's a type)
 - Related symbols across the codebase
+- Related files and recommended next files from the graph
 
 ### Generate LLM Context (Snapshot)
 
@@ -128,6 +138,19 @@ code-context snapshot "parser" --limit 3 # limit files
 Generates a context package for LLM consumption with:
 - Related files and their symbols
 - Summary of what was found
+- Graph summaries and recommended next files
+
+### Graph Exploration
+
+```bash
+code-context graph
+code-context graph --focus Engine
+code-context graph path Engine Server
+code-context graph neighbors internal/engine/engine.go --limit 5
+code-context graph subgraph Engine --depth 2
+```
+
+Use graph commands to export graph JSON, inspect adjacency, find file-level paths, and focus on local subgraphs.
 
 ### Trace Call Chain
 
@@ -268,12 +291,16 @@ Start server: `code-context serve --port 9090`
 
 | Method | Endpoint | Parameters | Description |
 |---|---|---|---|
-| GET | `/api/map` | — | Project architecture |
+| GET | `/api/map` | — | Project architecture with graph analysis |
 | GET | `/api/explain` | `file` | File summary |
 | GET | `/api/context` | `name` | Symbol profile |
 | GET | `/api/snapshot` | `q`, `limit?` | LLM context package |
 | GET | `/api/trace` | `from`, `to` | Call chain |
 | GET | `/api/diff-impact` | `file`, `depth?` | Change impact |
+| GET | `/api/graph` | `focus?` | Export repository or focused graph |
+| GET | `/api/graph/path` | `from`, `to` | Find file-level path through graph |
+| GET | `/api/graph/neighbors` | `target`, `limit?` | Adjacent graph context |
+| GET | `/api/graph/subgraph` | `target`, `depth?` | Local graph around a file or symbol |
 
 ### Git-aware Endpoints
 
@@ -329,21 +356,25 @@ go build -o code-context-mcp ./cmd/mcp
 | `imports` | Show file imports | `file` |
 | `importers` | Find importing files | `source` |
 | `stats` | Index statistics | - |
-| `map` | Project architecture | - |
-| `explain` | File summary | `file` |
-| `context` | Symbol profile | `symbol` |
-| `snapshot` | Generate LLM context | `query`, `limit?` |
+| `map` | Project architecture with graph analysis | - |
+| `explain` | File summary with graph guidance | `file` |
+| `context` | Symbol profile with graph guidance | `symbol` |
+| `snapshot` | Generate LLM context with recommendations | `query`, `limit?` |
 | `snapshot_git` | Context from git | `state?`, `limit?` |
 | `diff_impact` | Change impact analysis | `file`, `depth?` |
 | `diff_impact_git` | Impact from git | `state?`, `depth?` |
 | `trace` | Call chain tracing | `from`, `to` |
+
+Note: the MCP server currently exposes the core analysis tools above; `graph`, `graph path`, `graph neighbors`, and `graph subgraph` remain available through the CLI and HTTP API.
 
 ## Tips
 
 - Run `code-context index` first before any search commands
 - Use `snapshot` for generating LLM context - it's the most useful for AI
 - Use `map` to understand project structure quickly
+- Use `graph neighbors` or `graph subgraph` when a symbol/file is too isolated in plain search results
 - Use `--hybrid` flag with search for semantic matching
 - Use git-aware commands (`git-files`, `git-diff`, `snapshot-git`) to analyze changes
 - `diff-impact` is great for understanding what might break when changing a file
+- Test files are excluded from indexing by default, so outputs stay focused on production code
 - Create a `.code-context.yaml` config file for persistent settings
