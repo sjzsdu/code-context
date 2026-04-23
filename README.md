@@ -8,7 +8,7 @@ A code context system that reads entire codebases, indexes them structurally usi
 - **FTS5 symbol search** — fast full-text search on symbol names
 - **Definition lookup** — find where symbols are defined
 - **Import graph** — dependency analysis with BFS traversal, related-file scoring, path lookup, neighbors, and subgraph export
-- **Graph-aware context** — `map`, `context`, and `snapshot` include graph summaries and recommended files
+- **Graph-aware context** — `map`, `context`, `snapshot`, and `snapshot-git` include graph summaries, bridge/hotspot insights, and recommended files
 - **Context generation** — generate code context for LLM consumption
 - **Trace & impact analysis** — understand code flow and change impact
 - **HTTP API** — CLI parity for programmatic access, including graph endpoints
@@ -110,7 +110,7 @@ By default, test files are excluded from indexing so graph analysis and context 
 code-context map
 ```
 
-Shows directory structure with file/symbol counts plus repository-level graph analysis and recommended files.
+Shows directory structure with file/symbol counts plus repository-level graph analysis, bridge/hotspot insights, and recommended files.
 
 ### `search <query>` — Search symbols by name
 
@@ -139,7 +139,7 @@ Shows symbols, imports, importers, nearby files, and graph-derived recommendatio
 code-context context Engine
 ```
 
-Shows definition, methods, related symbols, related files, and graph-guided reading suggestions.
+Shows definition, methods, related symbols, related files, and graph-guided reading suggestions with bridge/hotspot insights.
 
 ### `snapshot <query>` — Generate LLM context
 
@@ -148,7 +148,7 @@ code-context snapshot "authentication"
 code-context snapshot "parser" --limit 5
 ```
 
-Generates a context package for LLM consumption, including graph summaries and recommended next files.
+Generates a context package for LLM consumption, including graph summaries, relation highlights, reading paths, and recommended next files.
 
 ### `graph` — Export and explore the repository graph
 

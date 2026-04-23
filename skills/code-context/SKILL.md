@@ -16,7 +16,7 @@ A code context system that reads entire codebases, indexes them structurally usi
 - **For Code Analysis**: Quickly understand unfamiliar codebases with `map`, `explain`, `context`
 - **For Graph Navigation**: Explore repository structure with `graph`, `graph path`, `graph neighbors`, and `graph subgraph`
 - **For Dependency Understanding**: Trace imports and find impact with `diff-impact`, `trace`
-- **For Git-aware Context**: Analyze changes with `git-files`, `git-diff`, `snapshot-git`
+- **For Git-aware Context**: Analyze changes with `git-files`, `snapshot-git`, and graph-guided follow-up recommendations
 - **For Semantic Search**: Use hybrid search combining keyword and semantic similarity
 - **For LLM Context**: Generate focused context packages with `snapshot`
 
@@ -101,7 +101,7 @@ code-context find-def "Engine"          # find symbol definition
 code-context map                         # show directory structure with stats
 ```
 
-Includes repository-level graph analysis and recommended files.
+Includes repository-level graph analysis, bridge/hotspot insights, and recommended files.
 
 ### Explain a File
 
@@ -127,6 +127,7 @@ Shows:
 - Methods (if it's a type)
 - Related symbols across the codebase
 - Related files and recommended next files from the graph
+- Bridge files, hotspots, and suggested reading paths when available
 
 ### Generate LLM Context (Snapshot)
 
@@ -138,7 +139,7 @@ code-context snapshot "parser" --limit 3 # limit files
 Generates a context package for LLM consumption with:
 - Related files and their symbols
 - Summary of what was found
-- Graph summaries and recommended next files
+- Graph summaries, relation highlights, reading paths, and recommended next files
 
 ### Graph Exploration
 
@@ -197,7 +198,7 @@ Shows:
 - Hunk headers (old/new line numbers)
 - Changed code with context
 
-### Snapshot from Git Changes
+- `snapshot-git` now includes graph summaries, relation highlights, and recommended next files for changed files
 
 ```bash
 code-context snapshot-git                # context for unstaged

@@ -276,26 +276,6 @@ func TestImportersEndpoint(t *testing.T) {
 	}
 }
 
-func TestStatsEndpoint(t *testing.T) {
-	ts, cleanup := setupTestServer(t)
-	defer cleanup()
-	resp, err := http.Get(ts.URL + "/api/stats")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-	var payload api.IndexStats
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if payload.TotalFiles < 0 {
-		t.Fatalf("invalid stats: %+v", payload)
-	}
-}
-
 func TestMapEndpoint(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -313,11 +293,38 @@ func TestMapEndpoint(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if _, ok := payload["path"]; !ok {
-		t.Fatalf("expected 'path' in response, got: %v", payload)
+	analysis, ok := payload["analysis"].(map[string]interface{})
+	if !ok || analysis == nil {
+		t.Fatalf("expected analysis in map response, got: %v", payload)
 	}
-	if _, ok := payload["analysis"]; !ok {
-		t.Fatalf("expected 'analysis' in map response, got: %v", payload)
+	if _, ok := analysis["bridge_files"]; !ok {
+		t.Fatalf("expected bridge_files in map analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["hotspot_files"]; !ok {
+		t.Fatalf("expected hotspot_files in map analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["reading_paths"]; !ok {
+		t.Fatalf("expected reading_paths in map analysis, got: %v", analysis)
+	}
+}
+
+func TestStatsEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Get(ts.URL + "/api/stats")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload api.IndexStats
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.TotalFiles < 0 {
+		t.Fatalf("invalid stats: %+v", payload)
 	}
 }
 
@@ -616,6 +623,19 @@ func TestContextEndpoint(t *testing.T) {
 	if _, ok := payload["related_files"]; !ok {
 		t.Fatalf("expected related_files in context response, got: %v", payload)
 	}
+	analysis, ok := payload["analysis"].(map[string]interface{})
+	if !ok || analysis == nil {
+		t.Fatalf("expected analysis in context response, got: %v", payload)
+	}
+	if _, ok := analysis["bridge_files"]; !ok {
+		t.Fatalf("expected bridge_files in context analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["relation_highlights"]; !ok {
+		t.Fatalf("expected relation_highlights in context analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["reading_paths"]; !ok {
+		t.Fatalf("expected reading_paths in context analysis, got: %v", analysis)
+	}
 }
 
 func TestContextMissingParam(t *testing.T) {
@@ -657,6 +677,19 @@ func TestSnapshotEndpoint(t *testing.T) {
 	}
 	if _, ok := payload["recommended_files"]; !ok {
 		t.Fatalf("expected recommended_files in snapshot response, got: %v", payload)
+	}
+	analysis, ok := payload["analysis"].(map[string]interface{})
+	if !ok || analysis == nil {
+		t.Fatalf("expected structured analysis in snapshot response, got: %v", payload["analysis"])
+	}
+	if _, ok := analysis["bridge_files"]; !ok {
+		t.Fatalf("expected bridge_files in snapshot analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["hotspot_files"]; !ok {
+		t.Fatalf("expected hotspot_files in snapshot analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["reading_paths"]; !ok {
+		t.Fatalf("expected reading_paths in snapshot analysis, got: %v", analysis)
 	}
 }
 
@@ -878,6 +911,16 @@ func TestSnapshotGitEndpoint(t *testing.T) {
 	}
 	if payload["analysis"] == nil {
 		t.Fatalf("expected analysis in snapshot-git response, got: %v", payload)
+	}
+	analysis, ok := payload["analysis"].(map[string]interface{})
+	if !ok || analysis == nil {
+		t.Fatalf("expected structured analysis in snapshot-git response, got: %v", payload["analysis"])
+	}
+	if _, ok := analysis["bridge_files"]; !ok {
+		t.Fatalf("expected bridge_files in snapshot-git analysis, got: %v", analysis)
+	}
+	if _, ok := analysis["relation_highlights"]; !ok {
+		t.Fatalf("expected relation_highlights in snapshot-git analysis, got: %v", analysis)
 	}
 	if _, ok := payload["recommended_files"]; !ok {
 		t.Fatalf("expected recommended_files in snapshot-git response, got: %v", payload)

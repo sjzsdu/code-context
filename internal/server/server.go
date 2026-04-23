@@ -525,6 +525,22 @@ var graphHTMLTemplate = template.Must(template.New("graph-html").Parse(`<!DOCTYP
         <h3>Most connected files</h3>
         <ul>{{range .Analysis.MostConnectedFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
         {{end}}
+        {{if .Analysis.BridgeFiles}}
+        <h3>Bridge files</h3>
+        <ul>{{range .Analysis.BridgeFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.HotspotFiles}}
+        <h3>Hotspot files</h3>
+        <ul>{{range .Analysis.HotspotFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.RelationHighlights}}
+        <h3>Relation highlights</h3>
+        <ul>{{range .Analysis.RelationHighlights}}<li>{{.}}</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.ReadingPaths}}
+        <h3>Reading paths</h3>
+        <ul>{{range .Analysis.ReadingPaths}}<li><strong>{{.Entry}}</strong>: {{range $i, $part := .Path}}{{if $i}} → {{end}}{{$part}}{{end}}{{if .Reason}}<div class="meta">{{.Reason}}</div>{{end}}</li>{{end}}</ul>
+        {{end}}
         {{if .Analysis.RecommendedFiles}}
         <h3>Recommended files</h3>
         <ul>{{range .Analysis.RecommendedFiles}}<li>{{.}}</li>{{end}}</ul>

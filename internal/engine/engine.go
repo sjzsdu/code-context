@@ -402,16 +402,29 @@ func buildGraphAnalysis(nodes []api.GraphNode, edges []api.GraphEdge, focusSet m
 		if edge.Type != "imports" {
 			continue
 		}
-		importCounts[strings.TrimPrefix(edge.Target, "import:")]++
+		importName := strings.TrimPrefix(edge.Target, "import:")
+		importCounts[importName]++
 		if _, ok := fileImports[edge.Source]; !ok {
 			fileImports[edge.Source] = make(map[string]bool)
 		}
-		fileImports[edge.Source][strings.TrimPrefix(edge.Target, "import:")] = true
+		fileImports[edge.Source][importName] = true
 	}
 
+	allFiles := make([]string, 0, len(fileNodes))
+	for _, file := range fileNodes {
+		allFiles = append(allFiles, file)
+	}
+	sort.Strings(allFiles)
+
 	fileCounts := make(map[string]int)
+	bridgeCounts := make(map[string]int)
+	sharedScores := make(map[string]map[string]int)
+	importToFiles := make(map[string][]string)
 	for sourceID, imports := range fileImports {
 		sourceFile := fileNodes[sourceID]
+		for imp := range imports {
+			importToFiles[imp] = append(importToFiles[imp], sourceFile)
+		}
 		for otherID, otherImports := range fileImports {
 			if sourceID >= otherID {
 				continue
@@ -426,8 +439,26 @@ func buildGraphAnalysis(nodes []api.GraphNode, edges []api.GraphEdge, focusSet m
 				otherFile := fileNodes[otherID]
 				fileCounts[sourceFile] += shared
 				fileCounts[otherFile] += shared
+				if sharedScores[sourceFile] == nil {
+					sharedScores[sourceFile] = make(map[string]int)
+				}
+				if sharedScores[otherFile] == nil {
+					sharedScores[otherFile] = make(map[string]int)
+				}
+				sharedScores[sourceFile][otherFile] += shared
+				sharedScores[otherFile][sourceFile] += shared
 			}
 		}
+	}
+	for imp, files := range importToFiles {
+		uniqueFiles := dedupeStrings(files)
+		if len(uniqueFiles) <= 1 {
+			continue
+		}
+		for _, file := range uniqueFiles {
+			bridgeCounts[file] += len(uniqueFiles) - 1
+		}
+		_ = imp
 	}
 
 	recommendedScores := make(map[string]int)
@@ -437,7 +468,7 @@ func buildGraphAnalysis(nodes []api.GraphNode, edges []api.GraphEdge, focusSet m
 		}
 	} else {
 		for focusFile := range focusSet {
-			for otherFile, count := range fileCounts {
+			for otherFile, count := range sharedScores[focusFile] {
 				if otherFile != focusFile {
 					recommendedScores[otherFile] += count
 				}
@@ -447,19 +478,158 @@ func buildGraphAnalysis(nodes []api.GraphNode, edges []api.GraphEdge, focusSet m
 
 	topImports := topGraphScores(importCounts, 3)
 	mostConnected := topGraphScores(fileCounts, 3)
+	bridgeFiles := topGraphScores(bridgeCounts, 3)
+	hotspotFiles := topGraphScores(sumGraphCounts(fileCounts, bridgeCounts), 3)
 	recommendedItems := topGraphScores(recommendedScores, 3)
 	recommended := make([]string, 0, len(recommendedItems))
 	for _, item := range recommendedItems {
 		recommended = append(recommended, item.Name)
 	}
-	if len(topImports) == 0 && len(mostConnected) == 0 && len(recommended) == 0 {
+	relationHighlights := buildRelationHighlights(sharedScores, focusSet)
+	readingPaths := buildReadingPaths(allFiles, sharedScores, focusSet, recommended)
+	if len(topImports) == 0 && len(mostConnected) == 0 && len(bridgeFiles) == 0 && len(hotspotFiles) == 0 && len(recommended) == 0 && len(relationHighlights) == 0 && len(readingPaths) == 0 {
 		return nil
 	}
 	return &api.GraphAnalysis{
 		TopImports:         topImports,
 		MostConnectedFiles: mostConnected,
+		BridgeFiles:        bridgeFiles,
+		HotspotFiles:       hotspotFiles,
 		RecommendedFiles:   recommended,
+		RelationHighlights: relationHighlights,
+		ReadingPaths:       readingPaths,
 	}
+}
+
+func sumGraphCounts(a, b map[string]int) map[string]int {
+	result := make(map[string]int)
+	for key, value := range a {
+		result[key] += value
+	}
+	for key, value := range b {
+		result[key] += value
+	}
+	return result
+}
+
+func buildRelationHighlights(sharedScores map[string]map[string]int, focusSet map[string]bool) []string {
+	type relation struct {
+		from  string
+		to    string
+		score int
+	}
+	var relations []relation
+	seen := make(map[string]bool)
+	for from, related := range sharedScores {
+		if len(focusSet) > 0 && !focusSet[from] {
+			continue
+		}
+		for to, score := range related {
+			keyA, keyB := from, to
+			if keyA > keyB {
+				keyA, keyB = keyB, keyA
+			}
+			key := keyA + "->" + keyB
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			relations = append(relations, relation{from: from, to: to, score: score})
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool {
+		if relations[i].score != relations[j].score {
+			return relations[i].score > relations[j].score
+		}
+		if relations[i].from != relations[j].from {
+			return relations[i].from < relations[j].from
+		}
+		return relations[i].to < relations[j].to
+	})
+	if len(relations) > 3 {
+		relations = relations[:3]
+	}
+	result := make([]string, 0, len(relations))
+	for _, rel := range relations {
+		result = append(result, fmt.Sprintf("%s ↔ %s share %d graph links", rel.from, rel.to, rel.score))
+	}
+	return result
+}
+
+func buildReadingPaths(allFiles []string, sharedScores map[string]map[string]int, focusSet map[string]bool, recommended []string) []api.GraphReadingPath {
+	entries := make([]string, 0)
+	if len(focusSet) > 0 {
+		for file := range focusSet {
+			entries = append(entries, file)
+		}
+		sort.Strings(entries)
+	} else if len(allFiles) > 0 {
+		entries = append(entries, allFiles[0])
+	}
+	result := make([]api.GraphReadingPath, 0, len(entries))
+	for _, entry := range entries {
+		path := []string{entry}
+		seen := map[string]bool{entry: true}
+		current := entry
+		for len(path) < 3 {
+			next, ok := strongestUnseenNeighbor(sharedScores[current], seen)
+			if !ok {
+				break
+			}
+			path = append(path, next)
+			seen[next] = true
+			current = next
+		}
+		if len(path) == 1 && len(recommended) > 0 {
+			for _, candidate := range recommended {
+				if !seen[candidate] {
+					path = append(path, candidate)
+					break
+				}
+			}
+		}
+		if len(path) <= 1 {
+			continue
+		}
+		result = append(result, api.GraphReadingPath{
+			Entry:  entry,
+			Path:   path,
+			Reason: fmt.Sprintf("Start at %s and follow the strongest neighboring files", entry),
+		})
+	}
+	return result
+}
+
+func strongestUnseenNeighbor(neighbors map[string]int, seen map[string]bool) (string, bool) {
+	bestName := ""
+	bestScore := -1
+	for name, score := range neighbors {
+		if seen[name] {
+			continue
+		}
+		if score > bestScore || (score == bestScore && (bestName == "" || name < bestName)) {
+			bestName = name
+			bestScore = score
+		}
+	}
+	if bestName == "" {
+		return "", false
+	}
+	return bestName, true
+}
+
+func dedupeStrings(items []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if seen[item] {
+			continue
+		}
+		seen[item] = true
+		result = append(result, item)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func topGraphScores(scores map[string]int, limit int) []api.GraphScoreItem {
@@ -501,9 +671,13 @@ func graphAnalysisForFiles(analysis *api.GraphAnalysis, files []string) *api.Gra
 	result := &api.GraphAnalysis{
 		TopImports:         append([]api.GraphScoreItem(nil), analysis.TopImports...),
 		MostConnectedFiles: filterGraphScoreItems(analysis.MostConnectedFiles, focus),
+		BridgeFiles:        filterGraphScoreItems(analysis.BridgeFiles, focus),
+		HotspotFiles:       filterGraphScoreItems(analysis.HotspotFiles, focus),
 		RecommendedFiles:   filterStringsBySet(analysis.RecommendedFiles, focus, false),
+		RelationHighlights: filterRelationHighlights(analysis.RelationHighlights, focus),
+		ReadingPaths:       filterReadingPaths(analysis.ReadingPaths, focus),
 	}
-	if len(result.TopImports) == 0 && len(result.MostConnectedFiles) == 0 && len(result.RecommendedFiles) == 0 {
+	if len(result.TopImports) == 0 && len(result.MostConnectedFiles) == 0 && len(result.BridgeFiles) == 0 && len(result.HotspotFiles) == 0 && len(result.RecommendedFiles) == 0 && len(result.RelationHighlights) == 0 && len(result.ReadingPaths) == 0 {
 		return nil
 	}
 	return result
@@ -536,14 +710,93 @@ func filterStringsBySet(items []string, focus map[string]bool, include bool) []s
 	return result
 }
 
+func filterRelationHighlights(items []string, focus map[string]bool) []string {
+	if len(items) == 0 || len(focus) == 0 {
+		return append([]string(nil), items...)
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		for file := range focus {
+			if strings.Contains(item, file) {
+				result = append(result, item)
+				break
+			}
+		}
+	}
+	return result
+}
+
+func filterReadingPaths(paths []api.GraphReadingPath, focus map[string]bool) []api.GraphReadingPath {
+	if len(paths) == 0 {
+		return nil
+	}
+	if len(focus) == 0 {
+		return append([]api.GraphReadingPath(nil), paths...)
+	}
+	result := make([]api.GraphReadingPath, 0, len(paths))
+	for _, path := range paths {
+		if focus[path.Entry] {
+			result = append(result, path)
+		}
+	}
+	return result
+}
+
+func graphSummaryParts(analysis *api.GraphAnalysis, related []string, recommended []string, nodeCount, edgeCount int, filePath string) []string {
+	parts := []string{fmt.Sprintf("Graph view covers %d nodes and %d edges", nodeCount, edgeCount)}
+	if len(related) > 0 {
+		parts = append(parts, fmt.Sprintf("nearby files: %s", strings.Join(related, ", ")))
+	}
+	if len(recommended) > 0 {
+		parts = append(parts, fmt.Sprintf("recommended next files: %s", strings.Join(recommended, ", ")))
+	}
+	if analysis != nil {
+		if len(analysis.BridgeFiles) > 0 {
+			parts = append(parts, fmt.Sprintf("bridge files: %s", joinGraphScoreItems(analysis.BridgeFiles)))
+		}
+		if len(analysis.HotspotFiles) > 0 {
+			parts = append(parts, fmt.Sprintf("hotspots: %s", joinGraphScoreItems(analysis.HotspotFiles)))
+		}
+		if len(analysis.ReadingPaths) > 0 {
+			parts = append(parts, fmt.Sprintf("reading path: %s", strings.Join(analysis.ReadingPaths[0].Path, " -> ")))
+		}
+		if len(analysis.RelationHighlights) > 0 {
+			parts = append(parts, analysis.RelationHighlights[0])
+		}
+	}
+	_ = filePath
+	return parts
+}
+
+func joinGraphScoreItems(items []api.GraphScoreItem) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, fmt.Sprintf("%s (%d)", item.Name, item.Count))
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (e *Engine) graphInsightsForFile(ctx context.Context, filePath string, limit int) (*api.GraphAnalysis, []string, []string, string) {
-	graphExport, err := e.ExportGraph(ctx, filePath)
-	if err != nil || graphExport == nil {
+	globalGraph, err := e.ExportGraph(ctx, "")
+	if err != nil || globalGraph == nil {
 		return nil, nil, nil, "No graph insights available"
 	}
-	analysis := graphAnalysisForFiles(graphExport.Analysis, []string{filePath})
+	analysis := graphAnalysisForFiles(globalGraph.Analysis, []string{filePath})
+
+	localGraph, err := e.GraphSubgraph(ctx, filePath, 1)
+	if err != nil || localGraph == nil || localGraph.Graph == nil {
+		if analysis == nil {
+			return nil, nil, nil, "No graph insights available"
+		}
+		recommended := filterStringsBySet(analysis.RecommendedFiles, map[string]bool{filePath: true}, false)
+		if len(recommended) > limit {
+			recommended = recommended[:limit]
+		}
+		return analysis, nil, recommended, "No local graph neighborhood available"
+	}
+
 	if buildErr := e.graph.Build(ctx); buildErr != nil {
-		return analysis, nil, nil, fmt.Sprintf("Graph view covers %d nodes and %d edges", len(graphExport.Nodes), len(graphExport.Edges))
+		return analysis, nil, nil, fmt.Sprintf("Graph view covers %d nodes and %d edges", len(localGraph.Graph.Nodes), len(localGraph.Graph.Edges))
 	}
 	related := e.graph.FileNeighbors(filePath)
 	if len(related) > limit {
@@ -562,13 +815,7 @@ func (e *Engine) graphInsightsForFile(ctx context.Context, filePath string, limi
 			recommended = recommended[:limit]
 		}
 	}
-	summaryParts := []string{fmt.Sprintf("Graph view covers %d nodes and %d edges", len(graphExport.Nodes), len(graphExport.Edges))}
-	if len(related) > 0 {
-		summaryParts = append(summaryParts, fmt.Sprintf("nearby files: %s", strings.Join(related, ", ")))
-	}
-	if len(recommended) > 0 {
-		summaryParts = append(summaryParts, fmt.Sprintf("recommended next files: %s", strings.Join(recommended, ", ")))
-	}
+	summaryParts := graphSummaryParts(analysis, related, recommended, len(localGraph.Graph.Nodes), len(localGraph.Graph.Edges), filePath)
 	return analysis, related, recommended, strings.Join(summaryParts, "; ")
 }
 
@@ -596,7 +843,12 @@ func mergeGraphAnalysesFromFiles(files []FileSummary) *api.GraphAnalysis {
 	}
 	importCounts := make(map[string]int)
 	connectedCounts := make(map[string]int)
+	bridgeCounts := make(map[string]int)
+	hotspotCounts := make(map[string]int)
 	recommendedCounts := make(map[string]int)
+	relationCounts := make(map[string]int)
+	readingPaths := make([]api.GraphReadingPath, 0)
+	seenReadingPath := make(map[string]bool)
 	for _, file := range files {
 		if file.Analysis == nil {
 			continue
@@ -607,8 +859,25 @@ func mergeGraphAnalysesFromFiles(files []FileSummary) *api.GraphAnalysis {
 		for _, item := range file.Analysis.MostConnectedFiles {
 			connectedCounts[item.Name] += item.Count
 		}
+		for _, item := range file.Analysis.BridgeFiles {
+			bridgeCounts[item.Name] += item.Count
+		}
+		for _, item := range file.Analysis.HotspotFiles {
+			hotspotCounts[item.Name] += item.Count
+		}
 		for _, item := range file.Analysis.RecommendedFiles {
 			recommendedCounts[item]++
+		}
+		for _, item := range file.Analysis.RelationHighlights {
+			relationCounts[item]++
+		}
+		for _, path := range file.Analysis.ReadingPaths {
+			key := path.Entry + ":" + strings.Join(path.Path, "->")
+			if seenReadingPath[key] {
+				continue
+			}
+			seenReadingPath[key] = true
+			readingPaths = append(readingPaths, path)
 		}
 	}
 	recommendedItems := topGraphScores(recommendedCounts, 3)
@@ -616,12 +885,24 @@ func mergeGraphAnalysesFromFiles(files []FileSummary) *api.GraphAnalysis {
 	for _, item := range recommendedItems {
 		recommended = append(recommended, item.Name)
 	}
+	relationItems := topGraphScores(relationCounts, 3)
+	relationHighlights := make([]string, 0, len(relationItems))
+	for _, item := range relationItems {
+		relationHighlights = append(relationHighlights, item.Name)
+	}
+	if len(readingPaths) > 3 {
+		readingPaths = readingPaths[:3]
+	}
 	analysis := &api.GraphAnalysis{
 		TopImports:         topGraphScores(importCounts, 3),
 		MostConnectedFiles: topGraphScores(connectedCounts, 3),
+		BridgeFiles:        topGraphScores(bridgeCounts, 3),
+		HotspotFiles:       topGraphScores(hotspotCounts, 3),
 		RecommendedFiles:   recommended,
+		RelationHighlights: relationHighlights,
+		ReadingPaths:       readingPaths,
 	}
-	if len(analysis.TopImports) == 0 && len(analysis.MostConnectedFiles) == 0 && len(analysis.RecommendedFiles) == 0 {
+	if len(analysis.TopImports) == 0 && len(analysis.MostConnectedFiles) == 0 && len(analysis.BridgeFiles) == 0 && len(analysis.HotspotFiles) == 0 && len(analysis.RecommendedFiles) == 0 && len(analysis.RelationHighlights) == 0 && len(analysis.ReadingPaths) == 0 {
 		return nil
 	}
 	return analysis

@@ -97,11 +97,22 @@ type GraphScoreItem struct {
 	Count int    `json:"count"`
 }
 
+// GraphReadingPath represents a suggested graph-guided reading flow.
+type GraphReadingPath struct {
+	Entry  string   `json:"entry"`
+	Path   []string `json:"path"`
+	Reason string   `json:"reason"`
+}
+
 // GraphAnalysis represents derived graph insights for exported graphs.
 type GraphAnalysis struct {
-	TopImports         []GraphScoreItem `json:"top_imports,omitempty"`
-	MostConnectedFiles []GraphScoreItem `json:"most_connected_files,omitempty"`
-	RecommendedFiles   []string         `json:"recommended_files,omitempty"`
+	TopImports         []GraphScoreItem   `json:"top_imports,omitempty"`
+	MostConnectedFiles []GraphScoreItem   `json:"most_connected_files,omitempty"`
+	BridgeFiles        []GraphScoreItem   `json:"bridge_files,omitempty"`
+	HotspotFiles       []GraphScoreItem   `json:"hotspot_files,omitempty"`
+	RecommendedFiles   []string           `json:"recommended_files,omitempty"`
+	RelationHighlights []string           `json:"relation_highlights,omitempty"`
+	ReadingPaths       []GraphReadingPath `json:"reading_paths,omitempty"`
 }
 
 // GraphPathResult represents a navigation path through the graph.

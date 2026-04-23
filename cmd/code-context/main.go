@@ -1028,6 +1028,33 @@ func printGraphAnalysis(analysis *api.GraphAnalysis) {
 			fmt.Printf("    - %s (%d)\n", item.Name, item.Count)
 		}
 	}
+	if len(analysis.BridgeFiles) > 0 {
+		fmt.Println("  Bridge files:")
+		for _, item := range analysis.BridgeFiles {
+			fmt.Printf("    - %s (%d)\n", item.Name, item.Count)
+		}
+	}
+	if len(analysis.HotspotFiles) > 0 {
+		fmt.Println("  Hotspot files:")
+		for _, item := range analysis.HotspotFiles {
+			fmt.Printf("    - %s (%d)\n", item.Name, item.Count)
+		}
+	}
+	if len(analysis.RelationHighlights) > 0 {
+		fmt.Println("  Relation highlights:")
+		for _, item := range analysis.RelationHighlights {
+			fmt.Printf("    - %s\n", item)
+		}
+	}
+	if len(analysis.ReadingPaths) > 0 {
+		fmt.Println("  Reading paths:")
+		for _, item := range analysis.ReadingPaths {
+			fmt.Printf("    - %s: %s\n", item.Entry, strings.Join(item.Path, " -> "))
+			if item.Reason != "" {
+				fmt.Printf("      %s\n", item.Reason)
+			}
+		}
+	}
 	if len(analysis.RecommendedFiles) > 0 {
 		fmt.Printf("  Recommended files: %s\n", strings.Join(analysis.RecommendedFiles, ", "))
 	}
@@ -1192,6 +1219,22 @@ var graphHTMLTemplate = template.Must(template.New("graph-html").Parse(`<!DOCTYP
         {{if .Analysis.MostConnectedFiles}}
         <h3>Most connected files</h3>
         <ul>{{range .Analysis.MostConnectedFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.BridgeFiles}}
+        <h3>Bridge files</h3>
+        <ul>{{range .Analysis.BridgeFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.HotspotFiles}}
+        <h3>Hotspot files</h3>
+        <ul>{{range .Analysis.HotspotFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.RelationHighlights}}
+        <h3>Relation highlights</h3>
+        <ul>{{range .Analysis.RelationHighlights}}<li>{{.}}</li>{{end}}</ul>
+        {{end}}
+        {{if .Analysis.ReadingPaths}}
+        <h3>Reading paths</h3>
+        <ul>{{range .Analysis.ReadingPaths}}<li><strong>{{.Entry}}</strong>: {{range $i, $part := .Path}}{{if $i}} → {{end}}{{$part}}{{end}}{{if .Reason}}<div class="meta">{{.Reason}}</div>{{end}}</li>{{end}}</ul>
         {{end}}
         {{if .Analysis.RecommendedFiles}}
         <h3>Recommended files</h3>

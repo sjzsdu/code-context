@@ -264,9 +264,14 @@ func TestGraphHTMLCmd(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	path := filepath.Join(tmpDir, "a.go")
-	if err := os.WriteFile(path, []byte("package main\nimport \"fmt\"\nfunc A() { fmt.Println(\"a\") }\n"), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
+	for name, body := range map[string]string{
+		"a.go": "package main\nimport \"fmt\"\nfunc A() { fmt.Println(\"a\") }\n",
+		"b.go": "package main\nimport \"fmt\"\nfunc B() { fmt.Println(\"b\") }\n",
+	} {
+		path := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
 	}
 
 	prevRoot, prevDB := root, dbPath
@@ -301,6 +306,12 @@ func TestGraphHTMLCmd(t *testing.T) {
 	}
 	if !strings.Contains(out, "Graph analysis") {
 		t.Fatalf("expected graph analysis section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Bridge files") {
+		t.Fatalf("expected bridge files section, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Reading paths") {
+		t.Fatalf("expected reading paths section, got:\n%s", out)
 	}
 }
 
@@ -346,6 +357,12 @@ func TestMapCmdIncludesGraphAnalysis(t *testing.T) {
 	}
 	if !strings.Contains(out, "Graph analysis:") {
 		t.Fatalf("expected graph analysis in map output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Bridge files:") {
+		t.Fatalf("expected bridge files in map output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Reading paths:") {
+		t.Fatalf("expected reading paths in map output, got:\n%s", out)
 	}
 }
 
@@ -396,6 +413,15 @@ func TestContextCmdIncludesGraphGuidance(t *testing.T) {
 	if !strings.Contains(out, "Related files:") {
 		t.Fatalf("expected related files in context output, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Bridge files:") {
+		t.Fatalf("expected bridge files in context output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Relation highlights:") {
+		t.Fatalf("expected relation highlights in context output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Reading paths:") {
+		t.Fatalf("expected reading paths in context output, got:\n%s", out)
+	}
 }
 
 func TestSnapshotCmdIncludesGraphGuidance(t *testing.T) {
@@ -444,6 +470,12 @@ func TestSnapshotCmdIncludesGraphGuidance(t *testing.T) {
 	}
 	if !strings.Contains(out, "Graph analysis:") {
 		t.Fatalf("expected graph analysis in snapshot output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Bridge files:") {
+		t.Fatalf("expected bridge files in snapshot output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Reading paths:") {
+		t.Fatalf("expected reading paths in snapshot output, got:\n%s", out)
 	}
 }
 
@@ -509,6 +541,12 @@ func TestSnapshotGitCmdIncludesGraphGuidance(t *testing.T) {
 	}
 	if !strings.Contains(out, "Graph:") {
 		t.Fatalf("expected per-file graph summary in snapshot-git output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Bridge files:") {
+		t.Fatalf("expected bridge files in snapshot-git output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Relation highlights:") {
+		t.Fatalf("expected relation highlights in snapshot-git output, got:\n%s", out)
 	}
 }
 
