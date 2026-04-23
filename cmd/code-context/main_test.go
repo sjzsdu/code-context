@@ -15,6 +15,97 @@ import (
 	"github.com/sjzsdu/code-context/internal/engine"
 )
 
+func TestStatsCmdIncludesIndexMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-stats-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	path := filepath.Join(tmpDir, "a.go")
+	if err := os.WriteFile(path, []byte("package main\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	eng, err := engine.New(root, dbPath)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		t.Fatalf("index repo: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	cmd := newStatsCmd()
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute stats cmd: %v", err)
+	}
+	if !strings.Contains(out, "Index version:") {
+		t.Fatalf("expected index version in stats output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Last indexed:") {
+		t.Fatalf("expected last indexed timestamp in stats output, got:\n%s", out)
+	}
+}
+
+func TestStatusCmdIncludesWorkflowMetadata(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-status-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	path := filepath.Join(tmpDir, "a.go")
+	if err := os.WriteFile(path, []byte("package main\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	eng, err := engine.New(root, dbPath)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		t.Fatalf("index repo: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	cmd := newStatusCmd()
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute status cmd: %v", err)
+	}
+	if !strings.Contains(out, "Graph version:") {
+		t.Fatalf("expected graph version in status output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Watch enabled:") {
+		t.Fatalf("expected watch metadata in status output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Index version:") {
+		t.Fatalf("expected index metadata in status output, got:\n%s", out)
+	}
+}
+
 func TestGraphCmd(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-graph-test-*")
 	if err != nil {
@@ -587,8 +678,11 @@ func TestWatchCmdUsesConfigDefaults(t *testing.T) {
 	root = tmpDir
 	dbPath = filepath.Join(tmpDir, "index.db")
 	watchCmd := newWatchCmd()
+	serveCmd := newServeCmd()
 	rootCmd.AddCommand(watchCmd)
+	rootCmd.AddCommand(serveCmd)
 	attachWatchConfig(rootCmd)
+	attachServeConfig(rootCmd)
 
 	watchFound, _, err := rootCmd.Find([]string{"watch"})
 	if err != nil {
@@ -618,6 +712,35 @@ func TestWatchCmdUsesConfigDefaults(t *testing.T) {
 	}
 	if !enabled {
 		t.Fatalf("expected enabled flag from config")
+	}
+
+	serveFound, _, err := rootCmd.Find([]string{"serve"})
+	if err != nil {
+		t.Fatalf("find serve cmd: %v", err)
+	}
+	if err := serveFound.PreRunE(serveFound, nil); err != nil {
+		t.Fatalf("serve pre-run: %v", err)
+	}
+	serveWatch, err := serveFound.Flags().GetBool("watch")
+	if err != nil {
+		t.Fatalf("get serve watch: %v", err)
+	}
+	if !serveWatch {
+		t.Fatalf("expected serve watch flag from config")
+	}
+	serveInterval, err := serveFound.Flags().GetDuration("watch-interval")
+	if err != nil {
+		t.Fatalf("get serve interval: %v", err)
+	}
+	if serveInterval != 3*time.Second {
+		t.Fatalf("serve watch interval = %s, want 3s", serveInterval)
+	}
+	serveDebounce, err := serveFound.Flags().GetDuration("watch-debounce")
+	if err != nil {
+		t.Fatalf("get serve debounce: %v", err)
+	}
+	if serveDebounce != 400*time.Millisecond {
+		t.Fatalf("serve watch debounce = %s, want 400ms", serveDebounce)
 	}
 }
 

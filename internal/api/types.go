@@ -159,11 +159,37 @@ type SearchMatch struct {
 
 // IndexStats reports indexing results.
 type IndexStats struct {
-	TotalFiles   int     `json:"total_files"`
-	IndexedFiles int     `json:"indexed_files"`
-	SkippedFiles int     `json:"skipped_files"`
-	FailedFiles  int     `json:"failed_files"`
-	TotalSymbols int     `json:"total_symbols"`
-	TotalImports int     `json:"total_imports"`
-	Duration     float64 `json:"duration_sec"`
+	TotalFiles      int     `json:"total_files"`
+	IndexedFiles    int     `json:"indexed_files"`
+	SkippedFiles    int     `json:"skipped_files"`
+	FailedFiles     int     `json:"failed_files"`
+	TotalSymbols    int     `json:"total_symbols"`
+	TotalImports    int     `json:"total_imports"`
+	Duration        float64 `json:"duration_sec"`
+	LastIndexedUnix int64   `json:"last_indexed_unix,omitempty"`
+	LastIndexedAt   string  `json:"last_indexed_at,omitempty"`
+	IndexVersion    string  `json:"index_version,omitempty"`
+}
+
+// WatchStatus reports workflow refresh state for watch-enabled processes.
+type WatchStatus struct {
+	Enabled            bool   `json:"enabled"`
+	Running            bool   `json:"running"`
+	Interval           string `json:"interval,omitempty"`
+	Debounce           string `json:"debounce,omitempty"`
+	LastRefreshUnix    int64  `json:"last_refresh_unix,omitempty"`
+	LastRefreshAt      string `json:"last_refresh_at,omitempty"`
+	LastRefreshStatus  string `json:"last_refresh_status,omitempty"`
+	LastRefreshSummary string `json:"last_refresh_summary,omitempty"`
+	LastError          string `json:"last_error,omitempty"`
+	RefreshCount       int    `json:"refresh_count,omitempty"`
+}
+
+// ServiceStatus reports workflow and indexing metadata for the running service.
+type ServiceStatus struct {
+	Root         string       `json:"root"`
+	DatabasePath string       `json:"database_path"`
+	GraphVersion string       `json:"graph_version"`
+	Index        *IndexStats  `json:"index,omitempty"`
+	Watch        *WatchStatus `json:"watch,omitempty"`
 }

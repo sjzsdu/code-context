@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -260,6 +261,11 @@ func (s *sqliteStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.TotalFiles)
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM symbols`).Scan(&st.TotalSymbols)
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM imports`).Scan(&st.TotalImports)
+	s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(indexed_at), 0) FROM files`).Scan(&st.LastIndexedUnix)
+	if st.LastIndexedUnix > 0 {
+		st.LastIndexedAt = time.Unix(st.LastIndexedUnix, 0).UTC().Format(time.RFC3339)
+	}
+	st.IndexVersion = "graph-export.v1"
 	return &st, nil
 }
 

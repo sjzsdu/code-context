@@ -59,6 +59,7 @@ func main() {
 		newImportsCmd(),
 		newImportersCmd(),
 		newStatsCmd(),
+		newStatusCmd(),
 		newMapCmd(),
 		newGraphCmd(),
 		newExplainCmd(),
@@ -133,10 +134,24 @@ func attachServeConfig(rootCmd *cobra.Command) {
 			}
 			return err
 		}
-		if loaded.Config.Server.Port > 0 {
-			flag := cmd.Flags().Lookup("port")
-			if flag != nil {
+		if !cmd.Flags().Changed("port") && loaded.Config.Server.Port > 0 {
+			if flag := cmd.Flags().Lookup("port"); flag != nil {
 				_ = flag.Value.Set(fmt.Sprintf("%d", loaded.Config.Server.Port))
+			}
+		}
+		if !cmd.Flags().Changed("watch") && loaded.Config.Watch.Enabled {
+			if flag := cmd.Flags().Lookup("watch"); flag != nil {
+				_ = flag.Value.Set("true")
+			}
+		}
+		if !cmd.Flags().Changed("watch-interval") && loaded.Config.Watch.Interval > 0 {
+			if flag := cmd.Flags().Lookup("watch-interval"); flag != nil {
+				_ = flag.Value.Set(loaded.Config.Watch.Interval.String())
+			}
+		}
+		if !cmd.Flags().Changed("watch-debounce") && loaded.Config.Watch.Debounce > 0 {
+			if flag := cmd.Flags().Lookup("watch-debounce"); flag != nil {
+				_ = flag.Value.Set(loaded.Config.Watch.Debounce.String())
 			}
 		}
 		return nil
@@ -469,6 +484,66 @@ func newStatsCmd() *cobra.Command {
 			fmt.Printf("Files:   %d\n", stats.TotalFiles)
 			fmt.Printf("Symbols: %d\n", stats.TotalSymbols)
 			fmt.Printf("Imports: %d\n", stats.TotalImports)
+			if stats.IndexVersion != "" {
+				fmt.Printf("Index version: %s\n", stats.IndexVersion)
+			}
+			if stats.LastIndexedAt != "" {
+				fmt.Printf("Last indexed:  %s\n", stats.LastIndexedAt)
+			}
+			return nil
+		},
+	}
+}
+
+func newStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show workflow and service status metadata",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			status, err := eng.Status(context.Background())
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Root:          %s\n", status.Root)
+			fmt.Printf("Database:      %s\n", status.DatabasePath)
+			fmt.Printf("Graph version: %s\n", status.GraphVersion)
+			if status.Index != nil {
+				fmt.Printf("Index version: %s\n", status.Index.IndexVersion)
+				fmt.Printf("Files:         %d\n", status.Index.TotalFiles)
+				fmt.Printf("Symbols:       %d\n", status.Index.TotalSymbols)
+				fmt.Printf("Imports:       %d\n", status.Index.TotalImports)
+				if status.Index.LastIndexedAt != "" {
+					fmt.Printf("Last indexed:  %s\n", status.Index.LastIndexedAt)
+				}
+			}
+			if status.Watch != nil {
+				fmt.Printf("Watch enabled: %t\n", status.Watch.Enabled)
+				fmt.Printf("Watch running: %t\n", status.Watch.Running)
+				if status.Watch.Interval != "" {
+					fmt.Printf("Watch interval: %s\n", status.Watch.Interval)
+				}
+				if status.Watch.Debounce != "" {
+					fmt.Printf("Watch debounce: %s\n", status.Watch.Debounce)
+				}
+				if status.Watch.LastRefreshAt != "" {
+					fmt.Printf("Last refresh:  %s\n", status.Watch.LastRefreshAt)
+				}
+				if status.Watch.LastRefreshStatus != "" {
+					fmt.Printf("Refresh source: %s\n", status.Watch.LastRefreshStatus)
+				}
+				if status.Watch.LastRefreshSummary != "" {
+					fmt.Printf("Refresh summary: %s\n", status.Watch.LastRefreshSummary)
+				}
+				if status.Watch.LastError != "" {
+					fmt.Printf("Last error:    %s\n", status.Watch.LastError)
+				}
+			}
 			return nil
 		},
 	}
@@ -1330,6 +1405,10 @@ var graphHTMLTemplate = template.Must(template.New("graph-html").Parse(`<!DOCTYP
 
 func newServeCmd() *cobra.Command {
 	var port int
+	var watch bool
+	var watchInterval time.Duration
+	var watchDebounce time.Duration
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start HTTP server",
@@ -1340,10 +1419,21 @@ func newServeCmd() *cobra.Command {
 			}
 			defer eng.Close()
 
+			eng.SetWatchConfiguration(watch, watchInterval, watchDebounce)
+			if watch {
+				if err := eng.StartBackgroundWatch(watchInterval, watchDebounce, verbose); err != nil {
+					return err
+				}
+			}
+
 			srv := server.New(eng, port)
 			return srv.Run()
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 9090, "HTTP port")
+	cmd.Flags().BoolVar(&watch, "watch", false, "enable background watch refresh while serving")
+	cmd.Flags().DurationVar(&watchInterval, "watch-interval", 2*time.Second, "polling interval for background watch refresh")
+	cmd.Flags().DurationVar(&watchDebounce, "watch-debounce", 250*time.Millisecond, "minimum delay between follow-up background refreshes")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print per-file indexing progress for background watch")
 	return cmd
 }

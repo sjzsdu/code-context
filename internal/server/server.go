@@ -56,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/diff-impact", s.handleDiffImpact)
 	mux.HandleFunc("/api/diff-impact-git", s.handleDiffImpactGit)
 	mux.HandleFunc("/api/stats", s.handleStats)
+	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/index", s.handleIndex)
 	return mux
 }
@@ -208,6 +209,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, stats)
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.eng.Status(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, status)
 }
 
 func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {

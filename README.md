@@ -82,6 +82,9 @@ Supported options:
 | `root` | string | Codebase root directory |
 | `db` | string | SQLite database path |
 | `server.port` | int | HTTP server port |
+| `watch.enabled` | bool | Enable watch mode / background refresh by default |
+| `watch.interval` | duration | Polling interval for incremental refresh |
+| `watch.debounce` | duration | Minimum delay between follow-up refreshes |
 
 Example (`.code-context.yaml`):
 
@@ -90,6 +93,10 @@ root: .
 db: .code-context/index.db
 server:
   port: 9090
+watch:
+  enabled: false
+  interval: 2s
+  debounce: 250ms
 ```
 
 ## CLI Commands
@@ -207,12 +214,25 @@ code-context stats
 # Imports: 156
 ```
 
+Also shows index version metadata and the last successful indexing timestamp when available.
+
+### `status` — Show workflow and service status
+
+```bash
+code-context status
+```
+
+Shows root/database metadata, graph version, index version, last indexed time, and current watch refresh state.
+
 ### `serve` — Start HTTP server
 
 ```bash
 code-context serve              # default port 9090
 code-context serve --port 8080
+code-context serve --watch      # enable background incremental refresh while serving
 ```
+
+When `--watch` is enabled, the server continuously runs incremental refresh in the background and exposes workflow state through `/api/status`.
 
 ## Git-aware Commands
 
@@ -266,12 +286,11 @@ Start the server with `code-context serve`, then:
 | GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
 | GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
 | GET | `/api/diff-impact` | `file`, `depth?` | Analyze change impact and related tests |
-| GET | `/api/stats` | — | Index statistics |
-| POST | `/api/index` | `incremental?` | Trigger re-indexing |
+| GET | `/api/stats` | — | Index statistics with version metadata |
+| GET | `/api/status` | — | Service/workflow status including watch metadata |
+| POST | `/api/index` | `incremental?` | Trigger indexing |
 
 Response format:
-
-```json
 {
   "results": [...],
   "count": 5

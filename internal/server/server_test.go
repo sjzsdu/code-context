@@ -326,6 +326,41 @@ func TestStatsEndpoint(t *testing.T) {
 	if payload.TotalFiles < 0 {
 		t.Fatalf("invalid stats: %+v", payload)
 	}
+	if payload.IndexVersion == "" {
+		t.Fatalf("expected index version in stats payload, got %+v", payload)
+	}
+	if payload.LastIndexedAt == "" {
+		t.Fatalf("expected last indexed timestamp in stats payload, got %+v", payload)
+	}
+}
+
+func TestStatusEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Get(ts.URL + "/api/status")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload api.ServiceStatus
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Root == "" {
+		t.Fatalf("expected root in service status, got %+v", payload)
+	}
+	if payload.GraphVersion == "" {
+		t.Fatalf("expected graph version in service status, got %+v", payload)
+	}
+	if payload.Index == nil || payload.Index.IndexVersion == "" {
+		t.Fatalf("expected index metadata in service status, got %+v", payload)
+	}
+	if payload.Watch == nil {
+		t.Fatalf("expected watch metadata in service status, got %+v", payload)
+	}
 }
 
 func TestGraphEndpoint(t *testing.T) {

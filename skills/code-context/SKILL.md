@@ -68,6 +68,8 @@ watch:
   debounce: 250ms
 ```
 
+`watch.*` settings apply both to the standalone `watch` command and to `serve --watch` background refresh.
+
 ## Core Commands
 
 ### Indexing
@@ -79,6 +81,16 @@ code-context index -v                    # verbose progress
 ```
 
 By default, test files are excluded from indexing so graph analysis and recommendations stay focused on production code.
+
+### Watch / Workflow Status
+
+```bash
+code-context watch --enabled
+code-context status
+code-context serve --watch
+```
+
+Use `status` to inspect index version, last indexed timestamp, and current watch refresh state.
 
 ### Search
 
@@ -316,12 +328,45 @@ Start server: `code-context serve --port 9090`
 
 | Method | Endpoint | Parameters | Description |
 |---|---|---|---|
-| GET | `/api/stats` | — | Index stats |
+| GET | `/api/stats` | — | Index stats with version metadata |
+| GET | `/api/status` | — | Workflow/service status including watch metadata |
 | POST | `/api/index` | `incremental?` | Re-index |
 
 ## MCP Server
 
 Use MCP server to expose code-context capabilities to AI agents (Claude Desktop, Cursor, etc.).
+
+### HTTP API
+
+- `GET /api/map` — architecture overview with graph analysis
+- `GET /api/graph` — graph JSON export
+- `GET /api/graph/html` — graph HTML view
+- `GET /api/graph/path?from=...&to=...` — graph path lookup
+- `GET /api/graph/neighbors?target=...` — neighboring graph context
+- `GET /api/graph/subgraph?target=...&depth=...` — focused local graph
+- `GET /api/stats` — index stats with version metadata
+- `GET /api/status` — workflow/service status with watch metadata
+- `POST /api/index?incremental=true` — trigger refresh
+
+### MCP Server
+
+
+The MCP server exposes these tools:
+
+- `search`
+- `find_def`
+- `map`
+- `explain`
+- `context`
+- `snapshot`
+- `trace`
+- `diff_impact`
+- `graph`
+- `graph_path`
+- `graph_neighbors`
+- `graph_subgraph`
+
+For workflow health, pair MCP usage with the HTTP `status` endpoint or CLI `status` command.
 
 ### Build
 

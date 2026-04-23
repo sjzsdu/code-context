@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/graph"
@@ -18,14 +20,21 @@ import (
 )
 
 type Engine struct {
-	root    string
-	dbPath  string
-	store   store.Store
-	parser  parser.Parser
-	indexer *indexer.Indexer
-	search  *search.Searcher
-	graph   *graph.Graph
+	root        string
+	dbPath      string
+	store       store.Store
+	parser      parser.Parser
+	indexer     *indexer.Indexer
+	search      *search.Searcher
+	graph       *graph.Graph
+	watchMu     sync.RWMutex
+	watchStatus api.WatchStatus
+	watchCancel context.CancelFunc
 }
+
+const (
+	graphExportVersion = "graph-export.v1"
+)
 
 func New(root string, dbPath string) (*Engine, error) {
 	if root == "" {
@@ -69,11 +78,15 @@ func New(root string, dbPath string) (*Engine, error) {
 }
 
 func (e *Engine) Index(ctx context.Context, verbose bool) (*api.IndexStats, error) {
-	return e.indexer.IndexAll(ctx, verbose)
+	stats, err := e.indexer.IndexAll(ctx, verbose)
+	e.recordRefresh(stats, err, "manual-full")
+	return stats, err
 }
 
 func (e *Engine) IndexIncremental(ctx context.Context, verbose bool) (*api.IndexStats, error) {
-	return e.indexer.IndexIncremental(ctx, verbose)
+	stats, err := e.indexer.IndexIncremental(ctx, verbose)
+	e.recordRefresh(stats, err, "manual-incremental")
+	return stats, err
 }
 
 func (e *Engine) SearchSymbols(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error) {
@@ -290,7 +303,7 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 	}
 
 	return &api.GraphExport{
-		Version:  "graph-export.v1",
+		Version:  graphExportVersion,
 		Focus:    focus,
 		Nodes:    nodes,
 		Edges:    edges,
@@ -1072,6 +1085,168 @@ func (e *Engine) lookupExistingFileTarget(ctx context.Context, target string) (s
 
 func (e *Engine) Stats(ctx context.Context) (*api.IndexStats, error) {
 	return e.store.Stats(ctx)
+}
+
+func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
+	stats, err := e.store.Stats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if stats.IndexVersion == "" {
+		stats.IndexVersion = graphExportVersion
+	}
+	watch := e.currentWatchStatus()
+	return &api.ServiceStatus{
+		Root:         e.root,
+		DatabasePath: e.dbPath,
+		GraphVersion: graphExportVersion,
+		Index:        stats,
+		Watch:        &watch,
+	}, nil
+}
+
+func (e *Engine) StartBackgroundWatch(interval, debounce time.Duration, verbose bool) error {
+	if interval <= 0 {
+		return fmt.Errorf("watch interval must be greater than zero")
+	}
+	if debounce < 0 {
+		return fmt.Errorf("watch debounce must be zero or greater")
+	}
+
+	e.watchMu.Lock()
+	if e.watchStatus.Running {
+		e.watchMu.Unlock()
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	e.watchCancel = cancel
+	e.watchMu.Unlock()
+
+	go func() {
+		if err := e.RunWatch(ctx, interval, debounce, verbose, nil); err != nil && ctx.Err() == nil {
+			e.recordRefresh(nil, err, "watch-background")
+		}
+	}()
+	return nil
+}
+
+func (e *Engine) StopBackgroundWatch() {
+	e.watchMu.Lock()
+	cancel := e.watchCancel
+	e.watchCancel = nil
+	e.watchMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (e *Engine) RunWatch(ctx context.Context, interval, debounce time.Duration, verbose bool, onRefresh func(*api.IndexStats, error)) error {
+	if interval <= 0 {
+		return fmt.Errorf("watch interval must be greater than zero")
+	}
+	if debounce < 0 {
+		return fmt.Errorf("watch debounce must be zero or greater")
+	}
+
+	e.watchMu.Lock()
+	e.watchStatus.Enabled = true
+	e.watchStatus.Running = true
+	e.watchStatus.Interval = interval.String()
+	e.watchStatus.Debounce = debounce.String()
+	e.watchStatus.LastError = ""
+	e.watchMu.Unlock()
+	defer func() {
+		e.watchMu.Lock()
+		e.watchStatus.Running = false
+		e.watchCancel = nil
+		e.watchMu.Unlock()
+	}()
+
+	stats, err := e.indexer.IndexIncremental(ctx, verbose)
+	e.recordRefresh(stats, err, "watch-initial")
+	if onRefresh != nil {
+		onRefresh(stats, err)
+	}
+	if err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	var nextAllowed time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if time.Now().Before(nextAllowed) {
+				continue
+			}
+			stats, err := e.indexer.IndexIncremental(ctx, verbose)
+			e.recordRefresh(stats, err, "watch-refresh")
+			if onRefresh != nil {
+				onRefresh(stats, err)
+			}
+			if err != nil {
+				nextAllowed = time.Now().Add(debounce)
+				continue
+			}
+			if stats != nil && (stats.IndexedFiles > 0 || stats.FailedFiles > 0) {
+				nextAllowed = time.Now().Add(debounce)
+			}
+		}
+	}
+}
+
+func (e *Engine) SetWatchConfiguration(enabled bool, interval, debounce time.Duration) {
+	e.watchMu.Lock()
+	defer e.watchMu.Unlock()
+	e.watchStatus.Enabled = enabled
+	if interval > 0 {
+		e.watchStatus.Interval = interval.String()
+	}
+	if debounce >= 0 {
+		e.watchStatus.Debounce = debounce.String()
+	}
+}
+
+func (e *Engine) currentWatchStatus() api.WatchStatus {
+	e.watchMu.RLock()
+	defer e.watchMu.RUnlock()
+	status := e.watchStatus
+	if status.LastRefreshUnix > 0 && status.LastRefreshAt == "" {
+		status.LastRefreshAt = time.Unix(status.LastRefreshUnix, 0).UTC().Format(time.RFC3339)
+	}
+	return status
+}
+
+func (e *Engine) recordRefresh(stats *api.IndexStats, err error, source string) {
+	e.watchMu.Lock()
+	defer e.watchMu.Unlock()
+	now := time.Now().UTC()
+	e.watchStatus.LastRefreshUnix = now.Unix()
+	e.watchStatus.LastRefreshAt = now.Format(time.RFC3339)
+	e.watchStatus.LastRefreshStatus = source
+	if err != nil {
+		e.watchStatus.LastError = err.Error()
+		e.watchStatus.LastRefreshSummary = fmt.Sprintf("%s failed: %v", source, err)
+		return
+	}
+	e.watchStatus.LastError = ""
+	e.watchStatus.RefreshCount++
+	if stats != nil {
+		e.watchStatus.LastRefreshSummary = fmt.Sprintf("%s: %d indexed, %d skipped, %d failed", source, stats.IndexedFiles, stats.SkippedFiles, stats.FailedFiles)
+		if stats.LastIndexedUnix == 0 {
+			stats.LastIndexedUnix = now.Unix()
+			stats.LastIndexedAt = now.Format(time.RFC3339)
+		}
+		if stats.IndexVersion == "" {
+			stats.IndexVersion = graphExportVersion
+		}
+		return
+	}
+	e.watchStatus.LastRefreshSummary = source
 }
 
 func (e *Engine) ListFiles(ctx context.Context, lang *api.Language) ([]*api.FileInfo, error) {
