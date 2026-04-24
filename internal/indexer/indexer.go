@@ -63,7 +63,7 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 
 	go idx.parseAll(ctx, files, results)
 
-	var indexed, skipped, failed, syms, imps int64
+	var indexed, skipped, failed, syms, imps, docs int64
 	sem := make(chan struct{}, idx.workers)
 	var wg sync.WaitGroup
 
@@ -75,12 +75,38 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 			}
 			continue
 		}
+
+		hash := sha256Hex(pr.content)
+
+		if pr.lang == api.Markdown || pr.lang == api.Text {
+			doc, links := parser.ExtractDocument(pr.path, string(pr.content))
+			doc.ContentHash = hash
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(pr parseResult) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				docID, err := idx.store.UpsertDocument(ctx, doc)
+				if err != nil {
+					atomic.AddInt64(&failed, 1)
+					return
+				}
+				if err := idx.store.ReplaceDocumentLinks(ctx, docID, links); err != nil {
+					atomic.AddInt64(&failed, 1)
+					return
+				}
+				atomic.AddInt64(&indexed, 1)
+				atomic.AddInt64(&docs, 1)
+			}(pr)
+			continue
+		}
+
 		if pr.result == nil {
 			atomic.AddInt64(&skipped, 1)
 			continue
 		}
 
-		hash := sha256Hex(pr.content)
 		existing, err := idx.store.GetFile(ctx, pr.path)
 		if err == nil && existing != nil && existing.ContentHash == hash {
 			atomic.AddInt64(&skipped, 1)
@@ -132,13 +158,14 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 
 	stats, _ := idx.store.Stats(ctx)
 	return &api.IndexStats{
-		TotalFiles:   total,
-		IndexedFiles: int(indexed),
-		SkippedFiles: int(skipped),
-		FailedFiles:  int(failed),
-		TotalSymbols: stats.TotalSymbols,
-		TotalImports: stats.TotalImports,
-		Duration:     time.Since(start).Seconds(),
+		TotalFiles:     total,
+		IndexedFiles:   int(indexed),
+		SkippedFiles:   int(skipped),
+		FailedFiles:    int(failed),
+		TotalSymbols:   stats.TotalSymbols,
+		TotalImports:   stats.TotalImports,
+		TotalDocuments: int(docs),
+		Duration:       time.Since(start).Seconds(),
 	}, nil
 }
 
@@ -169,6 +196,11 @@ func (idx *Indexer) parseAll(ctx context.Context, files []string, out chan<- par
 			content, err := os.ReadFile(filepath.Join(idx.root, path))
 			if err != nil {
 				out <- parseResult{path: path, err: err}
+				return
+			}
+
+			if lang == api.Markdown || lang == api.Text {
+				out <- parseResult{path: path, content: content, lang: lang, result: nil}
 				return
 			}
 
@@ -288,6 +320,19 @@ func (idx *Indexer) indexOneFile(ctx context.Context, path string) (nSyms, nImps
 	hash := sha256Hex(content)
 	existing, err := idx.store.GetFile(ctx, path)
 	if err == nil && existing != nil && existing.ContentHash == hash {
+		return 0, 0, false, nil
+	}
+
+	if lang == api.Markdown || lang == api.Text {
+		doc, links := parser.ExtractDocument(path, string(content))
+		doc.ContentHash = hash
+		docID, err := idx.store.UpsertDocument(ctx, doc)
+		if err != nil {
+			return 0, 0, false, err
+		}
+		if err := idx.store.ReplaceDocumentLinks(ctx, docID, links); err != nil {
+			return 0, 0, false, err
+		}
 		return 0, 0, false, nil
 	}
 

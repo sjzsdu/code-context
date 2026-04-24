@@ -404,6 +404,56 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 		}
 	}
 
+	docs, err := e.store.ListDocuments(ctx)
+	if err == nil && len(docs) > 0 {
+		for _, doc := range docs {
+			docNodeID := "doc:" + doc.Path
+			nodeMap[docNodeID] = api.GraphNode{
+				ID:       docNodeID,
+				Type:     "document",
+				Label:    doc.Title,
+				FilePath: doc.Path,
+				Name:     doc.Title,
+				Kind:     "document",
+			}
+
+			modulePath := graphModulePath(doc.Path)
+			moduleNodeID := graphModuleNodeID(modulePath)
+			edgeMap[docNodeID+"->"+moduleNodeID+"#describes"] = api.GraphEdge{
+				Source:     docNodeID,
+				Target:     moduleNodeID,
+				Type:       "describes",
+				Evidence:   "document in module directory",
+				Confidence: "INFERRED",
+			}
+
+			links, err := e.store.GetDocumentLinks(ctx, doc.Path)
+			if err == nil {
+				for _, link := range links {
+					var targetNodeID string
+					switch link.TargetType {
+					case "file":
+						targetNodeID = "file:" + link.TargetValue
+					case "symbol":
+						targetNodeID = "symbol:" + link.TargetValue
+					case "module":
+						targetNodeID = "module:" + link.TargetValue
+					default:
+						targetNodeID = link.TargetType + ":" + link.TargetValue
+					}
+					edgeMap[docNodeID+"->"+targetNodeID+"#"+link.TargetType] = api.GraphEdge{
+						Source:     docNodeID,
+						Target:     targetNodeID,
+						Type:       "mentions_" + link.TargetType,
+						Evidence:   link.Evidence,
+						Confidence: fmt.Sprintf("%.1f", link.Confidence),
+						Line:       link.Line,
+					}
+				}
+			}
+		}
+	}
+
 	nodes := make([]api.GraphNode, 0, len(nodeMap))
 	for _, node := range nodeMap {
 		nodes = append(nodes, node)

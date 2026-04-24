@@ -51,3 +51,29 @@ CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
 CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_source ON imports(source);
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
+
+-- Documents table for .md/.txt files
+CREATE TABLE IF NOT EXISTS documents (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    path         TEXT UNIQUE NOT NULL,
+    language     TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    title       TEXT,
+    summary     TEXT,
+    size        INTEGER NOT NULL DEFAULT 0,
+    indexed_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- Document links table for document-to-code relationships
+CREATE TABLE IF NOT EXISTS document_links (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id   INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    target_type   TEXT NOT NULL,
+    target_value  TEXT NOT NULL,
+    line         INTEGER NOT NULL DEFAULT 0,
+    evidence     TEXT,
+    confidence   REAL NOT NULL DEFAULT 1.0
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_links_doc ON document_links(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_links_target ON document_links(target_type, target_value);

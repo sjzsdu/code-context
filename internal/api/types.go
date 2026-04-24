@@ -26,11 +26,13 @@ const (
 	Python     Language = "python"
 	Rust       Language = "rust"
 	Java       Language = "java"
+	Markdown   Language = "markdown"
+	Text       Language = "text"
 )
 
 // AllLanguages returns all supported languages.
 func AllLanguages() []Language {
-	return []Language{Go, TypeScript, JavaScript, Python, Rust, Java}
+	return []Language{Go, TypeScript, JavaScript, Python, Rust, Java, Markdown, Text}
 }
 
 // Symbol represents a code symbol (function, type, etc.).
@@ -48,11 +50,25 @@ type Symbol struct {
 type FileInfo struct {
 	Path        string   `json:"path"`
 	Language    Language `json:"language"`
-	ContentHash string   `json:"hash"`
+	ContentHash string   `json:"content_hash,omitempty"`
 	Size        int64    `json:"size"`
+	IndexedAt   int64    `json:"indexed_at,omitempty"`
 }
 
-// ImportEdge represents an import dependency.
+// FileSummary represents a file with its symbols and related data.
+type FileSummary struct {
+	Path             string         `json:"path"`
+	Language         string         `json:"language"`
+	Symbols          []Symbol       `json:"symbols"`
+	Imports          []ImportEdge   `json:"imports"`
+	Importers        []ImportEdge   `json:"importers,omitempty"`
+	RelatedFiles     []string       `json:"related_files,omitempty"`
+	RelatedDocuments []string       `json:"related_documents,omitempty"`
+	RecommendedFiles []string       `json:"recommended_files,omitempty"`
+	GraphSummary     string         `json:"graph_summary,omitempty"`
+	Analysis         *GraphAnalysis `json:"analysis,omitempty"`
+}
+
 type ImportEdge struct {
 	FromFile string `json:"from"`
 	ToSource string `json:"to"`
@@ -69,6 +85,7 @@ type GraphNode struct {
 	Kind     string   `json:"kind,omitempty"`
 	Language Language `json:"language,omitempty"`
 	Line     int      `json:"line,omitempty"`
+	Title    string   `json:"title,omitempty"`
 }
 
 // GraphEdge represents an exported graph edge.
@@ -159,16 +176,18 @@ type SearchMatch struct {
 
 // IndexStats reports indexing results.
 type IndexStats struct {
-	TotalFiles      int     `json:"total_files"`
-	IndexedFiles    int     `json:"indexed_files"`
-	SkippedFiles    int     `json:"skipped_files"`
-	FailedFiles     int     `json:"failed_files"`
-	TotalSymbols    int     `json:"total_symbols"`
-	TotalImports    int     `json:"total_imports"`
-	Duration        float64 `json:"duration_sec"`
-	LastIndexedUnix int64   `json:"last_indexed_unix,omitempty"`
-	LastIndexedAt   string  `json:"last_indexed_at,omitempty"`
-	IndexVersion    string  `json:"index_version,omitempty"`
+	TotalFiles       int     `json:"total_files"`
+	IndexedFiles     int     `json:"indexed_files"`
+	SkippedFiles     int     `json:"skipped_files"`
+	FailedFiles      int     `json:"failed_files"`
+	TotalSymbols     int     `json:"total_symbols"`
+	TotalImports     int     `json:"total_imports"`
+	TotalDocuments   int     `json:"total_documents,omitempty"`
+	IndexedDocuments int     `json:"indexed_documents,omitempty"`
+	Duration         float64 `json:"duration_sec"`
+	LastIndexedUnix  int64   `json:"last_indexed_unix,omitempty"`
+	LastIndexedAt    string  `json:"last_indexed_at,omitempty"`
+	IndexVersion     string  `json:"index_version,omitempty"`
 }
 
 // WatchStatus reports workflow refresh state for watch-enabled processes.
@@ -192,4 +211,27 @@ type ServiceStatus struct {
 	GraphVersion string       `json:"graph_version"`
 	Index        *IndexStats  `json:"index,omitempty"`
 	Watch        *WatchStatus `json:"watch,omitempty"`
+}
+
+// Document represents a document file.
+type Document struct {
+	ID          int64  `json:"id"`
+	Path        string `json:"path"`
+	Language    string `json:"language"`
+	ContentHash string `json:"content_hash,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Size        int    `json:"size"`
+	IndexedAt   int64  `json:"indexed_at,omitempty"`
+}
+
+// DocumentLink represents a relationship between a document and code.
+type DocumentLink struct {
+	ID          int64   `json:"id"`
+	DocumentID  int64   `json:"document_id"`
+	TargetType  string  `json:"target_type"`
+	TargetValue string  `json:"target_value"`
+	Line        int     `json:"line"`
+	Evidence    string  `json:"evidence,omitempty"`
+	Confidence  float64 `json:"confidence"`
 }

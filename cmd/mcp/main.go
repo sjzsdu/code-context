@@ -70,8 +70,12 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: auto-index failed: %v", err)
 	} else {
-		log.Printf("Auto-index completed: %d files, %d symbols, %d imports (%.1fs)",
-			stats.IndexedFiles, stats.TotalSymbols, stats.TotalImports, stats.Duration)
+		docInfo := ""
+		if stats.TotalDocuments > 0 {
+			docInfo = fmt.Sprintf(", %d docs", stats.TotalDocuments)
+		}
+		log.Printf("Auto-index completed: %d files, %d symbols, %d imports%s (%.1fs)",
+			stats.IndexedFiles, stats.TotalSymbols, stats.TotalImports, docInfo, stats.Duration)
 	}
 
 	// Run with stdio transport (for Claude Desktop, Cursor, etc.)

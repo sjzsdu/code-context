@@ -21,6 +21,9 @@ func TestDetectLanguage_SupportedExtensions(t *testing.T) {
 		{"script.py", api.Python},
 		{"lib.rs", api.Rust},
 		{"Main.java", api.Java},
+		{"README.md", api.Markdown},
+		{"readme.txt", api.Text},
+		{"CHANGELOG.md", api.Markdown},
 	}
 
 	for _, tt := range tests {
@@ -38,8 +41,6 @@ func TestDetectLanguage_SupportedExtensions(t *testing.T) {
 
 func TestDetectLanguage_UnsupportedExtensions(t *testing.T) {
 	unsupported := []string{
-		"readme.txt",
-		"README.md",
 		"config.yaml",
 		"main.c",
 		"Makefile",

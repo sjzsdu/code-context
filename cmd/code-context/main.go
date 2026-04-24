@@ -219,9 +219,15 @@ func newIndexCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("\nDone: %d indexed, %d skipped, %d failed — %d symbols, %d imports (%.1fs)\n",
-				stats.IndexedFiles, stats.SkippedFiles, stats.FailedFiles,
-				stats.TotalSymbols, stats.TotalImports, stats.Duration)
+			if stats.TotalDocuments > 0 {
+				fmt.Printf("\nDone: %d indexed (%d docs), %d skipped, %d failed — %d symbols, %d imports (%.1fs)\n",
+					stats.IndexedFiles, stats.TotalDocuments, stats.SkippedFiles, stats.FailedFiles,
+					stats.TotalSymbols, stats.TotalImports, stats.Duration)
+			} else {
+				fmt.Printf("\nDone: %d indexed, %d skipped, %d failed — %d symbols, %d imports (%.1fs)\n",
+					stats.IndexedFiles, stats.SkippedFiles, stats.FailedFiles,
+					stats.TotalSymbols, stats.TotalImports, stats.Duration)
+			}
 			return nil
 		},
 	}
@@ -484,6 +490,9 @@ func newStatsCmd() *cobra.Command {
 			fmt.Printf("Files:   %d\n", stats.TotalFiles)
 			fmt.Printf("Symbols: %d\n", stats.TotalSymbols)
 			fmt.Printf("Imports: %d\n", stats.TotalImports)
+			if stats.TotalDocuments > 0 {
+				fmt.Printf("Documents: %d\n", stats.TotalDocuments)
+			}
 			if stats.IndexVersion != "" {
 				fmt.Printf("Index version: %s\n", stats.IndexVersion)
 			}

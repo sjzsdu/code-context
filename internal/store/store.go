@@ -21,5 +21,13 @@ type Store interface {
 	GetImports(ctx context.Context, filePath string) ([]api.ImportEdge, error)
 	GetImporters(ctx context.Context, importSource string) ([]api.ImportEdge, error)
 	Stats(ctx context.Context) (*api.IndexStats, error)
+	UpsertDocument(ctx context.Context, doc *api.Document) (int64, error)
+	GetDocument(ctx context.Context, path string) (*api.Document, error)
+	DeleteDocument(ctx context.Context, path string) error
+	ListDocuments(ctx context.Context) ([]*api.Document, error)
+	ReplaceDocumentLinks(ctx context.Context, docID int64, links []api.DocumentLink) error
+	GetDocumentLinks(ctx context.Context, docPath string) ([]api.DocumentLink, error)
+	GetDocumentsByTarget(ctx context.Context, targetType, targetValue string) ([]api.DocumentLink, error)
+	GetDocumentStats(ctx context.Context) (int, int, error)
 	Close() error
 }

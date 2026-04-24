@@ -15,6 +15,8 @@ var extMap = map[string]api.Language{
 	".py":   api.Python,
 	".rs":   api.Rust,
 	".java": api.Java,
+	".md":   api.Markdown, ".markdown": api.Markdown,
+	".txt": api.Text,
 }
 
 // DetectLanguage detects the language from a file path based on extension.

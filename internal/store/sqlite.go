@@ -261,6 +261,7 @@ func (s *sqliteStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.TotalFiles)
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM symbols`).Scan(&st.TotalSymbols)
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM imports`).Scan(&st.TotalImports)
+	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents`).Scan(&st.TotalDocuments)
 	s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(indexed_at), 0) FROM files`).Scan(&st.LastIndexedUnix)
 	if st.LastIndexedUnix > 0 {
 		st.LastIndexedAt = time.Unix(st.LastIndexedUnix, 0).UTC().Format(time.RFC3339)
@@ -273,6 +274,15 @@ func (s *sqliteStore) Close() error {
 	return s.db.Close()
 }
 
+func (s *sqliteStore) GetDocumentStats(ctx context.Context) (total, indexed int, err error) {
+	var count int
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM documents`).Scan(&count)
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, count, nil
+}
+
 func scanSymbols(rows *sql.Rows) ([]api.Symbol, error) {
 	var result []api.Symbol
 	for rows.Next() {
@@ -283,6 +293,114 @@ func scanSymbols(rows *sql.Rows) ([]api.Symbol, error) {
 		}
 		sym.Kind = api.SymbolKind(kind)
 		result = append(result, sym)
+	}
+	return result, rows.Err()
+}
+
+func (s *sqliteStore) UpsertDocument(ctx context.Context, doc *api.Document) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO documents (path, language, content_hash, title, summary, size) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(path) DO UPDATE SET content_hash=excluded.content_hash, title=excluded.title, summary=excluded.summary, size=excluded.size, indexed_at=unixepoch()`,
+		doc.Path, doc.Language, doc.ContentHash, doc.Title, doc.Summary, doc.Size)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *sqliteStore) GetDocument(ctx context.Context, path string) (*api.Document, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, path, language, content_hash, title, summary, size FROM documents WHERE path = ?`, path)
+	var doc api.Document
+	if err := row.Scan(&doc.ID, &doc.Path, &doc.Language, &doc.ContentHash, &doc.Title, &doc.Summary, &doc.Size); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &doc, nil
+}
+
+func (s *sqliteStore) DeleteDocument(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM documents WHERE path = ?`, path)
+	return err
+}
+
+func (s *sqliteStore) ListDocuments(ctx context.Context) ([]*api.Document, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, path, language, content_hash, title, summary, size FROM documents`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*api.Document
+	for rows.Next() {
+		var doc api.Document
+		if err := rows.Scan(&doc.ID, &doc.Path, &doc.Language, &doc.ContentHash, &doc.Title, &doc.Summary, &doc.Size); err != nil {
+			return nil, err
+		}
+		result = append(result, &doc)
+	}
+	return result, rows.Err()
+}
+
+func (s *sqliteStore) ReplaceDocumentLinks(ctx context.Context, docID int64, links []api.DocumentLink) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `DELETE FROM document_links WHERE document_id = ?`, docID)
+	if err != nil {
+		return err
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO document_links (document_id, target_type, target_value, line, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, link := range links {
+		_, err = stmt.ExecContext(ctx, docID, link.TargetType, link.TargetValue, link.Line, link.Evidence, link.Confidence)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) GetDocumentLinks(ctx context.Context, docPath string) ([]api.DocumentLink, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT dl.id, dl.document_id, dl.target_type, dl.target_value, dl.line, dl.evidence, dl.confidence
+		 FROM document_links dl JOIN documents d ON d.id = dl.document_id
+		 WHERE d.path = ?`, docPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDocumentLinks(rows)
+}
+
+func (s *sqliteStore) GetDocumentsByTarget(ctx context.Context, targetType, targetValue string) ([]api.DocumentLink, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT dl.id, dl.document_id, dl.target_type, dl.target_value, dl.line, dl.evidence, dl.confidence
+		 FROM document_links dl
+		 WHERE dl.target_type = ? AND dl.target_value = ?`, targetType, targetValue)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDocumentLinks(rows)
+}
+
+func scanDocumentLinks(rows *sql.Rows) ([]api.DocumentLink, error) {
+	var result []api.DocumentLink
+	for rows.Next() {
+		var link api.DocumentLink
+		if err := rows.Scan(&link.ID, &link.DocumentID, &link.TargetType, &link.TargetValue, &link.Line, &link.Evidence, &link.Confidence); err != nil {
+			return nil, err
+		}
+		result = append(result, link)
 	}
 	return result, rows.Err()
 }

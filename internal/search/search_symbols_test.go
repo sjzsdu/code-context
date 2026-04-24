@@ -51,6 +51,26 @@ func (m *searchMockStore) GetImporters(ctx context.Context, importSource string)
 func (m *searchMockStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	return &api.IndexStats{}, nil
 }
+func (m *searchMockStore) GetDocumentStats(ctx context.Context) (int, int, error) { return 0, 0, nil }
+func (m *searchMockStore) UpsertDocument(ctx context.Context, doc *api.Document) (int64, error) {
+	return 0, nil
+}
+func (m *searchMockStore) GetDocument(ctx context.Context, path string) (*api.Document, error) {
+	return nil, nil
+}
+func (m *searchMockStore) DeleteDocument(ctx context.Context, path string) error { return nil }
+func (m *searchMockStore) ListDocuments(ctx context.Context) ([]*api.Document, error) {
+	return nil, nil
+}
+func (m *searchMockStore) ReplaceDocumentLinks(ctx context.Context, docID int64, links []api.DocumentLink) error {
+	return nil
+}
+func (m *searchMockStore) GetDocumentLinks(ctx context.Context, docPath string) ([]api.DocumentLink, error) {
+	return nil, nil
+}
+func (m *searchMockStore) GetDocumentsByTarget(ctx context.Context, targetType, targetValue string) ([]api.DocumentLink, error) {
+	return nil, nil
+}
 func (m *searchMockStore) Close() error { return nil }
 
 func TestSearchSymbolsFuzzyRanking(t *testing.T) {
