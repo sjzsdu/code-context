@@ -265,7 +265,7 @@ func (s *sqliteStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	if st.LastIndexedUnix > 0 {
 		st.LastIndexedAt = time.Unix(st.LastIndexedUnix, 0).UTC().Format(time.RFC3339)
 	}
-	st.IndexVersion = "graph-export.v1"
+	st.IndexVersion = "graph-export.v2"
 	return &st, nil
 }
 

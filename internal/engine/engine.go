@@ -33,7 +33,7 @@ type Engine struct {
 }
 
 const (
-	graphExportVersion = "graph-export.v1"
+	graphExportVersion = "graph-export.v2"
 )
 
 func New(root string, dbPath string) (*Engine, error) {
@@ -199,6 +199,74 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 	symbolCount := 0
 	importEdgeCount := 0
 
+	fileByPath := make(map[string]*api.FileInfo, len(files))
+	packageNamesByFile := make(map[string][]string, len(files))
+	filesByPackage := make(map[string][]string)
+	filesByModule := make(map[string][]string)
+	moduleSet := make(map[string]bool)
+	packageSet := make(map[string]bool)
+
+	for _, f := range files {
+		fileByPath[f.Path] = f
+		modulePath := graphModulePath(f.Path)
+		moduleSet[modulePath] = true
+		filesByModule[modulePath] = append(filesByModule[modulePath], f.Path)
+
+		syms, err := e.store.GetFileSymbols(ctx, f.Path)
+		if err != nil {
+			return nil, err
+		}
+		for _, sym := range syms {
+			if sym.Kind != api.Package && sym.Kind != api.Module {
+				continue
+			}
+			packageKey := graphPackageKey(sym.Name, modulePath)
+			if !containsString(packageNamesByFile[f.Path], sym.Name) {
+				packageNamesByFile[f.Path] = append(packageNamesByFile[f.Path], sym.Name)
+			}
+			packageSet[packageKey] = true
+			filesByPackage[packageKey] = append(filesByPackage[packageKey], f.Path)
+		}
+	}
+
+	for modulePath := range moduleSet {
+		moduleNodeID := graphModuleNodeID(modulePath)
+		label := modulePath
+		if modulePath == "." {
+			label = "root"
+		}
+		nodeMap[moduleNodeID] = api.GraphNode{
+			ID:    moduleNodeID,
+			Type:  "module",
+			Label: label,
+			Name:  label,
+			Kind:  string(api.Module),
+		}
+	}
+
+	for packageKey := range packageSet {
+		packageName, packageModule := splitGraphPackageKey(packageKey)
+		packageNodeID := graphPackageNodeID(packageKey)
+		nodeMap[packageNodeID] = api.GraphNode{
+			ID:    packageNodeID,
+			Type:  "package",
+			Label: packageName,
+			Name:  packageName,
+			Kind:  string(api.Package),
+		}
+		moduleNodeID := graphModuleNodeID(packageModule)
+		edgeKey := packageNodeID + "->" + moduleNodeID + "#belongs_to"
+		edgeMap[edgeKey] = api.GraphEdge{
+			Source:     packageNodeID,
+			Target:     moduleNodeID,
+			Type:       "belongs_to",
+			Evidence:   fmt.Sprintf("package %s grouped under module %s", packageName, packageModule),
+			Confidence: "INFERRED",
+		}
+	}
+
+	internalImportTargets := buildInternalImportTargets(fileByPath, packageNamesByFile, filesByPackage, filesByModule)
+
 	for _, f := range files {
 		if len(focusSet) > 0 && !focusSet[f.Path] {
 			continue
@@ -212,6 +280,27 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 			Label:    f.Path,
 			FilePath: f.Path,
 			Language: f.Language,
+		}
+
+		modulePath := graphModulePath(f.Path)
+		moduleNodeID := graphModuleNodeID(modulePath)
+		edgeMap[fileNodeID+"->"+moduleNodeID+"#belongs_to"] = api.GraphEdge{
+			Source:     fileNodeID,
+			Target:     moduleNodeID,
+			Type:       "belongs_to",
+			Evidence:   fmt.Sprintf("%s is stored under %s", f.Path, modulePath),
+			Confidence: "EXTRACTED",
+		}
+
+		for _, packageName := range packageNamesByFile[f.Path] {
+			packageNodeID := graphPackageNodeID(graphPackageKey(packageName, modulePath))
+			edgeMap[fileNodeID+"->"+packageNodeID+"#declares_package"] = api.GraphEdge{
+				Source:     fileNodeID,
+				Target:     packageNodeID,
+				Type:       "declares_package",
+				Evidence:   fmt.Sprintf("%s declares package %s", f.Path, packageName),
+				Confidence: "EXTRACTED",
+			}
 		}
 
 		imports, err := e.store.GetImports(ctx, f.Path)
@@ -238,6 +327,22 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 				Confidence: "EXTRACTED",
 				Line:       imp.Line,
 			}
+			for _, targetFile := range internalImportTargets[normalizeImportSource(imp.ToSource)] {
+				if targetFile == f.Path {
+					continue
+				}
+				if len(focusSet) > 0 && !focusSet[targetFile] {
+					continue
+				}
+				resolvedNodeID := "file:" + targetFile
+				edgeMap[importNodeID+"->"+resolvedNodeID+"#resolves_to"] = api.GraphEdge{
+					Source:     importNodeID,
+					Target:     resolvedNodeID,
+					Type:       "resolves_to",
+					Evidence:   fmt.Sprintf("%s matches indexed file %s", imp.ToSource, targetFile),
+					Confidence: importResolutionConfidence(imp.ToSource, targetFile),
+				}
+			}
 			importEdgeCount++
 		}
 
@@ -254,6 +359,7 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 				FilePath: sym.FilePath,
 				Name:     sym.Name,
 				Kind:     string(sym.Kind),
+				Language: f.Language,
 				Line:     sym.Line,
 			}
 			edgeKey := fileNodeID + "->" + symbolNodeID + "#defines"
@@ -264,6 +370,35 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 				Evidence:   fmt.Sprintf("%s:%d", sym.FilePath, sym.Line),
 				Confidence: "EXTRACTED",
 				Line:       sym.Line,
+			}
+			edgeMap[symbolNodeID+"->"+fileNodeID+"#belongs_to"] = api.GraphEdge{
+				Source:     symbolNodeID,
+				Target:     fileNodeID,
+				Type:       "belongs_to",
+				Evidence:   fmt.Sprintf("%s is defined in %s", sym.Name, sym.FilePath),
+				Confidence: "EXTRACTED",
+				Line:       sym.Line,
+			}
+			if moduleNodeID != "" {
+				edgeMap[symbolNodeID+"->"+moduleNodeID+"#belongs_to_module"] = api.GraphEdge{
+					Source:     symbolNodeID,
+					Target:     moduleNodeID,
+					Type:       "belongs_to",
+					Evidence:   fmt.Sprintf("%s is part of module %s", sym.Name, modulePath),
+					Confidence: "INFERRED",
+					Line:       sym.Line,
+				}
+			}
+			if sym.Kind == api.Package || sym.Kind == api.Module {
+				packageNodeID := graphPackageNodeID(graphPackageKey(sym.Name, modulePath))
+				edgeMap[symbolNodeID+"->"+packageNodeID+"#represents"] = api.GraphEdge{
+					Source:     symbolNodeID,
+					Target:     packageNodeID,
+					Type:       "represents",
+					Evidence:   fmt.Sprintf("%s declares package/module %s", sym.FilePath, sym.Name),
+					Confidence: "EXTRACTED",
+					Line:       sym.Line,
+				}
 			}
 			symbolCount++
 		}
@@ -307,7 +442,7 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 		Focus:    focus,
 		Nodes:    nodes,
 		Edges:    edges,
-		Summary:  fmt.Sprintf("Exported %d files, %d symbols, and %d import edges for %s", includedFiles, symbolCount, importEdgeCount, scope),
+		Summary:  fmt.Sprintf("Exported %d files, %d symbols, %d import edges, %d modules, and %d packages for %s", includedFiles, symbolCount, importEdgeCount, len(moduleSet), len(packageSet), scope),
 		Analysis: buildGraphAnalysis(nodes, edges, focusSet),
 	}, nil
 }
@@ -400,6 +535,132 @@ func (e *Engine) relatedFilesFromImports(ctx context.Context, resolvedFile strin
 		result = append(result, item.Name)
 	}
 	return result
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+func graphModulePath(filePath string) string {
+	dir := filepath.Dir(filePath)
+	if dir == "." || dir == string(filepath.Separator) {
+		return "."
+	}
+	return filepath.Clean(dir)
+}
+
+func graphModuleNodeID(modulePath string) string {
+	return "module:" + modulePath
+}
+
+func graphPackageKey(name, modulePath string) string {
+	return modulePath + "::" + name
+}
+
+func splitGraphPackageKey(key string) (string, string) {
+	parts := strings.SplitN(key, "::", 2)
+	if len(parts) != 2 {
+		return key, "."
+	}
+	return parts[1], parts[0]
+}
+
+func graphPackageNodeID(key string) string {
+	return "package:" + key
+}
+
+func normalizeImportSource(source string) string {
+	source = strings.TrimSpace(strings.Trim(source, "\"'`"))
+	source = strings.TrimPrefix(source, "./")
+	source = strings.TrimPrefix(source, "/")
+	source = filepath.Clean(source)
+	if source == "." {
+		return ""
+	}
+	return strings.TrimSpace(source)
+}
+
+func buildInternalImportTargets(fileByPath map[string]*api.FileInfo, packageNamesByFile map[string][]string, filesByPackage map[string][]string, filesByModule map[string][]string) map[string][]string {
+	result := make(map[string][]string)
+	add := func(key, file string) {
+		key = normalizeImportSource(key)
+		if key == "" {
+			return
+		}
+		result[key] = appendIfMissing(result[key], file)
+	}
+	for filePath := range fileByPath {
+		modulePath := graphModulePath(filePath)
+		base := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
+		add(filePath, filePath)
+		add(modulePath, filePath)
+		add(base, filePath)
+		for _, packageName := range packageNamesByFile[filePath] {
+			add(packageName, filePath)
+			add(modulePath+"/"+packageName, filePath)
+		}
+		for moduleKey := range parentModuleKeys(modulePath) {
+			add(moduleKey, filePath)
+		}
+	}
+	for packageKey, files := range filesByPackage {
+		packageName, modulePath := splitGraphPackageKey(packageKey)
+		for _, file := range files {
+			add(packageName, file)
+			add(modulePath+"/"+packageName, file)
+		}
+	}
+	for modulePath, files := range filesByModule {
+		for _, file := range files {
+			add(modulePath, file)
+		}
+	}
+	for key, files := range result {
+		sort.Strings(files)
+		result[key] = dedupeStrings(files)
+	}
+	return result
+}
+
+func parentModuleKeys(modulePath string) map[string]bool {
+	result := make(map[string]bool)
+	current := normalizeImportSource(modulePath)
+	for current != "" {
+		result[current] = true
+		next := filepath.Dir(current)
+		if next == "." || next == current {
+			break
+		}
+		current = normalizeImportSource(next)
+	}
+	return result
+}
+
+func appendIfMissing(items []string, target string) []string {
+	for _, item := range items {
+		if item == target {
+			return items
+		}
+	}
+	return append(items, target)
+}
+
+func importResolutionConfidence(source, targetFile string) string {
+	normalized := normalizeImportSource(source)
+	modulePath := normalizeImportSource(graphModulePath(targetFile))
+	base := normalizeImportSource(strings.TrimSuffix(filepath.Base(targetFile), filepath.Ext(targetFile)))
+	if normalized == normalizeImportSource(targetFile) || normalized == modulePath || normalized == base {
+		return "INFERRED"
+	}
+	if strings.HasSuffix(normalized, "/"+base) || strings.HasSuffix(normalized, "/"+modulePath) {
+		return "INFERRED"
+	}
+	return "AMBIGUOUS"
 }
 
 func buildGraphAnalysis(nodes []api.GraphNode, edges []api.GraphEdge, focusSet map[string]bool) *api.GraphAnalysis {

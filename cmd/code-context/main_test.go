@@ -142,14 +142,29 @@ func TestGraphCmd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute graph cmd: %v", err)
 	}
-	if !strings.Contains(out, "\"version\": \"graph-export.v1\"") {
+	if !strings.Contains(out, "\"version\": \"graph-export.v2\"") {
 		t.Fatalf("expected graph version output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "\"type\": \"file\"") {
 		t.Fatalf("expected file nodes in output, got:\n%s", out)
 	}
+	if !strings.Contains(out, "\"type\": \"module\"") {
+		t.Fatalf("expected module nodes in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"package\"") {
+		t.Fatalf("expected package nodes in output, got:\n%s", out)
+	}
 	if !strings.Contains(out, "\"type\": \"imports\"") {
 		t.Fatalf("expected import edges in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"belongs_to\"") {
+		t.Fatalf("expected belongs_to edges in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"declares_package\"") {
+		t.Fatalf("expected declares_package edges in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"represents\"") {
+		t.Fatalf("expected represents edges in output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "\"analysis\"") {
 		t.Fatalf("expected graph analysis in output, got:\n%s", out)

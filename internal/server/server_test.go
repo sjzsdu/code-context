@@ -383,6 +383,9 @@ func TestGraphEndpoint(t *testing.T) {
 	if payload.Version == "" {
 		t.Fatalf("expected graph version in response")
 	}
+	if payload.Version != "graph-export.v2" {
+		t.Fatalf("expected graph-export.v2, got %q", payload.Version)
+	}
 	if len(payload.Nodes) == 0 {
 		t.Fatalf("expected graph nodes in response")
 	}
@@ -394,6 +397,29 @@ func TestGraphEndpoint(t *testing.T) {
 	}
 	if len(payload.Analysis.TopImports) == 0 {
 		t.Fatalf("expected top imports analysis in response")
+	}
+	var hasModule, hasPackage, hasDeclaresPackage, hasRepresents bool
+	for _, node := range payload.Nodes {
+		switch node.Type {
+		case "module":
+			hasModule = true
+		case "package":
+			hasPackage = true
+		}
+	}
+	for _, edge := range payload.Edges {
+		switch edge.Type {
+		case "declares_package":
+			hasDeclaresPackage = true
+		case "represents":
+			hasRepresents = true
+		}
+	}
+	if !hasModule || !hasPackage {
+		t.Fatalf("expected module and package nodes in response: %+v", payload.Nodes)
+	}
+	if !hasDeclaresPackage || !hasRepresents {
+		t.Fatalf("expected declares_package and represents edges in response: %+v", payload.Edges)
 	}
 }
 

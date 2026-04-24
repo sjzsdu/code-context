@@ -18,11 +18,23 @@ func TestRunGraphTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run graph tool: %v", err)
 	}
-	if !strings.Contains(out, "\"version\": \"graph-export.v1\"") {
+	if !strings.Contains(out, "\"version\": \"graph-export.v2\"") {
 		t.Fatalf("expected graph export version, got:\n%s", out)
 	}
 	if !strings.Contains(out, "\"analysis\"") {
 		t.Fatalf("expected graph analysis output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"module\"") {
+		t.Fatalf("expected module nodes in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"package\"") {
+		t.Fatalf("expected package nodes in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"declares_package\"") {
+		t.Fatalf("expected declares_package edges in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "\"type\": \"represents\"") {
+		t.Fatalf("expected represents edges in output, got:\n%s", out)
 	}
 }
 

@@ -161,9 +161,12 @@ code-context graph --focus Engine
 code-context graph path Engine Server
 code-context graph neighbors internal/engine/engine.go --limit 5
 code-context graph subgraph Engine --depth 2
+code-context graph html --focus internal/server/server.go > graph.html
 ```
 
 Use graph commands to export graph JSON, inspect adjacency, find file-level paths, and focus on local subgraphs.
+
+Graph exports are versioned as `graph-export.v2` and include a richer code graph with `module` and `package` nodes plus `belongs_to`, `declares_package`, `represents`, and `resolves_to` edges.
 
 ### Trace Call Chain
 
@@ -339,7 +342,7 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 ### HTTP API
 
 - `GET /api/map` — architecture overview with graph analysis
-- `GET /api/graph` — graph JSON export
+- `GET /api/graph` — graph JSON export (`graph-export.v2`)
 - `GET /api/graph/html` — graph HTML view
 - `GET /api/graph/path?from=...&to=...` — graph path lookup
 - `GET /api/graph/neighbors?target=...` — neighboring graph context
@@ -365,6 +368,8 @@ The MCP server exposes these tools:
 - `graph_path`
 - `graph_neighbors`
 - `graph_subgraph`
+
+Graph-related MCP responses return the same `graph-export.v2` structures used by the CLI and HTTP APIs, including module/package nodes and richer relation edges.
 
 For workflow health, pair MCP usage with the HTTP `status` endpoint or CLI `status` command.
 
@@ -421,6 +426,8 @@ go build -o code-context-mcp ./cmd/mcp
 - `graph_path`: `{ "from": "Engine", "to": "Server" }`
 - `graph_neighbors`: `{ "target": "Engine", "limit": 5 }`
 - `graph_subgraph`: `{ "target": "Engine", "depth": 2 }`
+
+Expect graph payloads to include node types like `file`, `symbol`, `module`, `package` and edge types like `belongs_to`, `declares_package`, `represents`, and `resolves_to`.
 
 ## Tips
 

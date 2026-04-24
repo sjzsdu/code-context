@@ -98,18 +98,9 @@ erDiagram
     USER_CONTEXT ||--o{ FILE_SUMMARY : requests
     FILE_SUMMARY ||--o{ SYMBOL : lists
     FILE_SUMMARY ||--o{ IMPORT_EDGE : shows
-    
-    SYMBOL ||--o| SYMBOL_KIND : typed_by
-    FILE_SUMMARY ||--o| LANGUAGE : parsed_by
-    
-    IMPORT_EDGE ||--o| FILE : from
-    IMPORT_EDGE }o--|| FILE : to
-    
-    GRAPH {
-        string file PK
-        string forward "直接依赖"
-        string reverse "反向依赖"
-    }
+    FILE_SUMMARY }o--|| LANGUAGE : parsed_as
+    SYMBOL }o--|| SYMBOL_KIND : has_kind
+    IMPORT_EDGE }o--|| FILE : targets
     
     USER_CONTEXT {
         string query "用户查询"
@@ -137,11 +128,11 @@ erDiagram
     }
     
     SYMBOL_KIND {
-        string value "function|method|class|type|interface|variable|constant|module|import|package"
+        string value PK "符号类型"
     }
     
     LANGUAGE {
-        string value "go|typescript|javascript|python|rust|java"
+        string value PK "语言类型"
     }
 ```
 
@@ -223,48 +214,22 @@ erDiagram
 ## 6. 数据流转关系
 
 ```mermaid
-erDiagram
-    SOURCE_CODE {
-        string file_path "源文件路径"
-        string content "源代码内容"
-    }
-    
-    PARSER {
-        string language "语言类型"
-    }
-    
-    AST {
-        string tree "抽象语法树"
-    }
-    
-    SYMBOL_EXTRACTOR {
-        string query "tree-sitter 查询"
-    }
-    
-    IMPORT_EXTRACTOR {
-        string pattern "导入匹配模式"
-    }
-    
-    SYMBOLS {
-        list symbol "符号列表"
-    }
-    
-    IMPORTS {
-        list import "导入列表"
-    }
-    
-    STORE {
-        string db_path "数据库路径"
-    }
-    
-    SOURCE_CODE --> PARSER : 读取
-    PARSER --> AST : 解析
-    AST --> SYMBOL_EXTRACTOR : 提取
-    AST --> IMPORT_EXTRACTOR : 提取
-    SYMBOL_EXTRACTOR --> SYMBOLS : 输出
-    IMPORT_EXTRACTOR --> IMPORTS : 输出
-    SYMBOLS --> STORE : 写入
-    IMPORTS --> STORE : 写入
-    
-    note right of STORE "SQLite with FTS5"
+flowchart TD
+    SOURCE_CODE["源代码<br/>file_path<br/>content"]
+    PARSER["解析器<br/>language"]
+    AST["AST<br/>tree"]
+    SYMBOL_EXTRACTOR["符号提取器<br/>tree-sitter 查询"]
+    IMPORT_EXTRACTOR["导入提取器<br/>导入匹配模式"]
+    SYMBOLS["符号列表"]
+    IMPORTS["导入列表"]
+    STORE["存储<br/>SQLite with FTS5"]
+
+    SOURCE_CODE -->|读取| PARSER
+    PARSER -->|解析| AST
+    AST -->|提取| SYMBOL_EXTRACTOR
+    AST -->|提取| IMPORT_EXTRACTOR
+    SYMBOL_EXTRACTOR -->|输出| SYMBOLS
+    IMPORT_EXTRACTOR -->|输出| IMPORTS
+    SYMBOLS -->|写入| STORE
+    IMPORTS -->|写入| STORE
 ```

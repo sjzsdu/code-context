@@ -165,9 +165,15 @@ code-context graph --focus Engine
 code-context graph path Engine Server
 code-context graph neighbors internal/engine/engine.go --limit 5
 code-context graph subgraph Engine --depth 2
+code-context graph html --focus internal/server/server.go > graph.html
 ```
 
 Exports graph JSON, finds file-level paths, shows neighboring files/symbols, and returns local subgraphs for focused analysis.
+
+Graph exports are versioned as `graph-export.v2` and now include richer code-knowledge graph structure:
+- node types: `file`, `symbol`, `import`, `module`, `package`
+- edge types: `defines`, `imports`, `belongs_to`, `declares_package`, `represents`, `resolves_to`
+- confidence labels such as `EXTRACTED`, `INFERRED`, and `AMBIGUOUS`
 
 ### `trace <from> <to>` — Call chain tracing
 
@@ -277,10 +283,11 @@ Start the server with `code-context serve`, then:
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/map` | — | Project architecture overview with graph analysis |
-| GET | `/api/graph` | `focus?` | Export repository or focused graph JSON |
+| GET | `/api/graph` | `focus?` | Export repository or focused graph JSON (`graph-export.v2`) |
 | GET | `/api/graph/path` | `from`, `to` | Find a file-level path through the graph |
 | GET | `/api/graph/neighbors` | `target`, `limit?` | Show adjacent graph context for a file or symbol |
 | GET | `/api/graph/subgraph` | `target`, `depth?` | Export a local graph around a file or symbol |
+| GET | `/api/graph/html` | `focus?` | Render an interactive HTML graph view |
 | GET | `/api/explain` | `file` | File summary with symbols, imports, and graph guidance |
 | GET | `/api/context` | `name` | Symbol profile with related context and graph guidance |
 | GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
@@ -377,6 +384,10 @@ code-context:search "Server"
 # Inspect graph navigation via MCP
 code-context:graph_neighbors '{"target":"Engine","limit":5}'
 code-context:graph_path '{"from":"Engine","to":"Server"}'
+code-context:graph '{"focus":"internal/server/server.go"}'
+
+# Rich graph exports now use graph-export.v2 with module/package nodes and
+# edges such as belongs_to, declares_package, represents, and resolves_to.
 
 # Generate context for a feature
 code-context:snapshot "authentication"
