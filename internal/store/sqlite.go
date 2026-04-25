@@ -39,14 +39,19 @@ func (s *sqliteStore) Init(ctx context.Context) error {
 }
 
 func (s *sqliteStore) UpsertFile(ctx context.Context, f *api.FileInfo) (int64, error) {
-	res, err := s.db.ExecContext(ctx,
+	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO files (path, language, content_hash, size) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(path) DO UPDATE SET content_hash=excluded.content_hash, size=excluded.size, indexed_at=unixepoch()`,
 		f.Path, string(f.Language), f.ContentHash, f.Size)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	var id int64
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM files WHERE path = ?`, f.Path).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *sqliteStore) GetFile(ctx context.Context, path string) (*api.FileInfo, error) {
@@ -298,14 +303,19 @@ func scanSymbols(rows *sql.Rows) ([]api.Symbol, error) {
 }
 
 func (s *sqliteStore) UpsertDocument(ctx context.Context, doc *api.Document) (int64, error) {
-	res, err := s.db.ExecContext(ctx,
+	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO documents (path, language, content_hash, title, summary, size) VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(path) DO UPDATE SET content_hash=excluded.content_hash, title=excluded.title, summary=excluded.summary, size=excluded.size, indexed_at=unixepoch()`,
 		doc.Path, doc.Language, doc.ContentHash, doc.Title, doc.Summary, doc.Size)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	var id int64
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM documents WHERE path = ?`, doc.Path).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *sqliteStore) GetDocument(ctx context.Context, path string) (*api.Document, error) {

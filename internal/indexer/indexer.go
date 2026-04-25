@@ -71,7 +71,7 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 		if pr.err != nil {
 			atomic.AddInt64(&failed, 1)
 			if verbose {
-				fmt.Fprintf(os.Stderr, "  skip %s: %v\n", pr.path, pr.err)
+				fmt.Fprintf(os.Stderr, "  fail %s: %v\n", pr.path, pr.err)
 			}
 			continue
 		}
@@ -90,10 +90,16 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 				docID, err := idx.store.UpsertDocument(ctx, doc)
 				if err != nil {
 					atomic.AddInt64(&failed, 1)
+					if verbose {
+						fmt.Fprintf(os.Stderr, "  fail %s: upsert document: %v\n", pr.path, err)
+					}
 					return
 				}
 				if err := idx.store.ReplaceDocumentLinks(ctx, docID, links); err != nil {
 					atomic.AddInt64(&failed, 1)
+					if verbose {
+						fmt.Fprintf(os.Stderr, "  fail %s: replace document links: %v\n", pr.path, err)
+					}
 					return
 				}
 				atomic.AddInt64(&indexed, 1)
@@ -124,15 +130,24 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 			})
 			if err != nil {
 				atomic.AddInt64(&failed, 1)
+				if verbose {
+					fmt.Fprintf(os.Stderr, "  fail %s: upsert file: %v\n", pr.path, err)
+				}
 				return
 			}
 
 			if err := idx.store.ReplaceSymbols(ctx, fileID, pr.result.Symbols); err != nil {
 				atomic.AddInt64(&failed, 1)
+				if verbose {
+					fmt.Fprintf(os.Stderr, "  fail %s: replace symbols: %v\n", pr.path, err)
+				}
 				return
 			}
 			if err := idx.store.ReplaceImports(ctx, fileID, pr.result.Imports); err != nil {
 				atomic.AddInt64(&failed, 1)
+				if verbose {
+					fmt.Fprintf(os.Stderr, "  fail %s: replace imports: %v\n", pr.path, err)
+				}
 				return
 			}
 
