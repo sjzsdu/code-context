@@ -413,6 +413,15 @@ func TestGraphHTMLCmd(t *testing.T) {
 	if !strings.Contains(out, "Graph analysis") {
 		t.Fatalf("expected graph analysis section, got:\n%s", out)
 	}
+	if !strings.Contains(out, "graphSurface") {
+		t.Fatalf("expected visual graph svg, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Document mode") {
+		t.Fatalf("expected document mode controls, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Zoom to fit") {
+		t.Fatalf("expected graph canvas controls, got:\n%s", out)
+	}
 	if !strings.Contains(out, "Bridge files") {
 		t.Fatalf("expected bridge files section, got:\n%s", out)
 	}

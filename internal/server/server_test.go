@@ -585,6 +585,15 @@ func TestGraphHTMLEndpoint(t *testing.T) {
 	if !strings.Contains(text, "code-context graph view") {
 		t.Fatalf("expected graph html title, got:\n%s", text)
 	}
+	if !strings.Contains(text, "graphSurface") {
+		t.Fatalf("expected visual graph svg in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Document mode") {
+		t.Fatalf("expected document mode controls in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Zoom to fit") {
+		t.Fatalf("expected graph canvas controls in html output, got:\n%s", text)
+	}
 	if !strings.Contains(text, "a.go") {
 		t.Fatalf("expected focused file in html output, got:\n%s", text)
 	}

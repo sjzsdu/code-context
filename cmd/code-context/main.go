@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"os"
 	"os/signal"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
 	"github.com/sjzsdu/code-context/internal/engine"
+	"github.com/sjzsdu/code-context/internal/graphhtml"
 	"github.com/sjzsdu/code-context/internal/search"
 	"github.com/sjzsdu/code-context/internal/server"
 )
@@ -1224,193 +1224,8 @@ func renderGraphHTML(w *os.File, graph *api.GraphExport) error {
 }
 
 func writeGraphHTML(w interface{ Write([]byte) (int, error) }, graph *api.GraphExport) error {
-	payload, err := json.Marshal(graph)
-	if err != nil {
-		return err
-	}
-	view := struct {
-		Title       string
-		Focus       string
-		Summary     string
-		NodeCount   int
-		EdgeCount   int
-		GraphJSON   template.JS
-		HasAnalysis bool
-		Analysis    *api.GraphAnalysis
-	}{
-		Title:       "code-context graph view",
-		Focus:       graph.Focus,
-		Summary:     graph.Summary,
-		NodeCount:   len(graph.Nodes),
-		EdgeCount:   len(graph.Edges),
-		GraphJSON:   template.JS(payload),
-		HasAnalysis: graph.Analysis != nil,
-		Analysis:    graph.Analysis,
-	}
-	return graphHTMLTemplate.Execute(w, view)
+	return graphhtml.Render(w, graph)
 }
-
-var graphHTMLTemplate = template.Must(template.New("graph-html").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>{{.Title}}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #0b1020; color: #e5e7eb; }
-    header { padding: 20px 24px; border-bottom: 1px solid #1f2937; background: #111827; }
-    main { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh - 89px); }
-    aside { padding: 20px 24px; border-right: 1px solid #1f2937; background: #0f172a; overflow: auto; }
-    section { padding: 20px 24px; overflow: auto; }
-    h1, h2, h3 { margin-top: 0; }
-    .meta { color: #94a3b8; font-size: 14px; }
-    .pill { display: inline-block; margin: 4px 6px 0 0; padding: 4px 8px; border-radius: 999px; background: #1f2937; color: #cbd5e1; font-size: 12px; }
-    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-    input, select { padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #020617; color: #e5e7eb; }
-    .card { padding: 14px 16px; border: 1px solid #1f2937; border-radius: 12px; background: #111827; margin-bottom: 12px; }
-    .node { cursor: pointer; }
-    .node:hover { background: #172554; }
-    ul { padding-left: 18px; }
-    code { color: #93c5fd; }
-    pre { background: #020617; padding: 12px; border-radius: 10px; overflow: auto; }
-    .muted { color: #94a3b8; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>{{.Title}}</h1>
-    <div class="meta">{{.Summary}}</div>
-    <div class="meta">Nodes: {{.NodeCount}} · Edges: {{.EdgeCount}}{{if .Focus}} · Focus: <code>{{.Focus}}</code>{{end}}</div>
-  </header>
-  <main>
-    <aside>
-      <div class="card">
-        <h2>Filters</h2>
-        <div class="toolbar">
-          <input id="search" type="search" placeholder="Search nodes">
-          <select id="typeFilter">
-            <option value="">All node types</option>
-          </select>
-        </div>
-        <div class="meta">Click a node to inspect its connected edges.</div>
-      </div>
-      {{if .HasAnalysis}}
-      <div class="card">
-        <h2>Graph analysis</h2>
-        {{if .Analysis.TopImports}}
-        <h3>Top imports</h3>
-        <ul>{{range .Analysis.TopImports}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
-        {{end}}
-        {{if .Analysis.MostConnectedFiles}}
-        <h3>Most connected files</h3>
-        <ul>{{range .Analysis.MostConnectedFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
-        {{end}}
-        {{if .Analysis.BridgeFiles}}
-        <h3>Bridge files</h3>
-        <ul>{{range .Analysis.BridgeFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
-        {{end}}
-        {{if .Analysis.HotspotFiles}}
-        <h3>Hotspot files</h3>
-        <ul>{{range .Analysis.HotspotFiles}}<li>{{.Name}} ({{.Count}})</li>{{end}}</ul>
-        {{end}}
-        {{if .Analysis.RelationHighlights}}
-        <h3>Relation highlights</h3>
-        <ul>{{range .Analysis.RelationHighlights}}<li>{{.}}</li>{{end}}</ul>
-        {{end}}
-        {{if .Analysis.ReadingPaths}}
-        <h3>Reading paths</h3>
-        <ul>{{range .Analysis.ReadingPaths}}<li><strong>{{.Entry}}</strong>: {{range $i, $part := .Path}}{{if $i}} → {{end}}{{$part}}{{end}}{{if .Reason}}<div class="meta">{{.Reason}}</div>{{end}}</li>{{end}}</ul>
-        {{end}}
-        {{if .Analysis.RecommendedFiles}}
-        <h3>Recommended files</h3>
-        <ul>{{range .Analysis.RecommendedFiles}}<li>{{.}}</li>{{end}}</ul>
-        {{end}}
-      </div>
-      {{end}}
-      <div id="nodeList"></div>
-    </aside>
-    <section>
-      <div class="card">
-        <h2>Selected node</h2>
-        <div id="details" class="muted">Pick a node from the list to inspect its attributes and edges.</div>
-      </div>
-      <div class="card">
-        <h2>Graph payload</h2>
-        <pre id="raw"></pre>
-      </div>
-    </section>
-  </main>
-  <script>
-    const graph = {{.GraphJSON}};
-    const search = document.getElementById('search');
-    const typeFilter = document.getElementById('typeFilter');
-    const nodeList = document.getElementById('nodeList');
-    const details = document.getElementById('details');
-    const raw = document.getElementById('raw');
-    raw.textContent = JSON.stringify(graph, null, 2);
-
-    const types = [...new Set(graph.nodes.map(node => node.type))].sort();
-    for (const type of types) {
-      const option = document.createElement('option');
-      option.value = type;
-      option.textContent = type;
-      typeFilter.appendChild(option);
-    }
-
-    function renderList() {
-      const q = search.value.trim().toLowerCase();
-      const type = typeFilter.value;
-      nodeList.innerHTML = '';
-      const filtered = graph.nodes.filter(node => {
-        if (type && node.type !== type) return false;
-        if (!q) return true;
-        return [node.label, node.name, node.file].filter(Boolean).join(' ').toLowerCase().includes(q);
-      });
-      if (!filtered.length) {
-        nodeList.innerHTML = '<div class="card muted">No nodes match the current filters.</div>';
-        return;
-      }
-      for (const node of filtered) {
-        const el = document.createElement('div');
-        el.className = 'card node';
-        const label = node.label || node.id;
-        const meta = node.type + (node.file ? ' · ' + node.file : '');
-        el.innerHTML = '<strong>' + label + '</strong><div class="meta">' + meta + '</div>';
-        el.addEventListener('click', () => renderDetails(node));
-        nodeList.appendChild(el);
-      }
-    }
-
-    function renderDetails(node) {
-      const incoming = graph.edges.filter(edge => edge.target === node.id);
-      const outgoing = graph.edges.filter(edge => edge.source === node.id);
-      details.innerHTML = '';
-      const title = document.createElement('div');
-      title.innerHTML = '<h3>' + (node.label || node.id) + '</h3><div class="meta">' + node.type + '</div>';
-      details.appendChild(title);
-
-      const attrs = document.createElement('div');
-      attrs.innerHTML = [
-        node.file ? '<span class="pill">file: ' + node.file + '</span>' : '',
-        node.name ? '<span class="pill">name: ' + node.name + '</span>' : '',
-        node.kind ? '<span class="pill">kind: ' + node.kind + '</span>' : '',
-        node.language ? '<span class="pill">language: ' + node.language + '</span>' : '',
-        node.line ? '<span class="pill">line: ' + node.line + '</span>' : ''
-      ].join('');
-      details.appendChild(attrs);
-
-      const edges = document.createElement('div');
-      const outgoingHTML = outgoing.map(edge => '<li>' + edge.type + ' → ' + edge.target + '</li>').join('');
-      const incomingHTML = incoming.map(edge => '<li>' + edge.type + ' ← ' + edge.source + '</li>').join('');
-      edges.innerHTML = '<h3>Outgoing (' + outgoing.length + ')</h3><ul>' + outgoingHTML + '</ul><h3>Incoming (' + incoming.length + ')</h3><ul>' + incomingHTML + '</ul>';
-      details.appendChild(edges);
-    }
-
-    search.addEventListener('input', renderList);
-    typeFilter.addEventListener('change', renderList);
-    renderList();
-  </script>
-</body>
-</html>`))
 
 func newServeCmd() *cobra.Command {
 	var port int
