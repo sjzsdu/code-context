@@ -594,6 +594,48 @@ func TestGraphHTMLEndpoint(t *testing.T) {
 	if !strings.Contains(text, "Zoom to fit") {
 		t.Fatalf("expected graph canvas controls in html output, got:\n%s", text)
 	}
+	if !strings.Contains(text, "Focus depth") {
+		t.Fatalf("expected focus depth controls in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "minimapCanvas") {
+		t.Fatalf("expected minimap canvas in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "hoverCard") {
+		t.Fatalf("expected hover card support in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Shift + drag to box zoom") {
+		t.Fatalf("expected marquee zoom hint in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "minimapButton") {
+		t.Fatalf("expected clickable minimap control in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "nodeContextMenu") {
+		t.Fatalf("expected node context menu support in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "contentModal") {
+		t.Fatalf("expected content modal support in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Open node content") {
+		t.Fatalf("expected node content action in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Copy content") {
+		t.Fatalf("expected copy content action in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Expand view") {
+		t.Fatalf("expected expand content action in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Show file path") {
+		t.Fatalf("expected file path action in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "selectionActions") {
+		t.Fatalf("expected visible selection actions in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Open content") {
+		t.Fatalf("expected selection open content action in html output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Pin node") {
+		t.Fatalf("expected selection pin action in html output, got:\n%s", text)
+	}
 	if !strings.Contains(text, "a.go") {
 		t.Fatalf("expected focused file in html output, got:\n%s", text)
 	}

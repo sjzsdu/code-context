@@ -1,6 +1,6 @@
 ---
 name: code-context
-description: 'Code context system for AI agents and LLMs. Index codebases structurally with tree-sitter, provide efficient symbol search, dependency analysis, git-aware context, and hybrid semantic search. Use when analyzing codebase structure, generating LLM context, or analyzing code dependencies.'
+description: 'Code context system for AI agents and LLMs. Index codebases structurally with tree-sitter plus document-aware graph enrichment, provide efficient symbol search, dependency analysis, git-aware context, interactive graph exploration, and hybrid semantic search. Use when analyzing codebase structure, repository knowledge graphs, generating LLM context, or analyzing code dependencies.'
 license: MIT
 allowed-tools: Bash, Grep, Glob, Read, Edit, LSP
 ---
@@ -14,11 +14,12 @@ A code context system that reads entire codebases, indexes them structurally usi
 ## Why Use This Skill
 
 - **For Code Analysis**: Quickly understand unfamiliar codebases with `map`, `explain`, `context`
-- **For Graph Navigation**: Explore repository structure with `graph`, `graph path`, `graph neighbors`, and `graph subgraph`
+- **For Graph Navigation**: Explore repository structure with `graph`, `graph path`, `graph neighbors`, `graph subgraph`, and interactive `graph html`
 - **For Dependency Understanding**: Trace imports and find impact with `diff-impact`, `trace`
 - **For Git-aware Context**: Analyze changes with `git-files`, `snapshot-git`, and graph-guided follow-up recommendations
 - **For Semantic Search**: Use hybrid search combining keyword and semantic similarity
 - **For LLM Context**: Generate focused context packages with `snapshot`
+- **For Docs + Code Knowledge Graphs**: Bring `.md` / `.txt` documents into the same graph as files, symbols, modules, and packages
 
 ## Supported Languages
 
@@ -30,6 +31,8 @@ A code context system that reads entire codebases, indexes them structurally usi
 | Python | `.py` |
 | Rust | `.rs` |
 | Java | `.java` |
+| Markdown | `.md`, `.markdown` |
+| Text | `.txt` |
 
 ## Quick Start
 
@@ -51,6 +54,9 @@ code-context graph neighbors Engine
 
 # 6. Generate LLM context
 code-context snapshot "authentication"
+
+# 7. Open the interactive visual graph
+code-context graph html > graph.html
 ```
 
 ## Configuration
@@ -78,9 +84,12 @@ watch:
 code-context index                       # full index
 code-context index --incremental         # only changed files
 code-context index -v                    # verbose progress
+code-context stats                       # includes document counts
 ```
 
 By default, test files are excluded from indexing so graph analysis and recommendations stay focused on production code.
+
+Documents (`.md`, `.markdown`, `.txt`) are also indexed and linked into the graph. Index stats now include document counts in addition to code file counts.
 
 ### Watch / Workflow Status
 
@@ -139,6 +148,7 @@ Shows:
 - Methods (if it's a type)
 - Related symbols across the codebase
 - Related files and recommended next files from the graph
+- Related documents when docs mention the symbol or surrounding files
 - Bridge files, hotspots, and suggested reading paths when available
 
 ### Generate LLM Context (Snapshot)
@@ -150,6 +160,7 @@ code-context snapshot "parser" --limit 3 # limit files
 
 Generates a context package for LLM consumption with:
 - Related files and their symbols
+- Related documents when relevant
 - Summary of what was found
 - Graph summaries, relation highlights, reading paths, and recommended next files
 
@@ -166,7 +177,46 @@ code-context graph html --focus internal/server/server.go > graph.html
 
 Use graph commands to export graph JSON, inspect adjacency, find file-level paths, and focus on local subgraphs.
 
-Graph exports are versioned as `graph-export.v2` and include a richer code graph with `module` and `package` nodes plus `belongs_to`, `declares_package`, `represents`, and `resolves_to` edges.
+Graph exports are versioned as `graph-export.v2` and include a richer repository graph with:
+
+- `file`, `symbol`, `module`, `package`, and `document` nodes
+- document/code edges such as `mentions_file`, `mentions_symbol`, and `describes`
+- structure edges such as `belongs_to`, `declares_package`, `represents`, and `resolves_to`
+
+### Interactive Graph HTML
+
+```bash
+code-context graph html > graph.html
+code-context graph html --focus internal/server/server.go > graph.html
+```
+
+The HTML graph is now a canvas-first interactive view with:
+
+- pan / zoom / drag
+- minimap navigation
+- node search and type filtering
+- edge filtering
+- cluster mode (`type`, `module`, `none`)
+- document-focused mode
+- hover tooltips for nodes and edges
+- 1-hop / 2-hop focus modes
+- visible selected-node action buttons
+- embedded node content viewer for code and text
+
+Selected-node actions include:
+
+- **Open content**
+- **Center node**
+- **Pin / Unpin node**
+- **1-hop / 2-hop / reset focus**
+
+The node content modal supports:
+
+- file, document, and symbol content previews
+- code-oriented vs text-oriented rendering
+- copy content
+- expand / collapse view
+- show file path
 
 ### Trace Call Chain
 
@@ -253,6 +303,16 @@ code-context snapshot "authentication"
 code-context explain internal/auth/auth.go
 ```
 
+### 3b. Exploring docs + code together
+
+```bash
+code-context graph --focus README.md
+code-context context ExportGraph
+code-context graph html > graph.html
+```
+
+Use this flow when you want to see how README/docs mention specific files or symbols.
+
 ### 4. Understanding Dependencies
 
 ```bash
@@ -314,6 +374,7 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/trace` | `from`, `to` | Call chain |
 | GET | `/api/diff-impact` | `file`, `depth?` | Change impact |
 | GET | `/api/graph` | `focus?` | Export repository or focused graph |
+| GET | `/api/graph/html` | `focus?` | Interactive graph HTML view |
 | GET | `/api/graph/path` | `from`, `to` | Find file-level path through graph |
 | GET | `/api/graph/neighbors` | `target`, `limit?` | Adjacent graph context |
 | GET | `/api/graph/subgraph` | `target`, `depth?` | Local graph around a file or symbol |
@@ -343,7 +404,7 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 
 - `GET /api/map` — architecture overview with graph analysis
 - `GET /api/graph` — graph JSON export (`graph-export.v2`)
-- `GET /api/graph/html` — graph HTML view
+- `GET /api/graph/html` — interactive canvas graph HTML view with docs + code nodes
 - `GET /api/graph/path?from=...&to=...` — graph path lookup
 - `GET /api/graph/neighbors?target=...` — neighboring graph context
 - `GET /api/graph/subgraph?target=...&depth=...` — focused local graph
@@ -369,7 +430,7 @@ The MCP server exposes these tools:
 - `graph_neighbors`
 - `graph_subgraph`
 
-Graph-related MCP responses return the same `graph-export.v2` structures used by the CLI and HTTP APIs, including module/package nodes and richer relation edges.
+Graph-related MCP responses return the same `graph-export.v2` structures used by the CLI and HTTP APIs, including document nodes and richer relation edges.
 
 For workflow health, pair MCP usage with the HTTP `status` endpoint or CLI `status` command.
 
@@ -427,7 +488,7 @@ go build -o code-context-mcp ./cmd/mcp
 - `graph_neighbors`: `{ "target": "Engine", "limit": 5 }`
 - `graph_subgraph`: `{ "target": "Engine", "depth": 2 }`
 
-Expect graph payloads to include node types like `file`, `symbol`, `module`, `package` and edge types like `belongs_to`, `declares_package`, `represents`, and `resolves_to`.
+Expect graph payloads to include node types like `file`, `symbol`, `module`, `package`, `document` and edge types like `mentions_file`, `mentions_symbol`, `describes`, `belongs_to`, `declares_package`, `represents`, and `resolves_to`.
 
 ## Tips
 
@@ -435,6 +496,7 @@ Expect graph payloads to include node types like `file`, `symbol`, `module`, `pa
 - Use `snapshot` for generating LLM context - it's the most useful for AI
 - Use `map` to understand project structure quickly
 - Use `graph neighbors` or `graph subgraph` when a symbol/file is too isolated in plain search results
+- Use `graph html` when you need a visual-first graph with document nodes, node actions, and content previews
 - Use `--hybrid` flag with search for semantic matching
 - Use git-aware commands (`git-files`, `git-diff`, `snapshot-git`) to analyze changes
 - `diff-impact` is great for understanding what might break when changing a file

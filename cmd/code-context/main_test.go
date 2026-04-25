@@ -422,6 +422,48 @@ func TestGraphHTMLCmd(t *testing.T) {
 	if !strings.Contains(out, "Zoom to fit") {
 		t.Fatalf("expected graph canvas controls, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Focus depth") {
+		t.Fatalf("expected focus depth controls, got:\n%s", out)
+	}
+	if !strings.Contains(out, "minimapCanvas") {
+		t.Fatalf("expected minimap canvas, got:\n%s", out)
+	}
+	if !strings.Contains(out, "hoverCard") {
+		t.Fatalf("expected hover card support, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Shift + drag to box zoom") {
+		t.Fatalf("expected marquee zoom hint, got:\n%s", out)
+	}
+	if !strings.Contains(out, "minimapButton") {
+		t.Fatalf("expected clickable minimap control, got:\n%s", out)
+	}
+	if !strings.Contains(out, "nodeContextMenu") {
+		t.Fatalf("expected node context menu support, got:\n%s", out)
+	}
+	if !strings.Contains(out, "contentModal") {
+		t.Fatalf("expected content modal support, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Open node content") {
+		t.Fatalf("expected node content action, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Copy content") {
+		t.Fatalf("expected copy content action, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Expand view") {
+		t.Fatalf("expected expand content action, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Show file path") {
+		t.Fatalf("expected file path action, got:\n%s", out)
+	}
+	if !strings.Contains(out, "selectionActions") {
+		t.Fatalf("expected visible selection actions, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Open content") {
+		t.Fatalf("expected selection open content action, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Pin node") {
+		t.Fatalf("expected selection pin action, got:\n%s", out)
+	}
 	if !strings.Contains(out, "Bridge files") {
 		t.Fatalf("expected bridge files section, got:\n%s", out)
 	}
@@ -827,13 +869,18 @@ func captureStdout(fn func() error) (string, error) {
 		return "", err
 	}
 	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+
+	var buf bytes.Buffer
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = buf.ReadFrom(r)
+		_ = r.Close()
+		close(readDone)
+	}()
 
 	runErr := fn()
 	_ = w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-	_ = r.Close()
+	<-readDone
 	return buf.String(), runErr
 }

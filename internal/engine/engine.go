@@ -1671,6 +1671,10 @@ func (e *Engine) Close() error {
 	return e.store.Close()
 }
 
+func (e *Engine) Root() string {
+	return e.root
+}
+
 type FileSummary struct {
 	Path             string             `json:"path"`
 	Language         string             `json:"language"`

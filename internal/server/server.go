@@ -247,7 +247,7 @@ func (s *Server) handleGraphHTML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := writeGraphHTMLPage(w, result); err != nil {
+	if err := writeGraphHTMLPage(w, s.eng.Root(), result); err != nil {
 		writeError(w, err, 500)
 		return
 	}
@@ -454,8 +454,8 @@ func (s *Server) handleDiffImpactGit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
 }
 
-func writeGraphHTMLPage(w interface{ Write([]byte) (int, error) }, graph *api.GraphExport) error {
-	return graphhtml.Render(w, graph)
+func writeGraphHTMLPage(w interface{ Write([]byte) (int, error) }, root string, graph *api.GraphExport) error {
+	return graphhtml.Render(w, root, graph)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

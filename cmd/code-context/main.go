@@ -1224,7 +1224,7 @@ func renderGraphHTML(w *os.File, graph *api.GraphExport) error {
 }
 
 func writeGraphHTML(w interface{ Write([]byte) (int, error) }, graph *api.GraphExport) error {
-	return graphhtml.Render(w, graph)
+	return graphhtml.Render(w, root, graph)
 }
 
 func newServeCmd() *cobra.Command {
