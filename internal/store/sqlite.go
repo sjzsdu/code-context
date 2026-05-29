@@ -180,6 +180,32 @@ func (s *sqliteStore) ReplaceCalls(ctx context.Context, fileID int64, calls []ap
 	return tx.Commit()
 }
 
+func (s *sqliteStore) ReplaceRoutes(ctx context.Context, fileID int64, routes []api.Route) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO routes (file_id, method, path, handler, framework, line, confidence) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, route := range routes {
+		confidence := route.Confidence
+		if confidence == "" {
+			confidence = "HEURISTIC"
+		}
+		if _, err := stmt.ExecContext(ctx, fileID, route.Method, route.Path, route.Handler, route.Framework, route.Line, confidence); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *sqliteStore) SearchSymbols(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error) {
 	if limit <= 0 {
 		limit = 50
@@ -315,6 +341,23 @@ func (s *sqliteStore) GetCallers(ctx context.Context, toName string) ([]api.Call
 	return scanCalls(rows)
 }
 
+func (s *sqliteStore) ListRoutes(ctx context.Context, query string) ([]api.Route, error) {
+	query = strings.TrimSpace(query)
+	var rows *sql.Rows
+	var err error
+	if query == "" {
+		rows, err = s.db.QueryContext(ctx, `SELECT f.path, r.method, r.path, r.handler, r.framework, r.line, r.confidence FROM routes r JOIN files f ON f.id = r.file_id ORDER BY r.path, r.method`)
+	} else {
+		like := "%" + query + "%"
+		rows, err = s.db.QueryContext(ctx, `SELECT f.path, r.method, r.path, r.handler, r.framework, r.line, r.confidence FROM routes r JOIN files f ON f.id = r.file_id WHERE r.path LIKE ? OR r.handler LIKE ? OR r.framework LIKE ? ORDER BY r.path, r.method`, like, like, like)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRoutes(rows)
+}
+
 func (s *sqliteStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	var st api.IndexStats
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.TotalFiles)
@@ -364,6 +407,18 @@ func scanCalls(rows *sql.Rows) ([]api.CallEdge, error) {
 			return nil, err
 		}
 		result = append(result, call)
+	}
+	return result, rows.Err()
+}
+
+func scanRoutes(rows *sql.Rows) ([]api.Route, error) {
+	var result []api.Route
+	for rows.Next() {
+		var route api.Route
+		if err := rows.Scan(&route.FilePath, &route.Method, &route.Path, &route.Handler, &route.Framework, &route.Line, &route.Confidence); err != nil {
+			return nil, err
+		}
+		result = append(result, route)
 	}
 	return result, rows.Err()
 }

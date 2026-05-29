@@ -84,6 +84,17 @@ type CallEdge struct {
 	Confidence string `json:"confidence,omitempty"`
 }
 
+// Route represents a web framework route entry point linked to a handler.
+type Route struct {
+	FilePath   string `json:"file"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Handler    string `json:"handler,omitempty"`
+	Framework  string `json:"framework,omitempty"`
+	Line       int    `json:"line"`
+	Confidence string `json:"confidence,omitempty"`
+}
+
 // GraphNode represents an exported graph node.
 type GraphNode struct {
 	ID       string   `json:"id"`

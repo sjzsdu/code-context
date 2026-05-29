@@ -60,6 +60,7 @@ func main() {
 		newImportersCmd(),
 		newCallersCmd(),
 		newCalleesCmd(),
+		newRoutesCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
 		newMapCmd(),
@@ -614,6 +615,42 @@ func printCalls(calls []api.CallEdge) {
 		fmt.Printf("  %s:%d  %s -> %s [%s]\n", c.FromFile, c.Line, c.FromSymbol, c.ToName, c.Confidence)
 	}
 	fmt.Printf("\n%d calls\n", len(calls))
+}
+
+func newRoutesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "routes [query]",
+		Short: "List framework routes discovered in indexed code",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			query := ""
+			if len(args) > 0 {
+				query = args[0]
+			}
+			routes, err := eng.Routes(context.Background(), query)
+			if err != nil {
+				return err
+			}
+			printRoutes(routes)
+			return nil
+		},
+	}
+}
+
+func printRoutes(routes []api.Route) {
+	for _, r := range routes {
+		method := r.Method
+		if method == "" {
+			method = "*"
+		}
+		fmt.Printf("  %-7s %-30s %-18s %s:%d [%s]\n", method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework)
+	}
+	fmt.Printf("\n%d routes\n", len(routes))
 }
 
 func newMapCmd() *cobra.Command {

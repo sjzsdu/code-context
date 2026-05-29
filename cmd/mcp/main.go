@@ -55,6 +55,10 @@ type SnapshotArgs struct {
 	Limit int    `json:"limit,omitempty"`
 }
 
+type RoutesArgs struct {
+	Query string `json:"query,omitempty"`
+}
+
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
@@ -234,6 +238,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_explore", "code_context_snapshot"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_routes", Description: "List framework routes and their handlers discovered in indexed code"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args RoutesArgs) (*mcp.CallToolResult, any, error) {
+			routes, err := eng.Routes(ctx, args.Query)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, formatRoutesMarkdown(routes)+recommendedCalls("code_context_context", "code_context_callers", "code_context_snapshot"))), nil, nil
 		})
 }
 
@@ -882,4 +895,17 @@ func formatCallsMarkdown(title string, calls []api.CallEdge) string {
 	}
 	out += fmt.Sprintf("\n%d calls\n", len(calls))
 	return out + recommendedCalls("code_context_explore", "code_context_snapshot")
+}
+
+func formatRoutesMarkdown(routes []api.Route) string {
+	out := "# Routes\n\n"
+	for _, r := range routes {
+		method := r.Method
+		if method == "" {
+			method = "*"
+		}
+		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s, %s]\n", method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework, r.Confidence)
+	}
+	out += fmt.Sprintf("\n%d routes\n", len(routes))
+	return out
 }

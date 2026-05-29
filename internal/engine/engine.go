@@ -131,6 +131,10 @@ func (e *Engine) Callees(ctx context.Context, name string) ([]api.CallEdge, erro
 	return e.store.GetCallees(ctx, strings.TrimSpace(name))
 }
 
+func (e *Engine) Routes(ctx context.Context, query string) ([]api.Route, error) {
+	return e.store.ListRoutes(ctx, strings.TrimSpace(query))
+}
+
 func (e *Engine) BuildGraph(ctx context.Context) error {
 	return e.graph.Build(ctx)
 }
@@ -411,6 +415,29 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 				}
 			}
 			symbolCount++
+		}
+
+		routes, err := e.store.ListRoutes(ctx, f.Path)
+		if err == nil {
+			for _, route := range routes {
+				if route.FilePath != f.Path {
+					continue
+				}
+				routeNodeID := fmt.Sprintf("route:%s:%s:%s:%d", route.Method, route.Path, route.FilePath, route.Line)
+				label := strings.TrimSpace(route.Method + " " + route.Path)
+				if label == "" {
+					label = route.Path
+				}
+				nodeMap[routeNodeID] = api.GraphNode{ID: routeNodeID, Type: "route", Label: label, FilePath: route.FilePath, Name: route.Path, Kind: route.Framework, Language: f.Language, Line: route.Line}
+				edgeMap[fileNodeID+"->"+routeNodeID+"#declares_route"] = api.GraphEdge{Source: fileNodeID, Target: routeNodeID, Type: "declares_route", Evidence: fmt.Sprintf("%s:%d", route.FilePath, route.Line), Confidence: route.Confidence, Line: route.Line}
+				if route.Handler != "" {
+					handlerNodeID := "handler:" + route.Handler
+					if _, ok := nodeMap[handlerNodeID]; !ok {
+						nodeMap[handlerNodeID] = api.GraphNode{ID: handlerNodeID, Type: "symbol", Label: route.Handler, FilePath: route.FilePath, Name: route.Handler, Kind: "handler", Language: f.Language, Line: route.Line}
+					}
+					edgeMap[routeNodeID+"->"+handlerNodeID+"#handles_route"] = api.GraphEdge{Source: routeNodeID, Target: handlerNodeID, Type: "handles_route", Evidence: route.Framework, Confidence: route.Confidence, Line: route.Line}
+				}
+			}
 		}
 	}
 

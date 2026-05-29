@@ -17,6 +17,7 @@ type ParseResult struct {
 	Symbols []api.Symbol
 	Imports []api.ImportEdge
 	Calls   []api.CallEdge
+	Routes  []api.Route
 }
 
 type Parser interface {
@@ -77,8 +78,128 @@ func (p *treeSitterParser) Parse(ctx context.Context, filePath string, content [
 	}
 
 	result.Calls = extractCalls(filePath, string(content), language, result.Symbols)
+	result.Routes = extractRoutes(filePath, string(content), language)
 
 	return result, nil
+}
+
+type routePattern struct {
+	re         *regexp.Regexp
+	method     string
+	framework  string
+	pathIdx    int
+	handlerIdx int
+}
+
+var routePatterns = map[api.Language][]routePattern{
+	api.Go: {
+		{regexp.MustCompile(`(?m)\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(\s*["\x60]([^"\x60]+)["\x60]\s*,\s*([A-Za-z_][A-Za-z0-9_\.]*)`), "", "go-router", 2, 3},
+		{regexp.MustCompile(`(?m)\bHandleFunc\s*\(\s*["\x60]([^"\x60]+)["\x60]\s*,\s*([A-Za-z_][A-Za-z0-9_\.]*)`), "", "net/http", 1, 2},
+	},
+	api.TypeScript: jsRoutePatterns(),
+	api.JavaScript: jsRoutePatterns(),
+	api.Python: {
+		{regexp.MustCompile(`(?m)@(?:app|router|bp)\.(get|post|put|patch|delete|head|options|route)\s*\(\s*["']([^"']+)["']`), "", "python-web", 2, 0},
+		{regexp.MustCompile(`(?m)\bpath\s*\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_][A-Za-z0-9_\.]*)`), "", "django", 1, 2},
+	},
+	api.Java: {
+		{regexp.MustCompile(`(?m)@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\s*(?:\(\s*(?:value\s*=\s*)?["']([^"']+)["'])?`), "", "spring", 2, 0},
+	},
+	api.Rust: {
+		{regexp.MustCompile(`(?m)#\[(get|post|put|patch|delete|head|options)\s*\(\s*["']([^"']+)["']\s*\)\]`), "", "rust-attr", 2, 0},
+		{regexp.MustCompile(`(?m)\.route\s*\(\s*["']([^"']+)["']\s*,\s*(?:get|post|put|patch|delete)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)`), "", "axum", 1, 2},
+	},
+}
+
+func jsRoutePatterns() []routePattern {
+	return []routePattern{
+		{regexp.MustCompile(`(?m)\b(?:app|router)\.(get|post|put|patch|delete|head|options|use)\s*\(\s*["\x60]([^"\x60]+)["\x60]\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*,\s*([A-Za-z_][A-Za-z0-9_\.]*)`), "", "express", 2, 3},
+		{regexp.MustCompile(`(?m)@(Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*["\x60]([^"\x60]*)["\x60]\s*\)`), "", "nestjs", 2, 0},
+		{regexp.MustCompile(`(?m)<Route\s+[^>]*path=["\x60]([^"\x60]+)["\x60][^>]*(?:component=\{?([A-Za-z_][A-Za-z0-9_]*)\}?|element=\{?<([A-Za-z_][A-Za-z0-9_]*)\b)`), "", "react-router", 1, 2},
+	}
+}
+
+func extractRoutes(file string, content string, language api.Language) []api.Route {
+	patterns := routePatterns[language]
+	if len(patterns) == 0 {
+		return nil
+	}
+	lineStarts := lineStartOffsets(content)
+	seen := make(map[string]bool)
+	var routes []api.Route
+	for _, rp := range patterns {
+		for _, match := range rp.re.FindAllStringSubmatchIndex(content, -1) {
+			method := rp.method
+			if method == "" && len(match) >= 4 && match[2] >= 0 {
+				candidate := strings.ToUpper(content[match[2]:match[3]])
+				method = normalizeRouteMethod(candidate)
+			}
+			path := captureAt(content, match, rp.pathIdx)
+			handler := captureAt(content, match, rp.handlerIdx)
+			if handler == "" && rp.framework == "react-router" {
+				handler = captureAt(content, match, 3)
+			}
+			if path == "" {
+				continue
+			}
+			line := offsetToLine(lineStarts, match[0])
+			if handler == "" {
+				handler = nextSymbolName(content, match[1])
+			}
+			key := method + " " + path + " " + handler + fmt.Sprint(line)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			routes = append(routes, api.Route{FilePath: file, Method: method, Path: path, Handler: handler, Framework: rp.framework, Line: line, Confidence: "HEURISTIC"})
+		}
+	}
+	return routes
+}
+
+func captureAt(content string, match []int, idx int) string {
+	if idx <= 0 || idx*2+1 >= len(match) || match[idx*2] < 0 {
+		return ""
+	}
+	return strings.TrimSpace(content[match[idx*2]:match[idx*2+1]])
+}
+
+func normalizeRouteMethod(method string) string {
+	switch strings.ToUpper(method) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		return strings.ToUpper(method)
+	case "GETMAPPING":
+		return "GET"
+	case "POSTMAPPING":
+		return "POST"
+	case "PUTMAPPING":
+		return "PUT"
+	case "PATCHMAPPING":
+		return "PATCH"
+	case "DELETEMAPPING":
+		return "DELETE"
+	default:
+		return ""
+	}
+}
+
+func nextSymbolName(content string, after int) string {
+	tail := content[after:]
+	if len(tail) > 500 {
+		tail = tail[:500]
+	}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)`),
+		regexp.MustCompile(`(?m)^\s*(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		regexp.MustCompile(`(?m)(?:public|private|protected)?\s*(?:[A-Za-z0-9_<>,\[\]]+\s+)+([A-Za-z_][A-Za-z0-9_]*)\s*\(`),
+		regexp.MustCompile(`(?m)^\s*(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)`),
+	}
+	for _, re := range patterns {
+		if m := re.FindStringSubmatch(tail); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 var callPattern = regexp.MustCompile(`(?m)([A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)?)\s*\(`)

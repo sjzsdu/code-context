@@ -15,6 +15,7 @@ type Store interface {
 	ReplaceSymbols(ctx context.Context, fileID int64, symbols []api.Symbol) error
 	ReplaceImports(ctx context.Context, fileID int64, imports []api.ImportEdge) error
 	ReplaceCalls(ctx context.Context, fileID int64, calls []api.CallEdge) error
+	ReplaceRoutes(ctx context.Context, fileID int64, routes []api.Route) error
 	SearchSymbols(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error)
 	FindDefinitions(ctx context.Context, name string) ([]api.Symbol, error)
 	FindReferences(ctx context.Context, name string) ([]api.Symbol, error)
@@ -23,6 +24,7 @@ type Store interface {
 	GetImporters(ctx context.Context, importSource string) ([]api.ImportEdge, error)
 	GetCallees(ctx context.Context, fromSymbol string) ([]api.CallEdge, error)
 	GetCallers(ctx context.Context, toName string) ([]api.CallEdge, error)
+	ListRoutes(ctx context.Context, query string) ([]api.Route, error)
 	Stats(ctx context.Context) (*api.IndexStats, error)
 	UpsertDocument(ctx context.Context, doc *api.Document) (int64, error)
 	GetDocument(ctx context.Context, path string) (*api.Document, error)

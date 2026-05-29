@@ -157,6 +157,13 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 				}
 				return
 			}
+			if err := idx.store.ReplaceRoutes(ctx, fileID, pr.result.Routes); err != nil {
+				atomic.AddInt64(&failed, 1)
+				if verbose {
+					fmt.Fprintf(os.Stderr, "  fail %s: replace routes: %v\n", pr.path, err)
+				}
+				return
+			}
 
 			atomic.AddInt64(&syms, int64(len(pr.result.Symbols)))
 			atomic.AddInt64(&imps, int64(len(pr.result.Imports)))
@@ -380,6 +387,9 @@ func (idx *Indexer) indexOneFile(ctx context.Context, path string) (nSyms, nImps
 		return 0, 0, false, err
 	}
 	if err := idx.store.ReplaceCalls(ctx, fileID, result.Calls); err != nil {
+		return 0, 0, false, err
+	}
+	if err := idx.store.ReplaceRoutes(ctx, fileID, result.Routes); err != nil {
 		return 0, 0, false, err
 	}
 

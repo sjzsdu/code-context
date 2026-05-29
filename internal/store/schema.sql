@@ -65,6 +65,21 @@ CREATE INDEX IF NOT EXISTS idx_calls_from ON calls(from_symbol);
 CREATE INDEX IF NOT EXISTS idx_calls_to ON calls(to_name);
 CREATE INDEX IF NOT EXISTS idx_calls_file ON calls(file_id);
 
+CREATE TABLE IF NOT EXISTS routes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    method      TEXT NOT NULL DEFAULT '',
+    path        TEXT NOT NULL,
+    handler     TEXT NOT NULL DEFAULT '',
+    framework   TEXT NOT NULL DEFAULT '',
+    line        INTEGER NOT NULL DEFAULT 0,
+    confidence  TEXT NOT NULL DEFAULT 'HEURISTIC'
+);
+
+CREATE INDEX IF NOT EXISTS idx_routes_path ON routes(path);
+CREATE INDEX IF NOT EXISTS idx_routes_handler ON routes(handler);
+CREATE INDEX IF NOT EXISTS idx_routes_file ON routes(file_id);
+
 -- Documents table for .md/.txt files
 CREATE TABLE IF NOT EXISTS documents (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
