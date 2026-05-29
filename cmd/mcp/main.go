@@ -63,6 +63,10 @@ type DocsForArgs struct {
 	Query string `json:"query"`
 }
 
+type GitStateToolArgs struct {
+	State string `json:"state,omitempty"`
+}
+
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
@@ -269,6 +273,32 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(formatDocDriftMarkdown(report)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_review_context", Description: "Generate git-aware review context with changed symbols, routes, docs, tests, and risk"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args GitStateToolArgs) (*mcp.CallToolResult, any, error) {
+			state, err := engine.ParseGitState(args.State)
+			if err != nil {
+				return nil, nil, err
+			}
+			r, err := eng.ReviewContext(ctx, state)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatReviewContextMarkdown(r)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_test_impact", Description: "Recommend tests for git changed files and symbols"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args GitStateToolArgs) (*mcp.CallToolResult, any, error) {
+			state, err := engine.ParseGitState(args.State)
+			if err != nil {
+				return nil, nil, err
+			}
+			t, err := eng.TestImpact(ctx, state)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatTestImpactMarkdown(t)), nil, nil
 		})
 }
 
@@ -945,6 +975,50 @@ func formatDocDriftMarkdown(report *api.DocDriftReport) string {
 	out := "# Documentation Drift\n\n" + report.Summary + "\n"
 	for _, item := range report.Broken {
 		out += fmt.Sprintf("- `%s:%d` %s:%s - %s\n", item.DocumentPath, item.Line, item.TargetType, item.TargetValue, item.Reason)
+	}
+	return out
+}
+
+func formatReviewContextMarkdown(r *engine.ReviewContext) string {
+	out := fmt.Sprintf("# Review Context (%s)\n\n%s\n\n## Risk\n%s (%d)\n", r.State, r.Summary, r.Risk.Level, r.Risk.Score)
+	for _, reason := range r.Risk.Reasons {
+		out += "- " + reason + "\n"
+	}
+	out += fmt.Sprintf("\n## Changed Files (%d)\n", len(r.ChangedFiles))
+	for _, f := range r.ChangedFiles {
+		out += "- `" + f + "`\n"
+	}
+	out += fmt.Sprintf("\n## Changed Symbols (%d)\n", len(r.ChangedSymbols))
+	for _, s := range r.ChangedSymbols {
+		out += fmt.Sprintf("- `%s:%d` %s (%s)\n", s.FilePath, s.Line, s.Name, s.Kind)
+	}
+	out += fmt.Sprintf("\n## Routes (%d)\n", len(r.Routes))
+	for _, route := range r.Routes {
+		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d`\n", route.Method, route.Path, route.Handler, route.FilePath, route.Line)
+	}
+	out += fmt.Sprintf("\n## Related Docs (%d)\n", len(r.RelatedDocs))
+	for _, d := range r.RelatedDocs {
+		out += fmt.Sprintf("- `%s:%d` %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+	}
+	out += fmt.Sprintf("\n## Recommended Tests (%d)\n", len(r.RecommendedTests))
+	for _, t := range r.RecommendedTests {
+		out += "- `" + t + "`\n"
+	}
+	out += "\n## Suggested Review Order\n"
+	for i, f := range r.SuggestedReviewOrder {
+		out += fmt.Sprintf("%d. `%s`\n", i+1, f)
+	}
+	return out
+}
+
+func formatTestImpactMarkdown(t *engine.TestImpact) string {
+	out := "# Test Impact\n\n" + t.Summary + "\n\n## Changed Symbols\n"
+	for _, s := range t.ChangedSymbols {
+		out += fmt.Sprintf("- `%s:%d` %s (%s)\n", s.FilePath, s.Line, s.Name, s.Kind)
+	}
+	out += "\n## Recommended Tests\n"
+	for _, test := range t.RecommendedTests {
+		out += "- `" + test + "`\n"
 	}
 	return out
 }

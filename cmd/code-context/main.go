@@ -71,6 +71,8 @@ func main() {
 		newContextCmd(),
 		newSnapshotCmd(),
 		newSnapshotGitCmd(),
+		newReviewContextCmd(),
+		newTestImpactCmd(),
 		newTraceCmd(),
 		newDiffImpactCmd(),
 		newDiffImpactGitCmd(),
@@ -1088,6 +1090,94 @@ func newSnapshotGitCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
 	cmd.Flags().IntVar(&limit, "limit", 5, "max files")
+	return cmd
+}
+
+func newReviewContextCmd() *cobra.Command {
+	var state string
+	cmd := &cobra.Command{
+		Use:   "review-context",
+		Short: "Generate git-aware review context with risk, docs, routes, and tests",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+			r, err := eng.ReviewContext(context.Background(), gitState)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Review context (%s)\n%s\n", r.State, r.Summary)
+			fmt.Printf("Risk: %s (%d)\n", r.Risk.Level, r.Risk.Score)
+			for _, reason := range r.Risk.Reasons {
+				fmt.Printf("  - %s\n", reason)
+			}
+			fmt.Printf("\nChanged files (%d):\n", len(r.ChangedFiles))
+			for _, f := range r.ChangedFiles {
+				fmt.Printf("  %s\n", f)
+			}
+			fmt.Printf("\nChanged symbols (%d):\n", len(r.ChangedSymbols))
+			for _, s := range r.ChangedSymbols {
+				fmt.Printf("  %s:%d %s (%s)\n", s.FilePath, s.Line, s.Name, s.Kind)
+			}
+			fmt.Printf("\nRoutes (%d):\n", len(r.Routes))
+			printRoutes(r.Routes)
+			fmt.Printf("Related docs (%d):\n", len(r.RelatedDocs))
+			for _, d := range r.RelatedDocs {
+				fmt.Printf("  %s:%d %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+			}
+			fmt.Printf("\nRecommended tests (%d):\n", len(r.RecommendedTests))
+			for _, t := range r.RecommendedTests {
+				fmt.Printf("  %s\n", t)
+			}
+			fmt.Printf("\nSuggested review order:\n")
+			for i, f := range r.SuggestedReviewOrder {
+				fmt.Printf("  %d. %s\n", i+1, f)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
+	return cmd
+}
+
+func newTestImpactCmd() *cobra.Command {
+	var state string
+	cmd := &cobra.Command{
+		Use:   "test-impact",
+		Short: "Recommend tests for git changed files and symbols",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+			t, err := eng.TestImpact(context.Background(), gitState)
+			if err != nil {
+				return err
+			}
+			fmt.Println(t.Summary)
+			fmt.Printf("Changed symbols (%d):\n", len(t.ChangedSymbols))
+			for _, s := range t.ChangedSymbols {
+				fmt.Printf("  %s:%d %s (%s)\n", s.FilePath, s.Line, s.Name, s.Kind)
+			}
+			fmt.Printf("Recommended tests (%d):\n", len(t.RecommendedTests))
+			for _, r := range t.RecommendedTests {
+				fmt.Printf("  %s\n", r)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
 	return cmd
 }
 

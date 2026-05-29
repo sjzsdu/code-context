@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -27,6 +29,39 @@ type GitDiffFile struct {
 	Path     string     `json:"path"`
 	Hunks    []DiffHunk `json:"hunks"`
 	Snippets []string   `json:"snippets"`
+}
+
+type ChangedSymbol struct {
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	FilePath string `json:"file"`
+	Line     int    `json:"line"`
+}
+
+type RiskScore struct {
+	Level   string   `json:"level"`
+	Score   int      `json:"score"`
+	Reasons []string `json:"reasons"`
+}
+
+type TestImpact struct {
+	State            GitState        `json:"state"`
+	ChangedFiles     []string        `json:"changed_files"`
+	ChangedSymbols   []ChangedSymbol `json:"changed_symbols"`
+	RecommendedTests []string        `json:"recommended_tests"`
+	Summary          string          `json:"summary"`
+}
+
+type ReviewContext struct {
+	State                GitState           `json:"state"`
+	ChangedFiles         []string           `json:"changed_files"`
+	ChangedSymbols       []ChangedSymbol    `json:"changed_symbols"`
+	Routes               []api.Route        `json:"routes"`
+	RelatedDocs          []api.DocumentLink `json:"related_docs"`
+	RecommendedTests     []string           `json:"recommended_tests"`
+	Risk                 RiskScore          `json:"risk"`
+	SuggestedReviewOrder []string           `json:"suggested_review_order"`
+	Summary              string             `json:"summary"`
 }
 
 const (
@@ -151,6 +186,193 @@ func (e *Engine) DiffImpactGit(ctx context.Context, state GitState, depth int) (
 	}
 
 	return impacts, nil
+}
+
+func (e *Engine) TestImpact(ctx context.Context, state GitState) (*TestImpact, error) {
+	files, err := e.GitChangedFiles(ctx, state)
+	if err != nil {
+		return nil, err
+	}
+	diffs, _ := e.GitDiff(ctx, state, 0)
+	changedSymbols := e.changedSymbolsForDiffs(ctx, diffs)
+	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changedSymbols)
+	return &TestImpact{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, RecommendedTests: tests, Summary: fmt.Sprintf("%d changed files, %d changed symbols, %d recommended tests", len(files), len(changedSymbols), len(tests))}, nil
+}
+
+func (e *Engine) ReviewContext(ctx context.Context, state GitState) (*ReviewContext, error) {
+	files, err := e.GitChangedFiles(ctx, state)
+	if err != nil {
+		return nil, err
+	}
+	diffs, _ := e.GitDiff(ctx, state, 0)
+	changedSymbols := e.changedSymbolsForDiffs(ctx, diffs)
+	routes := e.routesForFiles(ctx, files)
+	docs := e.docsForFilesAndSymbols(ctx, files, changedSymbols)
+	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changedSymbols)
+	risk := e.reviewRisk(ctx, files, changedSymbols, routes, tests)
+	order := suggestedReviewOrder(files, routes, tests)
+	return &ReviewContext{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, Routes: routes, RelatedDocs: docs, RecommendedTests: tests, Risk: risk, SuggestedReviewOrder: order, Summary: fmt.Sprintf("Review %d files (%d symbols). Risk: %s (%d)", len(files), len(changedSymbols), risk.Level, risk.Score)}, nil
+}
+
+func (e *Engine) changedSymbolsForDiffs(ctx context.Context, diffs []GitDiffFile) []ChangedSymbol {
+	seen := map[string]bool{}
+	var out []ChangedSymbol
+	for _, df := range diffs {
+		syms, err := e.store.GetFileSymbols(ctx, df.Path)
+		if err != nil || len(syms) == 0 {
+			continue
+		}
+		for _, h := range df.Hunks {
+			start, end := h.NewStart, h.NewStart+h.NewLines
+			for _, s := range syms {
+				se := s.EndLine
+				if se <= 0 {
+					se = s.Line
+				}
+				if s.Line <= end && se >= start {
+					key := df.Path + ":" + s.Name + fmt.Sprint(s.Line)
+					if !seen[key] {
+						seen[key] = true
+						out = append(out, ChangedSymbol{Name: s.Name, Kind: string(s.Kind), FilePath: df.Path, Line: s.Line})
+					}
+				}
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FilePath != out[j].FilePath {
+			return out[i].FilePath < out[j].FilePath
+		}
+		return out[i].Line < out[j].Line
+	})
+	return out
+}
+
+func (e *Engine) routesForFiles(ctx context.Context, files []string) []api.Route {
+	set := map[string]bool{}
+	for _, f := range files {
+		set[f] = true
+	}
+	routes, _ := e.store.ListRoutes(ctx, "")
+	var out []api.Route
+	for _, r := range routes {
+		if set[r.FilePath] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (e *Engine) docsForFilesAndSymbols(ctx context.Context, files []string, syms []ChangedSymbol) []api.DocumentLink {
+	seen := map[string]bool{}
+	var out []api.DocumentLink
+	queries := append([]string{}, files...)
+	for _, s := range syms {
+		queries = append(queries, s.Name)
+	}
+	for _, q := range queries {
+		refs, err := e.DocsFor(ctx, q)
+		if err != nil {
+			continue
+		}
+		for _, l := range refs.Links {
+			key := l.DocumentPath + fmt.Sprint(l.Line) + l.TargetType + l.TargetValue
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, l)
+			}
+		}
+	}
+	return out
+}
+
+func (e *Engine) recommendedTestsForFilesAndSymbols(ctx context.Context, files []string, syms []ChangedSymbol) []string {
+	seen := map[string]bool{}
+	var tests []string
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			if _, err := os.Stat(filepath.Join(e.root, p)); err == nil {
+				seen[p] = true
+				tests = append(tests, p)
+			}
+		}
+	}
+	for _, f := range files {
+		ext := filepath.Ext(f)
+		base := strings.TrimSuffix(f, ext)
+		dir := filepath.Dir(f)
+		name := strings.TrimSuffix(filepath.Base(f), ext)
+		switch ext {
+		case ".go":
+			add(base + "_test.go")
+		case ".py":
+			add(filepath.Join(dir, "test_"+name+ext))
+			add(base + "_test.py")
+		case ".ts", ".tsx", ".js", ".jsx":
+			add(base + ".test" + ext)
+			add(base + ".spec" + ext)
+		case ".java":
+			add(base + "Test.java")
+		case ".rs":
+			add(strings.TrimSuffix(f, ".rs") + "_test.rs")
+		}
+	}
+	return tests
+}
+
+func (e *Engine) reviewRisk(ctx context.Context, files []string, syms []ChangedSymbol, routes []api.Route, tests []string) RiskScore {
+	score := 0
+	reasons := []string{}
+	if len(routes) > 0 {
+		score += 30
+		reasons = append(reasons, fmt.Sprintf("%d route handlers affected", len(routes)))
+	}
+	if len(tests) == 0 && len(files) > 0 {
+		score += 20
+		reasons = append(reasons, "no related tests found")
+	}
+	for _, s := range syms {
+		if s.Kind != "function" && s.Kind != "method" && s.Kind != "type" && s.Kind != "class" && s.Kind != "interface" {
+			continue
+		}
+		callers, _ := e.Callers(ctx, s.Name)
+		if len(callers) > 5 {
+			score += 15
+			reasons = append(reasons, fmt.Sprintf("%s has %d callers", s.Name, len(callers)))
+		}
+	}
+	if len(files) > 5 {
+		score += 15
+		reasons = append(reasons, fmt.Sprintf("large change set: %d files", len(files)))
+	}
+	level := "low"
+	if score >= 50 {
+		level = "high"
+	} else if score >= 25 {
+		level = "medium"
+	}
+	return RiskScore{Level: level, Score: score, Reasons: dedupStrings(reasons)}
+}
+
+func suggestedReviewOrder(files []string, routes []api.Route, tests []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, r := range routes {
+		add(r.FilePath)
+	}
+	for _, f := range files {
+		add(f)
+	}
+	for _, t := range tests {
+		add(t)
+	}
+	return out
 }
 
 func (e *Engine) GitDiff(ctx context.Context, state GitState, contextLines int) ([]GitDiffFile, error) {
