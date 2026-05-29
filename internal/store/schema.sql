@@ -52,6 +52,19 @@ CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
 CREATE INDEX IF NOT EXISTS idx_imports_source ON imports(source);
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
 
+CREATE TABLE IF NOT EXISTS calls (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    from_symbol TEXT NOT NULL,
+    to_name     TEXT NOT NULL,
+    line        INTEGER NOT NULL DEFAULT 0,
+    confidence  TEXT NOT NULL DEFAULT 'HEURISTIC'
+);
+
+CREATE INDEX IF NOT EXISTS idx_calls_from ON calls(from_symbol);
+CREATE INDEX IF NOT EXISTS idx_calls_to ON calls(to_name);
+CREATE INDEX IF NOT EXISTS idx_calls_file ON calls(file_id);
+
 -- Documents table for .md/.txt files
 CREATE TABLE IF NOT EXISTS documents (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

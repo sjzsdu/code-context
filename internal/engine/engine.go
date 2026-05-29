@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,6 +121,14 @@ func (e *Engine) Imports(ctx context.Context, file string) ([]api.ImportEdge, er
 
 func (e *Engine) Importers(ctx context.Context, source string) ([]api.ImportEdge, error) {
 	return e.store.GetImporters(ctx, source)
+}
+
+func (e *Engine) Callers(ctx context.Context, name string) ([]api.CallEdge, error) {
+	return e.store.GetCallers(ctx, strings.TrimSpace(name))
+}
+
+func (e *Engine) Callees(ctx context.Context, name string) ([]api.CallEdge, error) {
+	return e.store.GetCallees(ctx, strings.TrimSpace(name))
 }
 
 func (e *Engine) BuildGraph(ctx context.Context) error {
@@ -1407,6 +1417,10 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 		stats.IndexVersion = graphExportVersion
 	}
 	watch := e.currentWatchStatus()
+	if pending, err := e.PendingFiles(ctx, 20); err == nil && len(pending) > 0 {
+		watch.Stale = true
+		watch.PendingFiles = pending
+	}
 	return &api.ServiceStatus{
 		Root:         e.root,
 		DatabasePath: e.dbPath,
@@ -1414,6 +1428,36 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 		Index:        stats,
 		Watch:        &watch,
 	}, nil
+}
+
+func (e *Engine) PendingFiles(ctx context.Context, limit int) ([]string, error) {
+	files, err := e.store.ListFiles(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	var pending []string
+	for _, f := range files {
+		select {
+		case <-ctx.Done():
+			return pending, ctx.Err()
+		default:
+		}
+		content, err := os.ReadFile(filepath.Join(e.root, f.Path))
+		if err != nil {
+			pending = append(pending, f.Path)
+		} else if sha256HexEngine(content) != f.ContentHash {
+			pending = append(pending, f.Path)
+		}
+		if limit > 0 && len(pending) >= limit {
+			break
+		}
+	}
+	return pending, nil
+}
+
+func sha256HexEngine(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }
 
 func (e *Engine) StartBackgroundWatch(interval, debounce time.Duration, verbose bool) error {

@@ -152,6 +152,34 @@ func (s *sqliteStore) ReplaceImports(ctx context.Context, fileID int64, imports 
 	return tx.Commit()
 }
 
+func (s *sqliteStore) ReplaceCalls(ctx context.Context, fileID int64, calls []api.CallEdge) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM calls WHERE file_id = ?`, fileID); err != nil {
+		return err
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO calls (file_id, from_symbol, to_name, line, confidence) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, call := range calls {
+		confidence := call.Confidence
+		if confidence == "" {
+			confidence = "HEURISTIC"
+		}
+		if _, err := stmt.ExecContext(ctx, fileID, call.FromSymbol, call.ToName, call.Line, confidence); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *sqliteStore) SearchSymbols(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error) {
 	if limit <= 0 {
 		limit = 50
@@ -261,6 +289,32 @@ func (s *sqliteStore) GetImporters(ctx context.Context, importSource string) ([]
 	return result, rows.Err()
 }
 
+func (s *sqliteStore) GetCallees(ctx context.Context, fromSymbol string) ([]api.CallEdge, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT f.path, c.from_symbol, c.to_name, c.line, c.confidence
+		 FROM calls c JOIN files f ON f.id = c.file_id
+		 WHERE c.from_symbol = ?
+		 ORDER BY c.line`, fromSymbol)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanCalls(rows)
+}
+
+func (s *sqliteStore) GetCallers(ctx context.Context, toName string) ([]api.CallEdge, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT f.path, c.from_symbol, c.to_name, c.line, c.confidence
+		 FROM calls c JOIN files f ON f.id = c.file_id
+		 WHERE c.to_name = ? OR c.to_name LIKE ?
+		 ORDER BY f.path, c.line`, toName, "%"+toName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanCalls(rows)
+}
+
 func (s *sqliteStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	var st api.IndexStats
 	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.TotalFiles)
@@ -298,6 +352,18 @@ func scanSymbols(rows *sql.Rows) ([]api.Symbol, error) {
 		}
 		sym.Kind = api.SymbolKind(kind)
 		result = append(result, sym)
+	}
+	return result, rows.Err()
+}
+
+func scanCalls(rows *sql.Rows) ([]api.CallEdge, error) {
+	var result []api.CallEdge
+	for rows.Next() {
+		var call api.CallEdge
+		if err := rows.Scan(&call.FromFile, &call.FromSymbol, &call.ToName, &call.Line, &call.Confidence); err != nil {
+			return nil, err
+		}
+		result = append(result, call)
 	}
 	return result, rows.Err()
 }

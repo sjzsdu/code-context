@@ -75,6 +75,15 @@ type ImportEdge struct {
 	Line     int    `json:"line"`
 }
 
+// CallEdge represents a lightweight symbol call relationship extracted from source.
+type CallEdge struct {
+	FromFile   string `json:"from_file"`
+	FromSymbol string `json:"from_symbol"`
+	ToName     string `json:"to_name"`
+	Line       int    `json:"line"`
+	Confidence string `json:"confidence,omitempty"`
+}
+
 // GraphNode represents an exported graph node.
 type GraphNode struct {
 	ID       string   `json:"id"`
@@ -192,16 +201,18 @@ type IndexStats struct {
 
 // WatchStatus reports workflow refresh state for watch-enabled processes.
 type WatchStatus struct {
-	Enabled            bool   `json:"enabled"`
-	Running            bool   `json:"running"`
-	Interval           string `json:"interval,omitempty"`
-	Debounce           string `json:"debounce,omitempty"`
-	LastRefreshUnix    int64  `json:"last_refresh_unix,omitempty"`
-	LastRefreshAt      string `json:"last_refresh_at,omitempty"`
-	LastRefreshStatus  string `json:"last_refresh_status,omitempty"`
-	LastRefreshSummary string `json:"last_refresh_summary,omitempty"`
-	LastError          string `json:"last_error,omitempty"`
-	RefreshCount       int    `json:"refresh_count,omitempty"`
+	Enabled            bool     `json:"enabled"`
+	Running            bool     `json:"running"`
+	Stale              bool     `json:"stale,omitempty"`
+	PendingFiles       []string `json:"pending_files,omitempty"`
+	Interval           string   `json:"interval,omitempty"`
+	Debounce           string   `json:"debounce,omitempty"`
+	LastRefreshUnix    int64    `json:"last_refresh_unix,omitempty"`
+	LastRefreshAt      string   `json:"last_refresh_at,omitempty"`
+	LastRefreshStatus  string   `json:"last_refresh_status,omitempty"`
+	LastRefreshSummary string   `json:"last_refresh_summary,omitempty"`
+	LastError          string   `json:"last_error,omitempty"`
+	RefreshCount       int      `json:"refresh_count,omitempty"`
 }
 
 // ServiceStatus reports workflow and indexing metadata for the running service.

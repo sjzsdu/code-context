@@ -30,6 +30,9 @@ func (m *searchMockStore) ReplaceSymbols(ctx context.Context, fileID int64, symb
 func (m *searchMockStore) ReplaceImports(ctx context.Context, fileID int64, imports []api.ImportEdge) error {
 	return nil
 }
+func (m *searchMockStore) ReplaceCalls(ctx context.Context, fileID int64, calls []api.CallEdge) error {
+	return nil
+}
 func (m *searchMockStore) SearchSymbols(ctx context.Context, query string, kind *api.SymbolKind, limit int) ([]api.Symbol, error) {
 	return m.searchResults, nil
 }
@@ -46,6 +49,12 @@ func (m *searchMockStore) GetImports(ctx context.Context, filePath string) ([]ap
 	return nil, nil
 }
 func (m *searchMockStore) GetImporters(ctx context.Context, importSource string) ([]api.ImportEdge, error) {
+	return nil, nil
+}
+func (m *searchMockStore) GetCallees(ctx context.Context, fromSymbol string) ([]api.CallEdge, error) {
+	return nil, nil
+}
+func (m *searchMockStore) GetCallers(ctx context.Context, toName string) ([]api.CallEdge, error) {
 	return nil, nil
 }
 func (m *searchMockStore) Stats(ctx context.Context) (*api.IndexStats, error) {

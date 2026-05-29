@@ -58,6 +58,8 @@ func main() {
 		newFilesCmd(),
 		newImportsCmd(),
 		newImportersCmd(),
+		newCallersCmd(),
+		newCalleesCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
 		newMapCmd(),
@@ -552,10 +554,66 @@ func newStatusCmd() *cobra.Command {
 				if status.Watch.LastError != "" {
 					fmt.Printf("Last error:    %s\n", status.Watch.LastError)
 				}
+				if status.Watch.Stale {
+					fmt.Printf("Index stale:   true\n")
+					fmt.Printf("Pending files: %d\n", len(status.Watch.PendingFiles))
+					for _, f := range status.Watch.PendingFiles {
+						fmt.Printf("  %s\n", f)
+					}
+				}
 			}
 			return nil
 		},
 	}
+}
+
+func newCallersCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "callers <symbol>",
+		Short: "Show functions or methods that call a symbol name",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			calls, err := eng.Callers(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			printCalls(calls)
+			return nil
+		},
+	}
+}
+
+func newCalleesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "callees <symbol>",
+		Short: "Show symbols called by a function or method",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			calls, err := eng.Callees(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			printCalls(calls)
+			return nil
+		},
+	}
+}
+
+func printCalls(calls []api.CallEdge) {
+	for _, c := range calls {
+		fmt.Printf("  %s:%d  %s -> %s [%s]\n", c.FromFile, c.Line, c.FromSymbol, c.ToName, c.Confidence)
+	}
+	fmt.Printf("\n%d calls\n", len(calls))
 }
 
 func newMapCmd() *cobra.Command {

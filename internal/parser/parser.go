@@ -3,6 +3,8 @@ package parser
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -14,6 +16,7 @@ import (
 type ParseResult struct {
 	Symbols []api.Symbol
 	Imports []api.ImportEdge
+	Calls   []api.CallEdge
 }
 
 type Parser interface {
@@ -73,7 +76,86 @@ func (p *treeSitterParser) Parse(ctx context.Context, filePath string, content [
 		}
 	}
 
+	result.Calls = extractCalls(filePath, string(content), language, result.Symbols)
+
 	return result, nil
+}
+
+var callPattern = regexp.MustCompile(`(?m)([A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)?)\s*\(`)
+
+func extractCalls(file string, content string, language api.Language, symbols []api.Symbol) []api.CallEdge {
+	if len(symbols) == 0 {
+		return nil
+	}
+	sorted := append([]api.Symbol(nil), symbols...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Line < sorted[j].Line })
+	lineStarts := lineStartOffsets(content)
+	seen := make(map[string]bool)
+	var calls []api.CallEdge
+	for _, match := range callPattern.FindAllStringSubmatchIndex(content, -1) {
+		if len(match) < 4 {
+			continue
+		}
+		name := content[match[2]:match[3]]
+		if shouldSkipCall(name, language) {
+			continue
+		}
+		line := offsetToLine(lineStarts, match[2])
+		from := enclosingSymbol(sorted, line)
+		if from == "" || from == name || strings.HasSuffix(name, "."+from) || strings.HasSuffix(name, "::"+from) {
+			continue
+		}
+		key := fmt.Sprintf("%s:%s:%d", from, name, line)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		calls = append(calls, api.CallEdge{FromFile: file, FromSymbol: from, ToName: name, Line: line, Confidence: "HEURISTIC"})
+	}
+	return calls
+}
+
+func lineStartOffsets(content string) []int {
+	starts := []int{0}
+	for i, r := range content {
+		if r == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	return starts
+}
+
+func offsetToLine(starts []int, offset int) int {
+	i := sort.Search(len(starts), func(i int) bool { return starts[i] > offset })
+	return i
+}
+
+func enclosingSymbol(symbols []api.Symbol, line int) string {
+	for i := len(symbols) - 1; i >= 0; i-- {
+		s := symbols[i]
+		end := s.EndLine
+		if end <= 0 {
+			end = s.Line
+		}
+		if line >= s.Line && line <= end && (s.Kind == api.Function || s.Kind == api.Method) {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+func shouldSkipCall(name string, language api.Language) bool {
+	base := name
+	if idx := strings.LastIndexAny(base, ".:"); idx >= 0 {
+		base = strings.TrimLeft(base[idx+1:], ":")
+	}
+	keywords := map[string]bool{
+		"if": true, "for": true, "switch": true, "while": true, "catch": true, "return": true,
+		"func": true, "function": true, "def": true, "class": true, "new": true, "make": true,
+		"println": true, "print": true, "len": true, "cap": true, "append": true, "delete": true,
+	}
+	_ = language
+	return keywords[base]
 }
 
 func execSymbolQuery(qd lang.SymbolQuery, root *sitter.Node, src []byte, file string, tsLang *sitter.Language) ([]api.Symbol, error) {

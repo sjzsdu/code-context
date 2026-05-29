@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
@@ -41,6 +42,19 @@ type GraphSubgraphArgs struct {
 	Depth  int    `json:"depth,omitempty"`
 }
 
+type SearchArgs struct {
+	Query string `json:"query"`
+}
+
+type ContextArgs struct {
+	Symbol string `json:"symbol"`
+}
+
+type SnapshotArgs struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
+}
+
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
@@ -64,9 +78,9 @@ func main() {
 	// Register all tools
 	registerTools(srv, eng)
 
-	// Auto-index on startup
-	log.Println("Indexing codebase...")
-	stats, err := eng.Index(context.Background(), false)
+	// Fast startup reconciliation: only reindex changed files when an index already exists.
+	log.Println("Reconciling codebase index...")
+	stats, err := eng.IndexIncremental(context.Background(), false)
 	if err != nil {
 		log.Printf("Warning: auto-index failed: %v", err)
 	} else {
@@ -103,7 +117,128 @@ func applyConfigDefaults() {
 	}
 }
 
+func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_instructions", Description: "How agents should use code-context before broad grep/read exploration"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			return textResult(`# code-context agent instructions
+
+1. Start with code_context_status to verify freshness.
+2. Use code_context_explore for a query before broad grep/read.
+3. Use code_context_search for symbols, code_context_context for a symbol profile, and code_context_snapshot for focused LLM context.
+4. Use code_context_callers and code_context_callees for lightweight call graph navigation.
+5. If status or a result reports stale/pending files, read those files directly before editing.
+6. Prefer the recommended next tool calls in each response.`), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, and service metadata"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			st, err := eng.Status(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := marshalIndentedJSON(st)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_search", Description: "Search symbols by name in the indexed codebase"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, any, error) {
+			if args.Query == "" {
+				return nil, nil, fmt.Errorf("missing required parameter: query")
+			}
+			results, err := eng.SearchSymbols(ctx, args.Query, nil, 20)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, search.FormatSymbols(results)) + recommendedCalls("code_context_context", "code_context_explore")), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_explore", Description: "One-stop codebase exploration for an agent query: symbols, text matches, and recommended next calls"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, any, error) {
+			if args.Query == "" {
+				return nil, nil, fmt.Errorf("missing required parameter: query")
+			}
+			syms, _ := eng.SearchSymbolsHybrid(ctx, args.Query, nil, 10)
+			texts, _ := eng.SearchText(ctx, args.Query, "", 8)
+			out := "# Explore: " + args.Query + "\n\n## Symbols\n" + search.FormatSymbols(syms) + "\n## Text Matches\n"
+			for _, m := range texts {
+				out += fmt.Sprintf("- `%s:%d` %s\n", m.FilePath, m.Line, strings.TrimSpace(m.Content))
+			}
+			out += recommendedCalls("code_context_context", "code_context_snapshot", "code_context_graph_neighbors")
+			return textResult(withStaleWarning(ctx, eng, out)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callers", Description: "Show functions/methods that call a symbol name"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args ContextArgs) (*mcp.CallToolResult, any, error) {
+			calls, err := eng.Callers(ctx, args.Symbol)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatCallsMarkdown("Callers", calls)), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callees", Description: "Show symbols called by a function/method"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args ContextArgs) (*mcp.CallToolResult, any, error) {
+			calls, err := eng.Callees(ctx, args.Symbol)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatCallsMarkdown("Callees", calls)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_context", Description: "Show symbol profile with definition, methods, and related symbols"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args ContextArgs) (*mcp.CallToolResult, any, error) {
+			if args.Symbol == "" {
+				return nil, nil, fmt.Errorf("missing required parameter: symbol")
+			}
+			c, err := eng.Context(ctx, args.Symbol)
+			if err != nil {
+				return nil, nil, err
+			}
+			out := fmt.Sprintf("# Symbol Context: %s\n\nDefinition: `%s` (%s) at `%s:%d`\n", args.Symbol, c.Definition.Name, c.Definition.Kind, c.Definition.FilePath, c.Definition.Line)
+			if len(c.Methods) > 0 {
+				out += "\n## Methods\n"
+				for _, m := range c.Methods {
+					out += fmt.Sprintf("- `%s` at `%s:%d`\n", m.Name, m.FilePath, m.Line)
+				}
+			}
+			out += recommendedCalls("code_context_callers", "code_context_callees", "code_context_snapshot")
+			return textResult(withStaleWarning(ctx, eng, out)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_snapshot", Description: "Generate focused LLM context package for a query"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args SnapshotArgs) (*mcp.CallToolResult, any, error) {
+			if args.Query == "" {
+				return nil, nil, fmt.Errorf("missing required parameter: query")
+			}
+			limit := 5
+			if args.Limit > 0 {
+				limit = args.Limit
+			}
+			s, err := eng.Snapshot(ctx, args.Query, limit)
+			if err != nil {
+				return nil, nil, err
+			}
+			out := fmt.Sprintf("# Snapshot: %s\n\n%s\n", s.Query, s.Summary)
+			for _, f := range s.Files {
+				out += fmt.Sprintf("\n## `%s`\nLanguage: %s\n", f.Path, f.Language)
+			}
+			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_graph_neighbors", "code_context_callers"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_graph_neighbors", Description: "Show adjacent graph context for a file or symbol"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args GraphNeighborsArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runGraphNeighborsTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_explore", "code_context_snapshot"))), nil, nil
+		})
+}
+
 func registerTools(srv *mcp.Server, eng *engine.Engine) {
+	registerAgentTools(srv, eng)
 	// Index tool
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "index",
@@ -710,4 +845,41 @@ func marshalIndentedJSON(v any) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func textResult(text string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+}
+
+func withStaleWarning(ctx context.Context, eng *engine.Engine, text string) string {
+	pending, err := eng.PendingFiles(ctx, 5)
+	if err != nil || len(pending) == 0 {
+		return text
+	}
+	warn := "⚠️ Index may be stale for pending files:\n"
+	for _, f := range pending {
+		warn += "- `" + f + "`\n"
+	}
+	warn += "Read pending files directly before editing.\n\n"
+	return warn + text
+}
+
+func recommendedCalls(names ...string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	out := "\n## Recommended Next Tool Calls\n"
+	for i, name := range names {
+		out += fmt.Sprintf("%d. %s\n", i+1, name)
+	}
+	return out
+}
+
+func formatCallsMarkdown(title string, calls []api.CallEdge) string {
+	out := "# " + title + "\n\n"
+	for _, c := range calls {
+		out += fmt.Sprintf("- `%s:%d` `%s` -> `%s` [%s]\n", c.FromFile, c.Line, c.FromSymbol, c.ToName, c.Confidence)
+	}
+	out += fmt.Sprintf("\n%d calls\n", len(calls))
+	return out + recommendedCalls("code_context_explore", "code_context_snapshot")
 }
