@@ -135,6 +135,103 @@ func (e *Engine) Routes(ctx context.Context, query string) ([]api.Route, error) 
 	return e.store.ListRoutes(ctx, strings.TrimSpace(query))
 }
 
+func (e *Engine) DocsFor(ctx context.Context, query string) (*api.DocReference, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("docs-for requires a non-empty query")
+	}
+	docs, err := e.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var result []api.DocumentLink
+	for _, doc := range docs {
+		links, err := e.store.GetDocumentLinks(ctx, doc.Path)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			if docLinkMatches(query, link) {
+				link.DocumentPath = doc.Path
+				result = append(result, link)
+			}
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].DocumentPath != result[j].DocumentPath {
+			return result[i].DocumentPath < result[j].DocumentPath
+		}
+		return result[i].Line < result[j].Line
+	})
+	return &api.DocReference{Query: query, Links: result}, nil
+}
+
+func (e *Engine) DocDrift(ctx context.Context) (*api.DocDriftReport, error) {
+	docs, err := e.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var broken []api.DocDriftItem
+	total := 0
+	for _, doc := range docs {
+		links, err := e.store.GetDocumentLinks(ctx, doc.Path)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			total++
+			if reason := e.docLinkDriftReason(ctx, link); reason != "" {
+				broken = append(broken, api.DocDriftItem{DocumentPath: doc.Path, TargetType: link.TargetType, TargetValue: link.TargetValue, Line: link.Line, Evidence: link.Evidence, Reason: reason})
+			}
+		}
+	}
+	summary := fmt.Sprintf("Checked %d document links; %d broken references found", total, len(broken))
+	return &api.DocDriftReport{TotalLinks: total, Broken: broken, Summary: summary}, nil
+}
+
+func docLinkMatches(query string, link api.DocumentLink) bool {
+	q := strings.ToLower(query)
+	return strings.Contains(strings.ToLower(link.TargetValue), q) || strings.Contains(strings.ToLower(link.Evidence), q) || strings.EqualFold(link.TargetType+":"+link.TargetValue, query)
+}
+
+func (e *Engine) docLinkDriftReason(ctx context.Context, link api.DocumentLink) string {
+	switch link.TargetType {
+	case "file":
+		if f, err := e.store.GetFile(ctx, link.TargetValue); err == nil && f != nil {
+			return ""
+		}
+		if d, err := e.store.GetDocument(ctx, link.TargetValue); err == nil && d != nil {
+			return ""
+		}
+		if _, err := os.Stat(filepath.Join(e.root, link.TargetValue)); err == nil {
+			return ""
+		}
+		return "referenced file is not indexed or present"
+	case "symbol":
+		if defs, err := e.search.FindDefinition(ctx, link.TargetValue); err == nil && len(defs) > 0 {
+			return ""
+		}
+		if matches, err := e.search.SearchSymbols(ctx, link.TargetValue, nil, 1); err == nil && len(matches) > 0 {
+			return ""
+		}
+		return "referenced symbol was not found"
+	case "module":
+		files, err := e.store.ListFiles(ctx, nil)
+		if err != nil {
+			return "could not check module"
+		}
+		prefix := strings.TrimSuffix(link.TargetValue, "/") + "/"
+		for _, f := range files {
+			if f.Path == link.TargetValue || strings.HasPrefix(f.Path, prefix) {
+				return ""
+			}
+		}
+		return "referenced module has no indexed files"
+	default:
+		return "unknown document link target type"
+	}
+}
+
 func (e *Engine) BuildGraph(ctx context.Context) error {
 	return e.graph.Build(ctx)
 }

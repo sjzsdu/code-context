@@ -59,6 +59,10 @@ type RoutesArgs struct {
 	Query string `json:"query,omitempty"`
 }
 
+type DocsForArgs struct {
+	Query string `json:"query"`
+}
+
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
@@ -247,6 +251,24 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, formatRoutesMarkdown(routes)+recommendedCalls("code_context_context", "code_context_callers", "code_context_snapshot"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_docs_for", Description: "Show documents that reference a file, symbol, module, or text query"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args DocsForArgs) (*mcp.CallToolResult, any, error) {
+			refs, err := eng.DocsFor(ctx, args.Query)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatDocsForMarkdown(refs) + recommendedCalls("code_context_explore", "code_context_snapshot")), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doc_drift", Description: "Find stale document references to missing files, symbols, or modules"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			report, err := eng.DocDrift(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatDocDriftMarkdown(report)), nil, nil
 		})
 }
 
@@ -907,5 +929,22 @@ func formatRoutesMarkdown(routes []api.Route) string {
 		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s, %s]\n", method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework, r.Confidence)
 	}
 	out += fmt.Sprintf("\n%d routes\n", len(routes))
+	return out
+}
+
+func formatDocsForMarkdown(refs *api.DocReference) string {
+	out := fmt.Sprintf("# Docs for `%s`\n\n", refs.Query)
+	for _, link := range refs.Links {
+		out += fmt.Sprintf("- `%s:%d` %s:%s `%s` (%.1f)\n", link.DocumentPath, link.Line, link.TargetType, link.TargetValue, link.Evidence, link.Confidence)
+	}
+	out += fmt.Sprintf("\n%d document references\n", len(refs.Links))
+	return out
+}
+
+func formatDocDriftMarkdown(report *api.DocDriftReport) string {
+	out := "# Documentation Drift\n\n" + report.Summary + "\n"
+	for _, item := range report.Broken {
+		out += fmt.Sprintf("- `%s:%d` %s:%s - %s\n", item.DocumentPath, item.Line, item.TargetType, item.TargetValue, item.Reason)
+	}
 	return out
 }

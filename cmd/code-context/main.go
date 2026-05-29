@@ -61,6 +61,8 @@ func main() {
 		newCallersCmd(),
 		newCalleesCmd(),
 		newRoutesCmd(),
+		newDocsForCmd(),
+		newDocDriftCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
 		newMapCmd(),
@@ -651,6 +653,54 @@ func printRoutes(routes []api.Route) {
 		fmt.Printf("  %-7s %-30s %-18s %s:%d [%s]\n", method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework)
 	}
 	fmt.Printf("\n%d routes\n", len(routes))
+}
+
+func newDocsForCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "docs-for <query>",
+		Short: "Show documents that reference a file, symbol, module, or text query",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			refs, err := eng.DocsFor(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Docs for %q:\n", refs.Query)
+			for _, link := range refs.Links {
+				fmt.Printf("  %s:%d  %s:%s  %s (%.1f)\n", link.DocumentPath, link.Line, link.TargetType, link.TargetValue, link.Evidence, link.Confidence)
+			}
+			fmt.Printf("\n%d document references\n", len(refs.Links))
+			return nil
+		},
+	}
+}
+
+func newDocDriftCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doc-drift",
+		Short: "Find stale document references to missing files, symbols, or modules",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.DocDrift(context.Background())
+			if err != nil {
+				return err
+			}
+			fmt.Println(report.Summary)
+			for _, item := range report.Broken {
+				fmt.Printf("  %s:%d  %s:%s  %s\n", item.DocumentPath, item.Line, item.TargetType, item.TargetValue, item.Reason)
+			}
+			return nil
+		},
+	}
 }
 
 func newMapCmd() *cobra.Command {

@@ -249,11 +249,35 @@ type Document struct {
 
 // DocumentLink represents a relationship between a document and code.
 type DocumentLink struct {
-	ID          int64   `json:"id"`
-	DocumentID  int64   `json:"document_id"`
-	TargetType  string  `json:"target_type"`
-	TargetValue string  `json:"target_value"`
-	Line        int     `json:"line"`
-	Evidence    string  `json:"evidence,omitempty"`
-	Confidence  float64 `json:"confidence"`
+	ID           int64   `json:"id"`
+	DocumentID   int64   `json:"document_id"`
+	DocumentPath string  `json:"document_path,omitempty"`
+	TargetType   string  `json:"target_type"`
+	TargetValue  string  `json:"target_value"`
+	Line         int     `json:"line"`
+	Evidence     string  `json:"evidence,omitempty"`
+	Confidence   float64 `json:"confidence"`
+}
+
+// DocReference groups document links for a queried code/document target.
+type DocReference struct {
+	Query string         `json:"query"`
+	Links []DocumentLink `json:"links"`
+}
+
+// DocDriftItem reports a document reference that no longer resolves.
+type DocDriftItem struct {
+	DocumentPath string `json:"document_path"`
+	TargetType   string `json:"target_type"`
+	TargetValue  string `json:"target_value"`
+	Line         int    `json:"line"`
+	Evidence     string `json:"evidence,omitempty"`
+	Reason       string `json:"reason"`
+}
+
+// DocDriftReport summarizes stale or broken document references.
+type DocDriftReport struct {
+	TotalLinks int            `json:"total_links"`
+	Broken     []DocDriftItem `json:"broken"`
+	Summary    string         `json:"summary"`
 }
