@@ -461,8 +461,12 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 		if err != nil {
 			return nil, err
 		}
+		symbolNodeByName := make(map[string]string)
 		for _, sym := range syms {
 			symbolNodeID := fmt.Sprintf("symbol:%s:%s:%d", sym.FilePath, sym.Name, sym.Line)
+			if _, exists := symbolNodeByName[sym.Name]; !exists {
+				symbolNodeByName[sym.Name] = symbolNodeID
+			}
 			nodeMap[symbolNodeID] = api.GraphNode{
 				ID:       symbolNodeID,
 				Type:     "symbol",
@@ -512,6 +516,33 @@ func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focu
 				}
 			}
 			symbolCount++
+		}
+
+		for _, sym := range syms {
+			if sym.Kind != api.Function && sym.Kind != api.Method {
+				continue
+			}
+			fromNodeID := symbolNodeByName[sym.Name]
+			if fromNodeID == "" {
+				continue
+			}
+			calls, err := e.store.GetCallees(ctx, sym.Name)
+			if err != nil {
+				continue
+			}
+			for _, call := range calls {
+				if call.FromFile != f.Path {
+					continue
+				}
+				targetNodeID := symbolNodeByName[call.ToName]
+				if targetNodeID == "" {
+					targetNodeID = "call:" + call.ToName
+					if _, ok := nodeMap[targetNodeID]; !ok {
+						nodeMap[targetNodeID] = api.GraphNode{ID: targetNodeID, Type: "symbol", Label: call.ToName, Name: call.ToName, Kind: "call-target", Language: f.Language, Line: call.Line}
+					}
+				}
+				edgeMap[fmt.Sprintf("%s->%s#calls#%d", fromNodeID, targetNodeID, call.Line)] = api.GraphEdge{Source: fromNodeID, Target: targetNodeID, Type: "calls", Evidence: fmt.Sprintf("%s:%d", call.FromFile, call.Line), Confidence: call.Confidence, Line: call.Line}
+			}
 		}
 
 		routes, err := e.store.ListRoutes(ctx, f.Path)
@@ -2055,6 +2086,84 @@ type DiffImpact struct {
 	AllDeps    []string `json:"all_deps"`
 	Dependents []string `json:"dependents"`
 	Recommends []string `json:"recommends"`
+}
+
+type SymbolImpact struct {
+	Symbol           api.Symbol         `json:"symbol"`
+	Callers          []api.CallEdge     `json:"callers"`
+	Callees          []api.CallEdge     `json:"callees"`
+	Routes           []api.Route        `json:"routes,omitempty"`
+	RelatedDocs      []api.DocumentLink `json:"related_docs,omitempty"`
+	RecommendedTests []string           `json:"recommended_tests,omitempty"`
+	Risk             RiskScore          `json:"risk"`
+	Summary          string             `json:"summary"`
+}
+
+func (e *Engine) SymbolImpact(ctx context.Context, name string) (*SymbolImpact, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("symbol-impact requires a non-empty symbol")
+	}
+	defs, err := e.store.FindDefinitions(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(defs) == 0 {
+		matches, err := e.search.SearchSymbols(ctx, name, nil, 1)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("symbol not found: %s", name)
+		}
+		defs = matches
+	}
+	def := defs[0]
+	callers, _ := e.Callers(ctx, def.Name)
+	callees, _ := e.Callees(ctx, def.Name)
+	routes := e.routesForFiles(ctx, []string{def.FilePath})
+	var symbolRoutes []api.Route
+	for _, route := range routes {
+		if route.Handler == def.Name || strings.HasSuffix(route.Handler, "."+def.Name) || route.Handler == "" {
+			symbolRoutes = append(symbolRoutes, route)
+		}
+	}
+	docs, _ := e.DocsFor(ctx, def.Name)
+	relatedDocs := []api.DocumentLink(nil)
+	if docs != nil {
+		relatedDocs = docs.Links
+	}
+	tests := e.recommendedTestsForFilesAndSymbols(ctx, []string{def.FilePath}, []ChangedSymbol{{Name: def.Name, Kind: string(def.Kind), FilePath: def.FilePath, Line: def.Line}})
+	risk := symbolImpactRisk(def, callers, symbolRoutes, tests)
+	return &SymbolImpact{Symbol: def, Callers: callers, Callees: callees, Routes: symbolRoutes, RelatedDocs: relatedDocs, RecommendedTests: tests, Risk: risk, Summary: fmt.Sprintf("%s has %d callers, %d callees, %d routes, %d docs", def.Name, len(callers), len(callees), len(symbolRoutes), len(relatedDocs))}, nil
+}
+
+func symbolImpactRisk(def api.Symbol, callers []api.CallEdge, routes []api.Route, tests []string) RiskScore {
+	score := 0
+	reasons := []string{}
+	if len(routes) > 0 {
+		score += 30
+		reasons = append(reasons, fmt.Sprintf("symbol handles %d routes", len(routes)))
+	}
+	if len(callers) > 5 {
+		score += 20
+		reasons = append(reasons, fmt.Sprintf("symbol has %d callers", len(callers)))
+	}
+	if len(tests) == 0 {
+		score += 15
+		reasons = append(reasons, "no related tests found")
+	}
+	if def.Kind == api.Interface || def.Kind == api.Type || def.Kind == api.Class {
+		score += 10
+		reasons = append(reasons, fmt.Sprintf("public structural symbol kind: %s", def.Kind))
+	}
+	level := "low"
+	if score >= 50 {
+		level = "high"
+	} else if score >= 25 {
+		level = "medium"
+	}
+	return RiskScore{Level: level, Score: score, Reasons: dedupStrings(reasons)}
 }
 
 func (e *Engine) DiffImpact(ctx context.Context, filePath string, depth int) (*DiffImpact, error) {

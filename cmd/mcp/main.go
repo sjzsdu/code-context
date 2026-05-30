@@ -300,6 +300,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			}
 			return textResult(formatTestImpactMarkdown(t)), nil, nil
 		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_symbol_impact", Description: "Analyze symbol-level impact using callers, callees, routes, docs, and tests"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args ContextArgs) (*mcp.CallToolResult, any, error) {
+			impact, err := eng.SymbolImpact(ctx, args.Symbol)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatSymbolImpactMarkdown(impact)), nil, nil
+		})
 }
 
 func registerTools(srv *mcp.Server, eng *engine.Engine) {
@@ -1019,6 +1028,34 @@ func formatTestImpactMarkdown(t *engine.TestImpact) string {
 	out += "\n## Recommended Tests\n"
 	for _, test := range t.RecommendedTests {
 		out += "- `" + test + "`\n"
+	}
+	return out
+}
+
+func formatSymbolImpactMarkdown(impact *engine.SymbolImpact) string {
+	out := fmt.Sprintf("# Symbol Impact: `%s`\n\n%s\n\nDefinition: `%s:%d` (%s)\nRisk: %s (%d)\n", impact.Symbol.Name, impact.Summary, impact.Symbol.FilePath, impact.Symbol.Line, impact.Symbol.Kind, impact.Risk.Level, impact.Risk.Score)
+	for _, reason := range impact.Risk.Reasons {
+		out += "- " + reason + "\n"
+	}
+	out += fmt.Sprintf("\n## Callers (%d)\n", len(impact.Callers))
+	for _, c := range impact.Callers {
+		out += fmt.Sprintf("- `%s:%d` `%s` -> `%s`\n", c.FromFile, c.Line, c.FromSymbol, c.ToName)
+	}
+	out += fmt.Sprintf("\n## Callees (%d)\n", len(impact.Callees))
+	for _, c := range impact.Callees {
+		out += fmt.Sprintf("- `%s:%d` `%s` -> `%s`\n", c.FromFile, c.Line, c.FromSymbol, c.ToName)
+	}
+	out += fmt.Sprintf("\n## Routes (%d)\n", len(impact.Routes))
+	for _, r := range impact.Routes {
+		out += fmt.Sprintf("- `%s %s` in `%s:%d`\n", r.Method, r.Path, r.FilePath, r.Line)
+	}
+	out += fmt.Sprintf("\n## Related Docs (%d)\n", len(impact.RelatedDocs))
+	for _, d := range impact.RelatedDocs {
+		out += fmt.Sprintf("- `%s:%d` %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+	}
+	out += fmt.Sprintf("\n## Recommended Tests (%d)\n", len(impact.RecommendedTests))
+	for _, t := range impact.RecommendedTests {
+		out += "- `" + t + "`\n"
 	}
 	return out
 }

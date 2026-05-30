@@ -73,6 +73,7 @@ func main() {
 		newSnapshotGitCmd(),
 		newReviewContextCmd(),
 		newTestImpactCmd(),
+		newSymbolImpactCmd(),
 		newTraceCmd(),
 		newDiffImpactCmd(),
 		newDiffImpactGitCmd(),
@@ -1179,6 +1180,46 @@ func newTestImpactCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
 	return cmd
+}
+
+func newSymbolImpactCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "symbol-impact <symbol>",
+		Short: "Analyze symbol-level impact using callers, callees, routes, docs, and tests",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			impact, err := eng.SymbolImpact(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Symbol impact: %s (%s) at %s:%d\n", impact.Symbol.Name, impact.Symbol.Kind, impact.Symbol.FilePath, impact.Symbol.Line)
+			fmt.Printf("Summary: %s\n", impact.Summary)
+			fmt.Printf("Risk: %s (%d)\n", impact.Risk.Level, impact.Risk.Score)
+			for _, reason := range impact.Risk.Reasons {
+				fmt.Printf("  - %s\n", reason)
+			}
+			fmt.Printf("\nCallers (%d):\n", len(impact.Callers))
+			printCalls(impact.Callers)
+			fmt.Printf("Callees (%d):\n", len(impact.Callees))
+			printCalls(impact.Callees)
+			fmt.Printf("Routes (%d):\n", len(impact.Routes))
+			printRoutes(impact.Routes)
+			fmt.Printf("Related docs (%d):\n", len(impact.RelatedDocs))
+			for _, d := range impact.RelatedDocs {
+				fmt.Printf("  %s:%d %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+			}
+			fmt.Printf("Recommended tests (%d):\n", len(impact.RecommendedTests))
+			for _, t := range impact.RecommendedTests {
+				fmt.Printf("  %s\n", t)
+			}
+			return nil
+		},
+	}
 }
 
 func newTraceCmd() *cobra.Command {
