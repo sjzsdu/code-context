@@ -40,6 +40,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/text", s.handleTextSearch)
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
+	mux.HandleFunc("/api/callers", s.handleCallers)
+	mux.HandleFunc("/api/callees", s.handleCallees)
+	mux.HandleFunc("/api/routes", s.handleRoutes)
+	mux.HandleFunc("/api/docs-for", s.handleDocsFor)
+	mux.HandleFunc("/api/doc-drift", s.handleDocDrift)
 	mux.HandleFunc("/api/map", s.handleMap)
 	mux.HandleFunc("/api/graph", s.handleGraph)
 	mux.HandleFunc("/api/graph/html", s.handleGraphHTML)
@@ -55,6 +60,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/trace", s.handleTrace)
 	mux.HandleFunc("/api/diff-impact", s.handleDiffImpact)
 	mux.HandleFunc("/api/diff-impact-git", s.handleDiffImpactGit)
+	mux.HandleFunc("/api/review-context", s.handleReviewContext)
+	mux.HandleFunc("/api/test-impact", s.handleTestImpact)
+	mux.HandleFunc("/api/symbol-impact", s.handleSymbolImpact)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/index", s.handleIndex)
@@ -200,6 +208,67 @@ func (s *Server) handleImporters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleCallers(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, fmt.Errorf("missing 'name' parameter"), 400)
+		return
+	}
+	results, err := s.eng.Callers(r.Context(), name)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleCallees(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, fmt.Errorf("missing 'name' parameter"), 400)
+		return
+	}
+	results, err := s.eng.Callees(r.Context(), name)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	results, err := s.eng.Routes(r.Context(), query)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleDocsFor(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeError(w, fmt.Errorf("missing 'q' parameter"), 400)
+		return
+	}
+	result, err := s.eng.DocsFor(r.Context(), query)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleDocDrift(w http.ResponseWriter, r *http.Request) {
+	result, err := s.eng.DocDrift(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -452,6 +521,51 @@ func (s *Server) handleDiffImpactGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleReviewContext(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+
+	result, err := s.eng.ReviewContext(r.Context(), state)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleTestImpact(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+
+	result, err := s.eng.TestImpact(r.Context(), state)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleSymbolImpact(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeError(w, fmt.Errorf("missing 'name' parameter"), 400)
+		return
+	}
+
+	result, err := s.eng.SymbolImpact(r.Context(), name)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func writeGraphHTMLPage(w interface{ Write([]byte) (int, error) }, root string, graph *api.GraphExport) error {

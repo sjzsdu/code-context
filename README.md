@@ -8,6 +8,9 @@ A code context system that reads entire codebases, indexes them structurally usi
 - **FTS5 symbol search** — fast full-text search on symbol names
 - **Definition lookup** — find where symbols are defined
 - **Import graph** — dependency analysis with BFS traversal, related-file scoring, path lookup, neighbors, and subgraph export
+- **Call graph** — callers/callees lookup plus graph `calls` edges for symbol-level impact analysis
+- **Framework route index** — extracts common HTTP routes from Go, TypeScript/JavaScript, Python, Java, and Rust frameworks
+- **Document drift diagnostics** — links docs back to files, symbols, and modules, then reports stale references
 - **Graph-aware context** — `map`, `context`, `snapshot`, and `snapshot-git` include graph summaries, bridge/hotspot insights, and recommended files
 - **Context generation** — generate code context for LLM consumption
 - **Trace & impact analysis** — understand code flow and change impact
@@ -63,6 +66,11 @@ code-context snapshot "authentication"
 
 # Analyze change impact
 code-context diff-impact internal/store/sqlite.go
+code-context symbol-impact Engine
+
+# Inspect app surface and documentation health
+code-context routes
+code-context doc-drift
 
 # Show index stats
 code-context stats
@@ -173,7 +181,35 @@ Exports graph JSON, finds file-level paths, shows neighboring files/symbols, and
 Graph exports are versioned as `graph-export.v2` and now include richer code-knowledge graph structure:
 - node types: `file`, `symbol`, `import`, `module`, `package`
 - edge types: `defines`, `imports`, `belongs_to`, `declares_package`, `represents`, `resolves_to`
+- code-intelligence edges: `calls`, `declares_route`, `handles_route`, `mentions_file`, `mentions_symbol`, `mentions_module`
 - confidence labels such as `EXTRACTED`, `INFERRED`, and `AMBIGUOUS`
+
+### `callers` / `callees` — Lightweight call graph lookup
+
+```bash
+code-context callers NewEngine
+code-context callees ReviewContext
+```
+
+Shows heuristic call graph edges extracted during indexing. Edges include source/target file and line metadata plus confidence labels.
+
+### `routes [query]` — List framework routes
+
+```bash
+code-context routes
+code-context routes users
+```
+
+Lists routes detected from common framework patterns such as Go `http.HandleFunc`, Gin/chi methods, Express, NestJS decorators, FastAPI/Flask decorators, Django paths, Spring mappings, Rust route attributes, and Axum `.route` calls.
+
+### `docs-for <query>` / `doc-drift` — Document reference diagnostics
+
+```bash
+code-context docs-for NewEngine
+code-context doc-drift
+```
+
+`docs-for` finds documentation links that mention a file, symbol, or module. `doc-drift` reports broken references where documentation points to missing files, symbols, or modules.
 
 ### `trace <from> <to>` — Call chain tracing
 
@@ -191,6 +227,14 @@ code-context diff-impact internal/store/sqlite.go --depth 2
 ```
 
 Shows dependencies and recommended test files.
+
+### `symbol-impact <name>` — Symbol-level impact package
+
+```bash
+code-context symbol-impact GitDiff
+```
+
+Combines definition lookup, callers, callees, related routes, related docs, recommended tests, and a risk score for one symbol.
 
 ### `files` — List indexed files
 
@@ -262,6 +306,15 @@ code-context diff-impact-git internal/store/sqlite.go
 code-context diff-impact-git internal/store/sqlite.go --depth 2
 ```
 
+### `review-context` / `test-impact` — Git review workflows
+
+```bash
+code-context review-context --state all
+code-context test-impact --state unstaged
+```
+
+`review-context` summarizes changed files, changed symbols, route/doc/test impact, risk, and suggested review order. `test-impact` returns recommended tests for changed files and symbols. Supported states are `unstaged`, `staged`, and `all`.
+
 ### Global Flags
 
 | Flag | Short | Default | Description |
@@ -282,6 +335,11 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
+| GET | `/api/callers` | `name` | Show heuristic callers of a symbol |
+| GET | `/api/callees` | `name` | Show heuristic callees from a symbol |
+| GET | `/api/routes` | `q?` | List indexed framework routes |
+| GET | `/api/docs-for` | `q` | Find documentation references for a file, symbol, or module |
+| GET | `/api/doc-drift` | — | Report broken documentation references |
 | GET | `/api/map` | — | Project architecture overview with graph analysis |
 | GET | `/api/graph` | `focus?` | Export repository or focused graph JSON (`graph-export.v2`) |
 | GET | `/api/graph/path` | `from`, `to` | Find a file-level path through the graph |
@@ -293,6 +351,13 @@ Start the server with `code-context serve`, then:
 | GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
 | GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
 | GET | `/api/diff-impact` | `file`, `depth?` | Analyze change impact and related tests |
+| GET | `/api/git/files` | `state?` | List git changed files for `unstaged`, `staged`, or `all` |
+| GET | `/api/git/diff` | `state?`, `context?` | Return git diff hunks for changed files |
+| GET | `/api/snapshot-git` | `state?`, `limit?` | Generate an LLM context package from git changes |
+| GET | `/api/diff-impact-git` | `state?`, `depth?` | Analyze impact for git changed files |
+| GET | `/api/review-context` | `state?` | Build review context with risk, routes, docs, and tests |
+| GET | `/api/test-impact` | `state?` | Recommend tests for git changed files and symbols |
+| GET | `/api/symbol-impact` | `name` | Return symbol-level callers, callees, docs, routes, tests, and risk |
 | GET | `/api/stats` | — | Index statistics with version metadata |
 | GET | `/api/status` | — | Service/workflow status including watch metadata |
 | POST | `/api/index` | `incremental?` | Trigger indexing |
@@ -357,6 +422,11 @@ Add to your AI client config:
 | `files` | List indexed files | `language?` |
 | `imports` | Show imports of a file | `file` |
 | `importers` | Find files importing a source | `source` |
+| `callers` | Show heuristic callers of a symbol | `symbol` |
+| `callees` | Show heuristic callees from a symbol | `symbol` |
+| `routes` | List indexed framework routes | `query?` |
+| `docs_for` | Find documentation references for a file, symbol, or module | `query` |
+| `doc_drift` | Report broken documentation references | - |
 | `stats` | Show index statistics | - |
 | `map` | Show project architecture overview with graph analysis | - |
 | `graph` | Export repository or focused graph JSON | `focus?` |
@@ -367,6 +437,9 @@ Add to your AI client config:
 | `context` | Show symbol profile with graph guidance | `symbol` |
 | `snapshot` | Generate LLM context for a query | `query`, `limit?` |
 | `diff_impact` | Analyze change impact for a file | `file`, `depth?` |
+| `review_context` | Build git review context with risk, routes, docs, and tests | `state?` |
+| `test_impact` | Recommend tests for git changed files and symbols | `state?` |
+| `symbol_impact` | Return symbol-level impact, risk, docs, routes, and tests | `symbol` |
 | `trace` | Trace call chain between symbols | `from`, `to` |
 
 ### Usage Example

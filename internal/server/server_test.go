@@ -41,10 +41,22 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	file1Content := strings.Join([]string{
 		"package a",
 		"",
-		"import \"fmt\"",
+		"import (",
+		"\t\"fmt\"",
+		"\t\"net/http\"",
+		")",
 		"",
 		"func Foo() {",
 		"\tfmt.Println(\"foo\")",
+		"\tBar()",
+		"}",
+		"",
+		"func init() {",
+		"\thttp.HandleFunc(\"/foo\", FooHandler)",
+		"}",
+		"",
+		"func FooHandler(w http.ResponseWriter, r *http.Request) {",
+		"\tFoo()",
 		"}",
 	}, "\n")
 	if err := os.WriteFile(file1, []byte(file1Content), 0o644); err != nil {
@@ -1073,5 +1085,64 @@ func TestDiffImpactGitEndpoint(t *testing.T) {
 	}
 	if len(rawResults) == 0 {
 		t.Fatalf("expected at least one diff impact result, got none")
+	}
+}
+
+func TestNewAnalysisEndpoints(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	cases := []struct {
+		name       string
+		path       string
+		wantFields []string
+	}{
+		{name: "callers", path: "/api/callers?name=Bar", wantFields: []string{"results", "count"}},
+		{name: "callees", path: "/api/callees?name=Foo", wantFields: []string{"results", "count"}},
+		{name: "routes", path: "/api/routes?q=foo", wantFields: []string{"results", "count"}},
+		{name: "docs-for", path: "/api/docs-for?q=Foo", wantFields: []string{"query", "links"}},
+		{name: "doc-drift", path: "/api/doc-drift", wantFields: []string{"total_links", "broken", "summary"}},
+		{name: "review-context", path: "/api/review-context?state=all", wantFields: []string{"changed_files", "risk", "summary"}},
+		{name: "test-impact", path: "/api/test-impact?state=all", wantFields: []string{"changed_files", "recommended_tests", "summary"}},
+		{name: "symbol-impact", path: "/api/symbol-impact?name=Foo", wantFields: []string{"symbol", "risk", "summary"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Get(ts.URL + tc.path)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+			}
+			var payload map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			for _, field := range tc.wantFields {
+				if _, ok := payload[field]; !ok {
+					t.Fatalf("expected %q in response, got: %v", field, payload)
+				}
+			}
+		})
+	}
+}
+
+func TestNewAnalysisEndpointsMissingRequiredParams(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	for _, path := range []string{"/api/callers", "/api/callees", "/api/docs-for", "/api/symbol-impact"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s: expected 400, got %d", path, resp.StatusCode)
+		}
 	}
 }
