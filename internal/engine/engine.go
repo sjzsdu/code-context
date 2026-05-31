@@ -2099,6 +2099,89 @@ type SymbolImpact struct {
 	Summary          string             `json:"summary"`
 }
 
+type RouteContext struct {
+	Query            string             `json:"query"`
+	Routes           []api.Route        `json:"routes"`
+	Handlers         []api.Symbol       `json:"handlers,omitempty"`
+	Callers          []api.CallEdge     `json:"callers,omitempty"`
+	Callees          []api.CallEdge     `json:"callees,omitempty"`
+	RelatedDocs      []api.DocumentLink `json:"related_docs,omitempty"`
+	RecommendedTests []string           `json:"recommended_tests,omitempty"`
+	Risk             RiskScore          `json:"risk"`
+	Summary          string             `json:"summary"`
+}
+
+func (e *Engine) RouteContext(ctx context.Context, query string) (*RouteContext, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("route-context requires a non-empty query")
+	}
+	routes, err := e.Routes(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(routes) == 0 {
+		return nil, fmt.Errorf("route not found: %s", query)
+	}
+	filesSeen := map[string]bool{}
+	var files []string
+	var handlers []api.Symbol
+	var changed []ChangedSymbol
+	var callers []api.CallEdge
+	var callees []api.CallEdge
+	for _, route := range routes {
+		if route.FilePath != "" && !filesSeen[route.FilePath] {
+			filesSeen[route.FilePath] = true
+			files = append(files, route.FilePath)
+		}
+		for _, h := range e.resolveRouteHandler(ctx, route) {
+			handlers = append(handlers, h)
+			changed = append(changed, ChangedSymbol{Name: h.Name, Kind: string(h.Kind), FilePath: h.FilePath, Line: h.Line})
+			cs, _ := e.Callers(ctx, h.Name)
+			callers = append(callers, cs...)
+			ce, _ := e.Callees(ctx, h.Name)
+			callees = append(callees, ce...)
+		}
+	}
+	handlers = dedupSymbols(handlers)
+	callers = dedupCallEdges(callers)
+	callees = dedupCallEdges(callees)
+	docs := e.docsForFilesAndSymbols(ctx, files, changed)
+	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changed)
+	risk := routeContextRisk(routes, handlers, callers, tests)
+	return &RouteContext{Query: query, Routes: routes, Handlers: handlers, Callers: callers, Callees: callees, RelatedDocs: docs, RecommendedTests: tests, Risk: risk, Summary: fmt.Sprintf("%d routes, %d handlers, %d callers, %d tests", len(routes), len(handlers), len(callers), len(tests))}, nil
+}
+
+func (e *Engine) resolveRouteHandler(ctx context.Context, route api.Route) []api.Symbol {
+	handler := strings.TrimSpace(route.Handler)
+	if handler == "" {
+		return nil
+	}
+	candidates := []string{handler}
+	if i := strings.LastIndex(handler, "."); i >= 0 && i < len(handler)-1 {
+		candidates = append(candidates, handler[i+1:])
+	}
+	seen := map[string]bool{}
+	var out []api.Symbol
+	for _, name := range candidates {
+		defs, err := e.store.FindDefinitions(ctx, name)
+		if err != nil {
+			continue
+		}
+		for _, d := range defs {
+			if route.FilePath != "" && d.FilePath != route.FilePath {
+				continue
+			}
+			key := d.FilePath + ":" + d.Name + fmt.Sprint(d.Line)
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, d)
+			}
+		}
+	}
+	return out
+}
+
 func (e *Engine) SymbolImpact(ctx context.Context, name string) (*SymbolImpact, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -2164,6 +2247,60 @@ func symbolImpactRisk(def api.Symbol, callers []api.CallEdge, routes []api.Route
 		level = "medium"
 	}
 	return RiskScore{Level: level, Score: score, Reasons: dedupStrings(reasons)}
+}
+
+func routeContextRisk(routes []api.Route, handlers []api.Symbol, callers []api.CallEdge, tests []string) RiskScore {
+	score := 0
+	reasons := []string{}
+	if len(routes) > 0 {
+		score += 25
+		reasons = append(reasons, fmt.Sprintf("%d externally reachable routes", len(routes)))
+	}
+	if len(handlers) == 0 {
+		score += 20
+		reasons = append(reasons, "route handler definitions were not resolved")
+	}
+	if len(callers) > 3 {
+		score += 15
+		reasons = append(reasons, fmt.Sprintf("handlers have %d callers", len(callers)))
+	}
+	if len(tests) == 0 {
+		score += 20
+		reasons = append(reasons, "no related tests found")
+	}
+	level := "low"
+	if score >= 50 {
+		level = "high"
+	} else if score >= 25 {
+		level = "medium"
+	}
+	return RiskScore{Level: level, Score: score, Reasons: dedupStrings(reasons)}
+}
+
+func dedupSymbols(in []api.Symbol) []api.Symbol {
+	seen := map[string]bool{}
+	var out []api.Symbol
+	for _, s := range in {
+		key := s.FilePath + ":" + s.Name + fmt.Sprint(s.Line)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func dedupCallEdges(in []api.CallEdge) []api.CallEdge {
+	seen := map[string]bool{}
+	var out []api.CallEdge
+	for _, c := range in {
+		key := c.FromFile + ":" + c.FromSymbol + ":" + c.ToName + fmt.Sprint(c.Line)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func (e *Engine) DiffImpact(ctx context.Context, filePath string, depth int) (*DiffImpact, error) {

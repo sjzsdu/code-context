@@ -1100,6 +1100,7 @@ func TestNewAnalysisEndpoints(t *testing.T) {
 		{name: "callers", path: "/api/callers?name=Bar", wantFields: []string{"results", "count"}},
 		{name: "callees", path: "/api/callees?name=Foo", wantFields: []string{"results", "count"}},
 		{name: "routes", path: "/api/routes?q=foo", wantFields: []string{"results", "count"}},
+		{name: "route-context", path: "/api/route-context?q=foo", wantFields: []string{"query", "routes", "risk", "summary"}},
 		{name: "docs-for", path: "/api/docs-for?q=Foo", wantFields: []string{"query", "links"}},
 		{name: "doc-drift", path: "/api/doc-drift", wantFields: []string{"total_links", "broken", "summary"}},
 		{name: "review-context", path: "/api/review-context?state=all", wantFields: []string{"changed_files", "risk", "summary"}},
@@ -1135,7 +1136,7 @@ func TestNewAnalysisEndpointsMissingRequiredParams(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	for _, path := range []string{"/api/callers", "/api/callees", "/api/docs-for", "/api/symbol-impact"} {
+	for _, path := range []string{"/api/callers", "/api/callees", "/api/route-context", "/api/docs-for", "/api/symbol-impact"} {
 		resp, err := http.Get(ts.URL + path)
 		if err != nil {
 			t.Fatalf("request failed: %v", err)

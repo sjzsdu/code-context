@@ -61,6 +61,7 @@ func main() {
 		newCallersCmd(),
 		newCalleesCmd(),
 		newRoutesCmd(),
+		newRouteContextCmd(),
 		newDocsForCmd(),
 		newDocDriftCmd(),
 		newStatsCmd(),
@@ -656,6 +657,50 @@ func printRoutes(routes []api.Route) {
 		fmt.Printf("  %-7s %-30s %-18s %s:%d [%s]\n", method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework)
 	}
 	fmt.Printf("\n%d routes\n", len(routes))
+}
+
+func newRouteContextCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "route-context <query>",
+		Short: "Analyze route-level impact using handlers, calls, docs, tests, and risk",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			ctx, err := eng.RouteContext(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Route context: %s\n", ctx.Query)
+			fmt.Printf("Summary: %s\n", ctx.Summary)
+			fmt.Printf("Risk: %s (%d)\n", ctx.Risk.Level, ctx.Risk.Score)
+			for _, reason := range ctx.Risk.Reasons {
+				fmt.Printf("  - %s\n", reason)
+			}
+			fmt.Printf("\nRoutes (%d):\n", len(ctx.Routes))
+			printRoutes(ctx.Routes)
+			fmt.Printf("Handlers (%d):\n", len(ctx.Handlers))
+			for _, h := range ctx.Handlers {
+				fmt.Printf("  %s:%d %s (%s)\n", h.FilePath, h.Line, h.Name, h.Kind)
+			}
+			fmt.Printf("\nCallers (%d):\n", len(ctx.Callers))
+			printCalls(ctx.Callers)
+			fmt.Printf("Callees (%d):\n", len(ctx.Callees))
+			printCalls(ctx.Callees)
+			fmt.Printf("Related docs (%d):\n", len(ctx.RelatedDocs))
+			for _, d := range ctx.RelatedDocs {
+				fmt.Printf("  %s:%d %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+			}
+			fmt.Printf("Recommended tests (%d):\n", len(ctx.RecommendedTests))
+			for _, t := range ctx.RecommendedTests {
+				fmt.Printf("  %s\n", t)
+			}
+			return nil
+		},
+	}
 }
 
 func newDocsForCmd() *cobra.Command {

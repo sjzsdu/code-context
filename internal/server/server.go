@@ -43,6 +43,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/callers", s.handleCallers)
 	mux.HandleFunc("/api/callees", s.handleCallees)
 	mux.HandleFunc("/api/routes", s.handleRoutes)
+	mux.HandleFunc("/api/route-context", s.handleRouteContext)
 	mux.HandleFunc("/api/docs-for", s.handleDocsFor)
 	mux.HandleFunc("/api/doc-drift", s.handleDocDrift)
 	mux.HandleFunc("/api/map", s.handleMap)
@@ -246,6 +247,20 @@ func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleRouteContext(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeError(w, fmt.Errorf("missing 'q' parameter"), 400)
+		return
+	}
+	result, err := s.eng.RouteContext(r.Context(), query)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) handleDocsFor(w http.ResponseWriter, r *http.Request) {

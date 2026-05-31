@@ -70,6 +70,7 @@ code-context symbol-impact Engine
 
 # Inspect app surface and documentation health
 code-context routes
+code-context route-context /api/users
 code-context doc-drift
 
 # Show index stats
@@ -201,6 +202,15 @@ code-context routes users
 ```
 
 Lists routes detected from common framework patterns such as Go `http.HandleFunc`, Gin/chi methods, Express, NestJS decorators, FastAPI/Flask decorators, Django paths, Spring mappings, Rust route attributes, and Axum `.route` calls.
+
+### `route-context <query>` — Route-level impact package
+
+```bash
+code-context route-context /users
+code-context route-context GetUserHandler
+```
+
+Aggregates matching routes, resolved handlers, callers, callees, related docs, recommended tests, and a route risk score. This is the fastest entry point when reviewing or changing an HTTP API surface.
 
 ### `docs-for <query>` / `doc-drift` — Document reference diagnostics
 
@@ -338,6 +348,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |
 | GET | `/api/callees` | `name` | Show heuristic callees from a symbol |
 | GET | `/api/routes` | `q?` | List indexed framework routes |
+| GET | `/api/route-context` | `q` | Return route-level handlers, calls, docs, tests, and risk |
 | GET | `/api/docs-for` | `q` | Find documentation references for a file, symbol, or module |
 | GET | `/api/doc-drift` | — | Report broken documentation references |
 | GET | `/api/map` | — | Project architecture overview with graph analysis |
@@ -425,6 +436,7 @@ Add to your AI client config:
 | `callers` | Show heuristic callers of a symbol | `symbol` |
 | `callees` | Show heuristic callees from a symbol | `symbol` |
 | `routes` | List indexed framework routes | `query?` |
+| `route_context` | Analyze route-level handlers, calls, docs, tests, and risk | `query` |
 | `docs_for` | Find documentation references for a file, symbol, or module | `query` |
 | `doc_drift` | Report broken documentation references | - |
 | `stats` | Show index statistics | - |

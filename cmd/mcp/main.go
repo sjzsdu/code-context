@@ -257,6 +257,18 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(withStaleWarning(ctx, eng, formatRoutesMarkdown(routes)+recommendedCalls("code_context_context", "code_context_callers", "code_context_snapshot"))), nil, nil
 		})
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_route_context", Description: "Analyze route-level impact using handlers, calls, docs, tests, and risk"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args RoutesArgs) (*mcp.CallToolResult, any, error) {
+			if args.Query == "" {
+				return nil, nil, fmt.Errorf("missing required parameter: query")
+			}
+			rc, err := eng.RouteContext(ctx, args.Query)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, formatRouteContextMarkdown(rc)+recommendedCalls("code_context_symbol_impact", "code_context_docs_for", "code_context_test_impact"))), nil, nil
+		})
+
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_docs_for", Description: "Show documents that reference a file, symbol, module, or text query"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args DocsForArgs) (*mcp.CallToolResult, any, error) {
 			refs, err := eng.DocsFor(ctx, args.Query)
@@ -968,6 +980,38 @@ func formatRoutesMarkdown(routes []api.Route) string {
 		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s, %s]\n", method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework, r.Confidence)
 	}
 	out += fmt.Sprintf("\n%d routes\n", len(routes))
+	return out
+}
+
+func formatRouteContextMarkdown(rc *engine.RouteContext) string {
+	out := fmt.Sprintf("# Route Context: `%s`\n\n%s\n\nRisk: %s (%d)\n", rc.Query, rc.Summary, rc.Risk.Level, rc.Risk.Score)
+	for _, reason := range rc.Risk.Reasons {
+		out += "- " + reason + "\n"
+	}
+	out += fmt.Sprintf("\n## Routes (%d)\n", len(rc.Routes))
+	for _, r := range rc.Routes {
+		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s]\n", r.Method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework)
+	}
+	out += fmt.Sprintf("\n## Handlers (%d)\n", len(rc.Handlers))
+	for _, h := range rc.Handlers {
+		out += fmt.Sprintf("- `%s:%d` `%s` (%s)\n", h.FilePath, h.Line, h.Name, h.Kind)
+	}
+	out += fmt.Sprintf("\n## Callers (%d)\n", len(rc.Callers))
+	for _, c := range rc.Callers {
+		out += fmt.Sprintf("- `%s:%d` `%s` -> `%s`\n", c.FromFile, c.Line, c.FromSymbol, c.ToName)
+	}
+	out += fmt.Sprintf("\n## Callees (%d)\n", len(rc.Callees))
+	for _, c := range rc.Callees {
+		out += fmt.Sprintf("- `%s:%d` `%s` -> `%s`\n", c.FromFile, c.Line, c.FromSymbol, c.ToName)
+	}
+	out += fmt.Sprintf("\n## Related Docs (%d)\n", len(rc.RelatedDocs))
+	for _, d := range rc.RelatedDocs {
+		out += fmt.Sprintf("- `%s:%d` %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+	}
+	out += fmt.Sprintf("\n## Recommended Tests (%d)\n", len(rc.RecommendedTests))
+	for _, t := range rc.RecommendedTests {
+		out += "- `" + t + "`\n"
+	}
 	return out
 }
 
