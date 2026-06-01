@@ -95,6 +95,9 @@ func TestGitChangedFilesAndGitContext(t *testing.T) {
 	if len(gitImpact.ChangedFiles) != 2 || len(gitImpact.FileImpacts) == 0 || gitImpact.Summary == "" {
 		t.Fatalf("unexpected git impact: %+v", gitImpact)
 	}
+	if gitImpact.Risk.Level == "" || len(gitImpact.RecommendedTests) == 0 || len(gitImpact.TestCommands) == 0 {
+		t.Fatalf("expected risk and test recommendations, got %+v", gitImpact)
+	}
 
 	diffs, err := eng.GitDiff(ctx, GitStateUnstaged, 1)
 	if err != nil {

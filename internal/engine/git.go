@@ -60,12 +60,15 @@ type TestImpact struct {
 }
 
 type GitImpact struct {
-	State          GitState        `json:"state"`
-	ChangedFiles   []string        `json:"changed_files"`
-	ChangedSymbols []ChangedSymbol `json:"changed_symbols"`
-	FileImpacts    []DiffImpact    `json:"file_impacts"`
-	SymbolImpacts  []SymbolImpact  `json:"symbol_impacts"`
-	Summary        string          `json:"summary"`
+	State            GitState        `json:"state"`
+	ChangedFiles     []string        `json:"changed_files"`
+	ChangedSymbols   []ChangedSymbol `json:"changed_symbols"`
+	FileImpacts      []DiffImpact    `json:"file_impacts"`
+	SymbolImpacts    []SymbolImpact  `json:"symbol_impacts"`
+	RecommendedTests []string        `json:"recommended_tests,omitempty"`
+	TestCommands     []TestCommand   `json:"recommended_test_commands,omitempty"`
+	Risk             RiskScore       `json:"risk"`
+	Summary          string          `json:"summary"`
 }
 
 type ReviewContext struct {
@@ -239,8 +242,55 @@ func (e *Engine) ImpactGit(ctx context.Context, state GitState, depth int) (*Git
 		}
 		symbolImpacts = append(symbolImpacts, *impact)
 	}
+	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changedSymbols)
+	commands := recommendedTestCommands(tests)
+	risk := e.gitImpactRisk(ctx, files, changedSymbols, fileImpacts, symbolImpacts, tests)
 
-	return &GitImpact{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, FileImpacts: fileImpacts, SymbolImpacts: symbolImpacts, Summary: fmt.Sprintf("%d changed files, %d changed symbols, %d file impacts, %d symbol impacts", len(files), len(changedSymbols), len(fileImpacts), len(symbolImpacts))}, nil
+	return &GitImpact{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, FileImpacts: fileImpacts, SymbolImpacts: symbolImpacts, RecommendedTests: tests, TestCommands: commands, Risk: risk, Summary: fmt.Sprintf("%d changed files, %d changed symbols, %d file impacts, %d symbol impacts, risk %s (%d)", len(files), len(changedSymbols), len(fileImpacts), len(symbolImpacts), risk.Level, risk.Score)}, nil
+}
+
+func (e *Engine) gitImpactRisk(ctx context.Context, files []string, syms []ChangedSymbol, fileImpacts []DiffImpact, symbolImpacts []SymbolImpact, tests []string) RiskScore {
+	score := 0
+	reasons := []string{}
+	if len(files) > 5 {
+		score += 15
+		reasons = append(reasons, fmt.Sprintf("large change set: %d files", len(files)))
+	}
+	if len(tests) == 0 && len(files) > 0 {
+		score += 20
+		reasons = append(reasons, "no related tests found")
+	}
+	for _, impact := range fileImpacts {
+		if len(impact.Dependents) > 3 {
+			score += 10
+			reasons = append(reasons, fmt.Sprintf("%s has %d dependent files", impact.File, len(impact.Dependents)))
+		}
+	}
+	for _, impact := range symbolImpacts {
+		if len(impact.Routes) > 0 {
+			score += 20
+			reasons = append(reasons, fmt.Sprintf("%s handles %d routes", impact.Symbol.Name, len(impact.Routes)))
+		}
+		if len(impact.Callers) > 5 {
+			score += 15
+			reasons = append(reasons, fmt.Sprintf("%s has %d callers", impact.Symbol.Name, len(impact.Callers)))
+		}
+		if impact.Risk.Score > 0 {
+			score += min(impact.Risk.Score, 20)
+			reasons = append(reasons, impact.Risk.Reasons...)
+		}
+	}
+	if len(symbolImpacts) == 0 && len(syms) > 0 {
+		score += 10
+		reasons = append(reasons, "changed symbols could not be fully resolved for symbol impact")
+	}
+	level := "low"
+	if score >= 60 {
+		level = "high"
+	} else if score >= 30 {
+		level = "medium"
+	}
+	return RiskScore{Level: level, Score: score, Reasons: dedupStrings(reasons)}
 }
 
 func (e *Engine) TestImpact(ctx context.Context, state GitState) (*TestImpact, error) {

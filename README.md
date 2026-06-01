@@ -258,7 +258,7 @@ code-context impact-git --state all --json
 
 Automatically detects whether the target is an indexed file or a symbol. File impact reports direct/all dependencies, dependent files, and recommended tests. Symbol impact combines definition lookup, callers, callees, file-level dependents, related routes, related docs, recommended tests, and a risk score. Use `--json` for agents and CI automation.
 
-`impact-git` applies the same idea to local git changes, summarizing changed files, changed symbols, file impacts, and symbol impacts for `unstaged`, `staged`, or `all` state.
+`impact-git` applies the same idea to local git changes, summarizing changed files, changed symbols, file impacts, symbol impacts, aggregate risk, related tests, and runnable test commands for `unstaged`, `staged`, or `all` state.
 
 ### `diff-impact <file>` — Change impact analysis
 

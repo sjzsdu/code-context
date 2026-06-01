@@ -140,11 +140,11 @@ func TestRunImpactGitTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run impact git tool: %v", err)
 	}
-	if len(impact.ChangedFiles) == 0 || impact.Summary == "" {
+	if len(impact.ChangedFiles) == 0 || impact.Summary == "" || impact.Risk.Level == "" {
 		t.Fatalf("unexpected git impact: %+v", impact)
 	}
 	out := formatGitImpactMarkdown(impact)
-	if !strings.Contains(out, "# Git Impact") || !strings.Contains(out, "Changed Files") {
+	if !strings.Contains(out, "# Git Impact") || !strings.Contains(out, "Changed Files") || !strings.Contains(out, "## Risk") {
 		t.Fatalf("unexpected formatted git impact:\n%s", out)
 	}
 }

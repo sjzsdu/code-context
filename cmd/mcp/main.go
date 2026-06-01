@@ -1264,6 +1264,10 @@ func formatImpactMarkdown(impact *engine.ImpactResult) string {
 
 func formatGitImpactMarkdown(impact *engine.GitImpact) string {
 	out := fmt.Sprintf("# Git Impact (%s)\n\n%s\n", impact.State, impact.Summary)
+	out += fmt.Sprintf("\n## Risk\n%s (%d)\n", impact.Risk.Level, impact.Risk.Score)
+	for _, reason := range impact.Risk.Reasons {
+		out += "- " + reason + "\n"
+	}
 	out += fmt.Sprintf("\n## Changed Files (%d)\n", len(impact.ChangedFiles))
 	for _, f := range impact.ChangedFiles {
 		out += "- `" + f + "`\n"
@@ -1280,6 +1284,11 @@ func formatGitImpactMarkdown(impact *engine.GitImpact) string {
 	for _, s := range impact.SymbolImpacts {
 		out += fmt.Sprintf("- `%s`: risk %s, %d callers, %d routes\n", s.Symbol.Name, s.Risk.Level, len(s.Callers), len(s.Routes))
 	}
+	out += fmt.Sprintf("\n## Recommended Tests (%d)\n", len(impact.RecommendedTests))
+	for _, test := range impact.RecommendedTests {
+		out += "- `" + test + "`\n"
+	}
+	out += formatTestCommandsMarkdown(impact.TestCommands)
 	return out
 }
 

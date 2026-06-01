@@ -1626,6 +1626,10 @@ func newImpactGitCmd() *cobra.Command {
 
 func printGitImpact(impact *engine.GitImpact) {
 	fmt.Printf("Git impact (%s)\n%s\n", impact.State, impact.Summary)
+	fmt.Printf("Risk: %s (%d)\n", impact.Risk.Level, impact.Risk.Score)
+	for _, reason := range impact.Risk.Reasons {
+		fmt.Printf("  - %s\n", reason)
+	}
 	fmt.Printf("\nChanged files (%d):\n", len(impact.ChangedFiles))
 	for _, f := range impact.ChangedFiles {
 		fmt.Printf("  %s\n", f)
@@ -1642,6 +1646,11 @@ func printGitImpact(impact *engine.GitImpact) {
 	for _, s := range impact.SymbolImpacts {
 		fmt.Printf("  %s: %s, %d callers, %d routes\n", s.Symbol.Name, s.Risk.Level, len(s.Callers), len(s.Routes))
 	}
+	fmt.Printf("\nRecommended tests (%d):\n", len(impact.RecommendedTests))
+	for _, t := range impact.RecommendedTests {
+		fmt.Printf("  %s\n", t)
+	}
+	printTestCommands(impact.TestCommands)
 }
 
 func printImpact(impact *engine.ImpactResult) {

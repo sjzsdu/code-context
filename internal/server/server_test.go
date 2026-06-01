@@ -1208,6 +1208,9 @@ func TestImpactGitEndpoint(t *testing.T) {
 	if payload["state"] != "all" || payload["summary"] == "" {
 		t.Fatalf("unexpected impact-git payload: %v", payload)
 	}
+	if payload["risk"] == nil || payload["recommended_test_commands"] == nil {
+		t.Fatalf("expected risk and recommended_test_commands, got: %v", payload)
+	}
 	if _, ok := payload["file_impacts"].([]interface{}); !ok {
 		t.Fatalf("expected file_impacts array, got: %T", payload["file_impacts"])
 	}
