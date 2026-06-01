@@ -841,6 +841,7 @@ func newDocsForCmd() *cobra.Command {
 
 func newDocDriftCmd() *cobra.Command {
 	var jsonOut bool
+	var failOnBroken bool
 	cmd := &cobra.Command{
 		Use:   "doc-drift",
 		Short: "Find stale document references to missing files, symbols, modules, or routes",
@@ -857,7 +858,13 @@ func newDocDriftCmd() *cobra.Command {
 			if jsonOut {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(report)
+				if err := enc.Encode(report); err != nil {
+					return err
+				}
+				if failOnBroken && len(report.Broken) > 0 {
+					return fmt.Errorf("doc-drift found %d broken references", len(report.Broken))
+				}
+				return nil
 			}
 			fmt.Println(report.Summary)
 			for _, item := range report.Broken {
@@ -867,15 +874,21 @@ func newDocDriftCmd() *cobra.Command {
 				}
 				fmt.Printf("  %s:%d%s  %s:%s  %s\n", item.DocumentPath, item.Line, section, item.TargetType, item.TargetValue, item.Reason)
 			}
+			if failOnBroken && len(report.Broken) > 0 {
+				return fmt.Errorf("doc-drift found %d broken references", len(report.Broken))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	cmd.Flags().BoolVar(&failOnBroken, "fail-on-broken", false, "exit non-zero when broken document references are found")
 	return cmd
 }
 
 func newDocCoverageCmd() *cobra.Command {
 	var jsonOut bool
+	var minRouteCoverage float64
+	var minSymbolCoverage float64
 	cmd := &cobra.Command{
 		Use:   "doc-coverage",
 		Short: "Find indexed routes and public symbols that are not referenced by documentation",
@@ -889,10 +902,17 @@ func newDocCoverageCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if minRouteCoverage > 100 || minSymbolCoverage > 100 {
+				return fmt.Errorf("coverage thresholds must be between 0 and 100")
+			}
+			coverageErr := docCoverageThresholdError(report, minRouteCoverage, minSymbolCoverage)
 			if jsonOut {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(report)
+				if err := enc.Encode(report); err != nil {
+					return err
+				}
+				return coverageErr
 			}
 			fmt.Println(report.Summary)
 			if len(report.MissingRoutes) > 0 {
@@ -911,11 +931,27 @@ func newDocCoverageCmd() *cobra.Command {
 			for _, sym := range report.MissingSymbols {
 				fmt.Printf("  %-10s %-24s %s:%d\n", sym.Kind, sym.Name, sym.FilePath, sym.Line)
 			}
-			return nil
+			return coverageErr
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	cmd.Flags().Float64Var(&minRouteCoverage, "min-route-coverage", -1, "exit non-zero when route doc coverage is below this percentage (0-100)")
+	cmd.Flags().Float64Var(&minSymbolCoverage, "min-symbol-coverage", -1, "exit non-zero when public symbol doc coverage is below this percentage (0-100)")
 	return cmd
+}
+
+func docCoverageThresholdError(report *api.DocCoverageReport, minRouteCoverage, minSymbolCoverage float64) error {
+	var failures []string
+	if minRouteCoverage >= 0 && report.RouteCoveragePercent < minRouteCoverage {
+		failures = append(failures, fmt.Sprintf("route coverage %.1f%% below %.1f%%", report.RouteCoveragePercent, minRouteCoverage))
+	}
+	if minSymbolCoverage >= 0 && report.SymbolCoveragePercent < minSymbolCoverage {
+		failures = append(failures, fmt.Sprintf("symbol coverage %.1f%% below %.1f%%", report.SymbolCoveragePercent, minSymbolCoverage))
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return fmt.Errorf("doc-coverage threshold failed: %s", strings.Join(failures, "; "))
 }
 
 func newMapCmd() *cobra.Command {
