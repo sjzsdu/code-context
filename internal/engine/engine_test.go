@@ -19,7 +19,11 @@ func main() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {}
-`), 0o644); err != nil {
+
+func DocumentedThing() {}
+
+func UndocumentedThing() {}
+	`), 0o644); err != nil {
 		t.Fatalf("write go file: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
@@ -34,7 +38,11 @@ func handler(w http.ResponseWriter, r *http.Request) {}
 
 GET /ok
 POST /missing
-`), 0o644); err != nil {
+
+## Symbols
+
+Use `+"`DocumentedThing`"+` when preparing examples.
+	`), 0o644); err != nil {
 		t.Fatalf("write doc file: %v", err)
 	}
 
@@ -76,10 +84,16 @@ POST /missing
 	if err != nil {
 		t.Fatalf("doc coverage: %v", err)
 	}
-	if coverage.TotalRoutes != 2 || coverage.Documented != 1 || len(coverage.MissingRoutes) != 1 {
+	if coverage.TotalRoutes != 2 || coverage.DocumentedRoutes != 1 || len(coverage.MissingRoutes) != 1 {
 		t.Fatalf("unexpected coverage report: %+v", coverage)
 	}
 	if coverage.MissingRoutes[0].Path != "/undocumented" {
 		t.Fatalf("expected undocumented route, got %+v", coverage.MissingRoutes)
+	}
+	if coverage.TotalSymbols != 2 || coverage.DocumentedSymbols != 1 || len(coverage.MissingSymbols) != 1 {
+		t.Fatalf("unexpected symbol coverage report: %+v", coverage)
+	}
+	if coverage.MissingSymbols[0].Name != "UndocumentedThing" {
+		t.Fatalf("expected undocumented symbol, got %+v", coverage.MissingSymbols)
 	}
 }

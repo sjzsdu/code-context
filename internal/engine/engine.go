@@ -194,26 +194,92 @@ func (e *Engine) DocCoverage(ctx context.Context) (*api.DocCoverageReport, error
 	if err != nil {
 		return nil, err
 	}
+	symbols, err := e.publicSymbols(ctx)
+	if err != nil {
+		return nil, err
+	}
 	documentedRoutes, err := e.documentedRouteTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
+	documentedSymbols, err := e.documentedSymbolTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	var missing []api.Route
-	documented := 0
+	var missingRoutes []api.Route
+	documentedRouteCount := 0
 	for _, route := range routes {
 		if routeDocumented(route, documentedRoutes) {
-			documented++
+			documentedRouteCount++
 			continue
 		}
-		missing = append(missing, route)
+		missingRoutes = append(missingRoutes, route)
 	}
-	coverage := 0.0
+	routeCoverage := 0.0
 	if len(routes) > 0 {
-		coverage = float64(documented) * 100 / float64(len(routes))
+		routeCoverage = float64(documentedRouteCount) * 100 / float64(len(routes))
 	}
-	summary := fmt.Sprintf("Route doc coverage %.1f%% (%d/%d documented); %d missing", coverage, documented, len(routes), len(missing))
-	return &api.DocCoverageReport{TotalRoutes: len(routes), Documented: documented, MissingRoutes: missing, CoveragePercent: coverage, Summary: summary}, nil
+
+	var missingSymbols []api.Symbol
+	documentedSymbolCount := 0
+	for _, sym := range symbols {
+		if symbolDocumented(sym, documentedSymbols) {
+			documentedSymbolCount++
+			continue
+		}
+		missingSymbols = append(missingSymbols, sym)
+	}
+	symbolCoverage := 0.0
+	if len(symbols) > 0 {
+		symbolCoverage = float64(documentedSymbolCount) * 100 / float64(len(symbols))
+	}
+
+	summary := fmt.Sprintf("Route doc coverage %.1f%% (%d/%d documented); symbol doc coverage %.1f%% (%d/%d documented)", routeCoverage, documentedRouteCount, len(routes), symbolCoverage, documentedSymbolCount, len(symbols))
+	return &api.DocCoverageReport{TotalRoutes: len(routes), DocumentedRoutes: documentedRouteCount, MissingRoutes: missingRoutes, RouteCoveragePercent: routeCoverage, TotalSymbols: len(symbols), DocumentedSymbols: documentedSymbolCount, MissingSymbols: missingSymbols, SymbolCoveragePercent: symbolCoverage, Summary: summary}, nil
+}
+
+func (e *Engine) publicSymbols(ctx context.Context) ([]api.Symbol, error) {
+	files, err := e.store.ListFiles(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []api.Symbol
+	for _, file := range files {
+		symbols, err := e.store.GetFileSymbols(ctx, file.Path)
+		if err != nil {
+			continue
+		}
+		for _, sym := range symbols {
+			if isDocCoverableSymbol(sym) {
+				result = append(result, sym)
+			}
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].FilePath != result[j].FilePath {
+			return result[i].FilePath < result[j].FilePath
+		}
+		return result[i].Line < result[j].Line
+	})
+	return result, nil
+}
+
+func isDocCoverableSymbol(sym api.Symbol) bool {
+	switch sym.Kind {
+	case api.Function, api.Method, api.Class, api.Type, api.Interface:
+	default:
+		return false
+	}
+	name := strings.TrimSpace(sym.Name)
+	if name == "" || name == "main" || name == "init" || strings.Contains(sym.FilePath, "_test.") {
+		return false
+	}
+	if strings.HasPrefix(name, "_") {
+		return false
+	}
+	first := []rune(name)[0]
+	return first >= 'A' && first <= 'Z'
 }
 
 func (e *Engine) documentedRouteTargets(ctx context.Context) (map[string]map[string]bool, error) {
@@ -257,6 +323,53 @@ func routeDocumented(route api.Route, documented map[string]map[string]bool) boo
 		return true
 	}
 	return methods["*"] || methods[method]
+}
+
+func (e *Engine) documentedSymbolTargets(ctx context.Context) (map[string]bool, error) {
+	docs, err := e.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	targets := make(map[string]bool)
+	for _, doc := range docs {
+		links, err := e.store.GetDocumentLinks(ctx, doc.Path)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			if link.TargetType != "symbol" {
+				continue
+			}
+			name := normalizeSymbolCoverageName(link.TargetValue)
+			if name != "" {
+				targets[name] = true
+			}
+		}
+	}
+	return targets, nil
+}
+
+func symbolDocumented(sym api.Symbol, documented map[string]bool) bool {
+	name := normalizeSymbolCoverageName(sym.Name)
+	if name == "" {
+		return false
+	}
+	if documented[name] {
+		return true
+	}
+	if sym.Parent != "" && documented[normalizeSymbolCoverageName(sym.Parent+"."+sym.Name)] {
+		return true
+	}
+	return false
+}
+
+func normalizeSymbolCoverageName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Trim(name, "` \t\n\r()[]{}.,;:")
+	if idx := strings.LastIndex(name, "."); idx >= 0 && idx < len(name)-1 {
+		name = name[idx+1:]
+	}
+	return name
 }
 
 func docLinkMatches(query string, link api.DocumentLink) bool {

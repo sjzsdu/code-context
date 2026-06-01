@@ -869,7 +869,7 @@ func newDocDriftCmd() *cobra.Command {
 func newDocCoverageCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doc-coverage",
-		Short: "Find indexed routes that are not referenced by documentation",
+		Short: "Find indexed routes and public symbols that are not referenced by documentation",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eng, err := engine.New(root, dbPath)
 			if err != nil {
@@ -881,12 +881,21 @@ func newDocCoverageCmd() *cobra.Command {
 				return err
 			}
 			fmt.Println(report.Summary)
+			if len(report.MissingRoutes) > 0 {
+				fmt.Printf("\nMissing routes (%d):\n", len(report.MissingRoutes))
+			}
 			for _, route := range report.MissingRoutes {
 				method := route.Method
 				if method == "" {
 					method = "*"
 				}
 				fmt.Printf("  %-7s %-30s %-18s %s:%d [%s]\n", method, route.Path, route.Handler, route.FilePath, route.Line, route.Framework)
+			}
+			if len(report.MissingSymbols) > 0 {
+				fmt.Printf("\nMissing public symbols (%d):\n", len(report.MissingSymbols))
+			}
+			for _, sym := range report.MissingSymbols {
+				fmt.Printf("  %-10s %-24s %s:%d\n", sym.Kind, sym.Name, sym.FilePath, sym.Line)
 			}
 			return nil
 		},

@@ -226,7 +226,7 @@ code-context doc-drift
 code-context doc-coverage
 ```
 
-`docs-for` finds documentation links that mention a file, symbol, module, or route reference such as `GET /api/items` and includes Markdown section metadata (`section_title`, `section_slug`, `section_line`) so agents can jump to the relevant heading. `doc-drift` reports broken references where documentation points to missing files, symbols, modules, or routes. `doc-coverage` reports indexed routes that are not referenced by documentation so API docs can be completed proactively.
+`docs-for` finds documentation links that mention a file, symbol, module, or route reference such as `GET /api/items` and includes Markdown section metadata (`section_title`, `section_slug`, `section_line`) so agents can jump to the relevant heading. `doc-drift` reports broken references where documentation points to missing files, symbols, modules, or routes. `doc-coverage` reports indexed routes and public symbols that are not referenced by documentation so API docs can be completed proactively.
 
 ### `trace <from> <to>` — Call chain tracing
 

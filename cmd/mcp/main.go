@@ -321,7 +321,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(formatDocDriftMarkdown(report)), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doc_coverage", Description: "Find indexed routes that are not referenced by documentation"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doc_coverage", Description: "Find indexed routes and public symbols that are not referenced by documentation"},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 			report, err := eng.DocCoverage(ctx)
 			if err != nil {
@@ -1085,12 +1085,17 @@ func formatDocDriftMarkdown(report *api.DocDriftReport) string {
 
 func formatDocCoverageMarkdown(report *api.DocCoverageReport) string {
 	out := "# Documentation Coverage\n\n" + report.Summary + "\n"
+	out += fmt.Sprintf("\n## Missing Routes (%d)\n", len(report.MissingRoutes))
 	for _, route := range report.MissingRoutes {
 		method := route.Method
 		if method == "" {
 			method = "*"
 		}
 		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s]\n", method, route.Path, route.Handler, route.FilePath, route.Line, route.Framework)
+	}
+	out += fmt.Sprintf("\n## Missing Public Symbols (%d)\n", len(report.MissingSymbols))
+	for _, sym := range report.MissingSymbols {
+		out += fmt.Sprintf("- `%s:%d` `%s` (%s)\n", sym.FilePath, sym.Line, sym.Name, sym.Kind)
 	}
 	return out
 }

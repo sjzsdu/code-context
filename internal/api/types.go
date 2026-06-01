@@ -341,9 +341,13 @@ type DocDriftReport struct {
 
 // DocCoverageReport summarizes code surfaces that are not referenced by docs.
 type DocCoverageReport struct {
-	TotalRoutes     int     `json:"total_routes"`
-	Documented      int     `json:"documented"`
-	MissingRoutes   []Route `json:"missing_routes"`
-	CoveragePercent float64 `json:"coverage_percent"`
-	Summary         string  `json:"summary"`
+	TotalRoutes           int      `json:"total_routes"`
+	DocumentedRoutes      int      `json:"documented_routes"`
+	MissingRoutes         []Route  `json:"missing_routes"`
+	RouteCoveragePercent  float64  `json:"route_coverage_percent"`
+	TotalSymbols          int      `json:"total_symbols"`
+	DocumentedSymbols     int      `json:"documented_symbols"`
+	MissingSymbols        []Symbol `json:"missing_symbols"`
+	SymbolCoveragePercent float64  `json:"symbol_coverage_percent"`
+	Summary               string   `json:"summary"`
 }
