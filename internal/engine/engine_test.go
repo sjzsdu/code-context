@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sjzsdu/code-context/internal/api"
 )
 
 func TestDocDriftResolvesDocumentRouteLinks(t *testing.T) {
@@ -95,5 +97,55 @@ Use `+"`DocumentedThing`"+` when preparing examples.
 	}
 	if coverage.MissingSymbols[0].Name != "UndocumentedThing" {
 		t.Fatalf("expected undocumented symbol, got %+v", coverage.MissingSymbols)
+	}
+}
+
+func TestImpactAutoDetectsFileAndSymbol(t *testing.T) {
+	root := t.TempDir()
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer eng.Close()
+	ctx := context.Background()
+
+	coreID, err := eng.store.UpsertFile(ctx, &api.FileInfo{Path: "core.go", Language: api.Go, ContentHash: "core", Size: 10})
+	if err != nil {
+		t.Fatalf("upsert core: %v", err)
+	}
+	userID, err := eng.store.UpsertFile(ctx, &api.FileInfo{Path: "user.go", Language: api.Go, ContentHash: "user", Size: 10})
+	if err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+	if err := eng.store.ReplaceSymbols(ctx, coreID, []api.Symbol{{Name: "Target", Kind: api.Function, FilePath: "core.go", Line: 3, EndLine: 5}}); err != nil {
+		t.Fatalf("replace symbols: %v", err)
+	}
+	if err := eng.store.ReplaceImports(ctx, userID, []api.ImportEdge{{FromFile: "user.go", ToSource: "core.go", Line: 2}}); err != nil {
+		t.Fatalf("replace imports: %v", err)
+	}
+	if err := eng.store.ReplaceCalls(ctx, userID, []api.CallEdge{{FromFile: "user.go", FromSymbol: "Use", ToName: "Target", Line: 8, Confidence: "HEURISTIC"}}); err != nil {
+		t.Fatalf("replace calls: %v", err)
+	}
+
+	fileImpact, err := eng.Impact(ctx, "core.go", 2)
+	if err != nil {
+		t.Fatalf("file impact: %v", err)
+	}
+	if fileImpact.Kind != "file" || fileImpact.FileImpact == nil || len(fileImpact.FileImpact.Dependents) != 1 || fileImpact.FileImpact.Dependents[0] != "user.go" {
+		t.Fatalf("unexpected file impact: %+v", fileImpact)
+	}
+
+	symbolImpact, err := eng.Impact(ctx, "Target", 2)
+	if err != nil {
+		t.Fatalf("symbol impact: %v", err)
+	}
+	if symbolImpact.Kind != "symbol" || symbolImpact.SymbolImpact == nil {
+		t.Fatalf("unexpected symbol impact wrapper: %+v", symbolImpact)
+	}
+	if len(symbolImpact.SymbolImpact.Callers) != 1 || symbolImpact.SymbolImpact.Callers[0].FromFile != "user.go" {
+		t.Fatalf("unexpected symbol callers: %+v", symbolImpact.SymbolImpact.Callers)
+	}
+	if len(symbolImpact.SymbolImpact.Dependents) != 1 || symbolImpact.SymbolImpact.Dependents[0] != "user.go" {
+		t.Fatalf("unexpected symbol dependents: %+v", symbolImpact.SymbolImpact.Dependents)
 	}
 }

@@ -2445,6 +2445,8 @@ type DiffImpact struct {
 
 type SymbolImpact struct {
 	Symbol           api.Symbol         `json:"symbol"`
+	DirectDeps       []string           `json:"direct_deps,omitempty"`
+	Dependents       []string           `json:"dependents,omitempty"`
 	Callers          []api.CallEdge     `json:"callers"`
 	Callees          []api.CallEdge     `json:"callees"`
 	Routes           []api.Route        `json:"routes,omitempty"`
@@ -2452,6 +2454,14 @@ type SymbolImpact struct {
 	RecommendedTests []string           `json:"recommended_tests,omitempty"`
 	Risk             RiskScore          `json:"risk"`
 	Summary          string             `json:"summary"`
+}
+
+type ImpactResult struct {
+	Target       string        `json:"target"`
+	Kind         string        `json:"kind"`
+	SymbolImpact *SymbolImpact `json:"symbol_impact,omitempty"`
+	FileImpact   *DiffImpact   `json:"file_impact,omitempty"`
+	Summary      string        `json:"summary"`
 }
 
 type RouteContext struct {
@@ -2559,6 +2569,7 @@ func (e *Engine) SymbolImpact(ctx context.Context, name string) (*SymbolImpact, 
 	def := defs[0]
 	callers, _ := e.Callers(ctx, def.Name)
 	callees, _ := e.Callees(ctx, def.Name)
+	directDeps, dependents := e.fileDependencyImpact(ctx, def.FilePath, 2)
 	routes := e.routesForFiles(ctx, []string{def.FilePath})
 	var symbolRoutes []api.Route
 	for _, route := range routes {
@@ -2572,11 +2583,47 @@ func (e *Engine) SymbolImpact(ctx context.Context, name string) (*SymbolImpact, 
 		relatedDocs = docs.Links
 	}
 	tests := e.recommendedTestsForFilesAndSymbols(ctx, []string{def.FilePath}, []ChangedSymbol{{Name: def.Name, Kind: string(def.Kind), FilePath: def.FilePath, Line: def.Line}})
-	risk := symbolImpactRisk(def, callers, symbolRoutes, tests)
-	return &SymbolImpact{Symbol: def, Callers: callers, Callees: callees, Routes: symbolRoutes, RelatedDocs: relatedDocs, RecommendedTests: tests, Risk: risk, Summary: fmt.Sprintf("%s has %d callers, %d callees, %d routes, %d docs", def.Name, len(callers), len(callees), len(symbolRoutes), len(relatedDocs))}, nil
+	risk := symbolImpactRisk(def, callers, symbolRoutes, tests, dependents)
+	return &SymbolImpact{Symbol: def, DirectDeps: directDeps, Dependents: dependents, Callers: callers, Callees: callees, Routes: symbolRoutes, RelatedDocs: relatedDocs, RecommendedTests: tests, Risk: risk, Summary: fmt.Sprintf("%s has %d callers, %d callees, %d dependents, %d routes, %d docs", def.Name, len(callers), len(callees), len(dependents), len(symbolRoutes), len(relatedDocs))}, nil
 }
 
-func symbolImpactRisk(def api.Symbol, callers []api.CallEdge, routes []api.Route, tests []string) RiskScore {
+func (e *Engine) Impact(ctx context.Context, target string, depth int) (*ImpactResult, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("impact requires a non-empty target")
+	}
+	if file, err := e.store.GetFile(ctx, target); err != nil {
+		return nil, err
+	} else if file != nil {
+		impact, err := e.DiffImpact(ctx, target, depth)
+		if err != nil {
+			return nil, err
+		}
+		return &ImpactResult{Target: target, Kind: "file", FileImpact: impact, Summary: fmt.Sprintf("file %s has %d dependencies and %d dependents", target, len(impact.AllDeps), len(impact.Dependents))}, nil
+	}
+	symbolImpact, err := e.SymbolImpact(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	return &ImpactResult{Target: target, Kind: "symbol", SymbolImpact: symbolImpact, Summary: symbolImpact.Summary}, nil
+}
+
+func (e *Engine) fileDependencyImpact(ctx context.Context, filePath string, depth int) ([]string, []string) {
+	if filePath == "" {
+		return nil, nil
+	}
+	if depth <= 0 {
+		depth = 2
+	}
+	if err := e.graph.Build(ctx); err != nil {
+		return nil, nil
+	}
+	directDeps := e.graph.DirectImports(filePath)
+	dependents := e.graph.Dependents(filePath, depth)
+	return directDeps, dependents
+}
+
+func symbolImpactRisk(def api.Symbol, callers []api.CallEdge, routes []api.Route, tests []string, dependents []string) RiskScore {
 	score := 0
 	reasons := []string{}
 	if len(routes) > 0 {
@@ -2586,6 +2633,10 @@ func symbolImpactRisk(def api.Symbol, callers []api.CallEdge, routes []api.Route
 	if len(callers) > 5 {
 		score += 20
 		reasons = append(reasons, fmt.Sprintf("symbol has %d callers", len(callers)))
+	}
+	if len(dependents) > 3 {
+		score += 15
+		reasons = append(reasons, fmt.Sprintf("symbol file has %d dependent files", len(dependents)))
 	}
 	if len(tests) == 0 {
 		score += 15

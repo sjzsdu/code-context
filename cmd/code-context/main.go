@@ -78,6 +78,7 @@ func main() {
 		newSnapshotCmd(),
 		newSnapshotGitCmd(),
 		newReviewContextCmd(),
+		newImpactCmd(),
 		newTestImpactCmd(),
 		newSymbolImpactCmd(),
 		newTraceCmd(),
@@ -1553,6 +1554,100 @@ func newReviewContextCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
 	return cmd
+}
+
+func newImpactCmd() *cobra.Command {
+	var jsonOut bool
+	var depth int
+	cmd := &cobra.Command{
+		Use:   "impact <file-or-symbol>",
+		Short: "Analyze impact for a file or symbol using imports, calls, routes, docs, and tests",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			impact, err := eng.Impact(context.Background(), args[0], depth)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(impact)
+			}
+			printImpact(impact)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	cmd.Flags().IntVar(&depth, "depth", 3, "dependency depth for file impact")
+	return cmd
+}
+
+func printImpact(impact *engine.ImpactResult) {
+	fmt.Printf("Impact: %s (%s)\n", impact.Target, impact.Kind)
+	fmt.Printf("Summary: %s\n", impact.Summary)
+	if impact.FileImpact != nil {
+		printFileImpact(impact.FileImpact)
+	}
+	if impact.SymbolImpact != nil {
+		printSymbolImpact(impact.SymbolImpact)
+	}
+}
+
+func printFileImpact(d *engine.DiffImpact) {
+	fmt.Printf("\nFile: %s\n", d.File)
+	fmt.Printf("Direct imports (%d):\n", len(d.DirectDeps))
+	for _, dep := range d.DirectDeps {
+		fmt.Printf("  %s\n", dep)
+	}
+	fmt.Printf("All dependencies (%d):\n", len(d.AllDeps))
+	for _, dep := range d.AllDeps {
+		fmt.Printf("  %s\n", dep)
+	}
+	fmt.Printf("Dependents (%d):\n", len(d.Dependents))
+	for _, dep := range d.Dependents {
+		fmt.Printf("  %s\n", dep)
+	}
+	if len(d.Recommends) > 0 {
+		fmt.Printf("Recommended tests (%d):\n", len(d.Recommends))
+		for _, r := range d.Recommends {
+			fmt.Printf("  %s\n", r)
+		}
+	}
+}
+
+func printSymbolImpact(impact *engine.SymbolImpact) {
+	fmt.Printf("\nSymbol: %s (%s) at %s:%d\n", impact.Symbol.Name, impact.Symbol.Kind, impact.Symbol.FilePath, impact.Symbol.Line)
+	fmt.Printf("Risk: %s (%d)\n", impact.Risk.Level, impact.Risk.Score)
+	for _, reason := range impact.Risk.Reasons {
+		fmt.Printf("  - %s\n", reason)
+	}
+	fmt.Printf("Direct imports (%d):\n", len(impact.DirectDeps))
+	for _, dep := range impact.DirectDeps {
+		fmt.Printf("  %s\n", dep)
+	}
+	fmt.Printf("Dependents (%d):\n", len(impact.Dependents))
+	for _, dep := range impact.Dependents {
+		fmt.Printf("  %s\n", dep)
+	}
+	fmt.Printf("Callers (%d):\n", len(impact.Callers))
+	printCalls(impact.Callers)
+	fmt.Printf("Callees (%d):\n", len(impact.Callees))
+	printCalls(impact.Callees)
+	fmt.Printf("Routes (%d):\n", len(impact.Routes))
+	printRoutes(impact.Routes)
+	fmt.Printf("Related docs (%d):\n", len(impact.RelatedDocs))
+	for _, d := range impact.RelatedDocs {
+		fmt.Printf("  %s:%d %s:%s\n", d.DocumentPath, d.Line, d.TargetType, d.TargetValue)
+	}
+	fmt.Printf("Recommended tests (%d):\n", len(impact.RecommendedTests))
+	for _, t := range impact.RecommendedTests {
+		fmt.Printf("  %s\n", t)
+	}
 }
 
 func newTestImpactCmd() *cobra.Command {

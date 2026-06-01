@@ -65,6 +65,8 @@ code-context graph path internal/engine/engine.go internal/server/server.go
 code-context snapshot "authentication"
 
 # Analyze change impact
+code-context impact Engine --json
+code-context impact internal/store/sqlite.go --depth 2
 code-context diff-impact internal/store/sqlite.go
 code-context symbol-impact Engine
 
@@ -244,6 +246,16 @@ code-context trace "main" "Engine"
 
 Traces the path between two symbols through imports.
 
+### `impact <file-or-symbol>` — Unified impact analysis
+
+```bash
+code-context impact Engine
+code-context impact internal/store/sqlite.go --depth 2
+code-context impact Engine --json
+```
+
+Automatically detects whether the target is an indexed file or a symbol. File impact reports direct/all dependencies, dependent files, and recommended tests. Symbol impact combines definition lookup, callers, callees, file-level dependents, related routes, related docs, recommended tests, and a risk score. Use `--json` for agents and CI automation.
+
 ### `diff-impact <file>` — Change impact analysis
 
 ```bash
@@ -251,7 +263,7 @@ code-context diff-impact internal/store/sqlite.go
 code-context diff-impact internal/store/sqlite.go --depth 2
 ```
 
-Shows dependencies and recommended test files.
+Shows dependencies, dependent files, and recommended test files.
 
 ### `symbol-impact <name>` — Symbol-level impact package
 
@@ -259,7 +271,7 @@ Shows dependencies and recommended test files.
 code-context symbol-impact GitDiff
 ```
 
-Combines definition lookup, callers, callees, related routes, related docs, recommended tests, and a risk score for one symbol.
+Combines definition lookup, callers, callees, file-level dependents, related routes, related docs, recommended tests, and a risk score for one symbol. Prefer `impact <target>` for new workflows because it also handles files and supports JSON output.
 
 ### `files` — List indexed files
 
