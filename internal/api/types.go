@@ -338,3 +338,12 @@ type DocDriftReport struct {
 	Broken     []DocDriftItem `json:"broken"`
 	Summary    string         `json:"summary"`
 }
+
+// DocCoverageReport summarizes code surfaces that are not referenced by docs.
+type DocCoverageReport struct {
+	TotalRoutes     int     `json:"total_routes"`
+	Documented      int     `json:"documented"`
+	MissingRoutes   []Route `json:"missing_routes"`
+	CoveragePercent float64 `json:"coverage_percent"`
+	Summary         string  `json:"summary"`
+}

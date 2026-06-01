@@ -189,6 +189,76 @@ func (e *Engine) DocDrift(ctx context.Context) (*api.DocDriftReport, error) {
 	return &api.DocDriftReport{TotalLinks: total, Broken: broken, Summary: summary}, nil
 }
 
+func (e *Engine) DocCoverage(ctx context.Context) (*api.DocCoverageReport, error) {
+	routes, err := e.store.ListRoutes(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	documentedRoutes, err := e.documentedRouteTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var missing []api.Route
+	documented := 0
+	for _, route := range routes {
+		if routeDocumented(route, documentedRoutes) {
+			documented++
+			continue
+		}
+		missing = append(missing, route)
+	}
+	coverage := 0.0
+	if len(routes) > 0 {
+		coverage = float64(documented) * 100 / float64(len(routes))
+	}
+	summary := fmt.Sprintf("Route doc coverage %.1f%% (%d/%d documented); %d missing", coverage, documented, len(routes), len(missing))
+	return &api.DocCoverageReport{TotalRoutes: len(routes), Documented: documented, MissingRoutes: missing, CoveragePercent: coverage, Summary: summary}, nil
+}
+
+func (e *Engine) documentedRouteTargets(ctx context.Context) (map[string]map[string]bool, error) {
+	docs, err := e.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	targets := make(map[string]map[string]bool)
+	for _, doc := range docs {
+		links, err := e.store.GetDocumentLinks(ctx, doc.Path)
+		if err != nil {
+			continue
+		}
+		for _, link := range links {
+			if link.TargetType != "route" {
+				continue
+			}
+			method, path := parseDocumentRouteTarget(link.TargetValue)
+			if path == "" {
+				continue
+			}
+			if targets[path] == nil {
+				targets[path] = make(map[string]bool)
+			}
+			if method == "" {
+				method = "*"
+			}
+			targets[path][method] = true
+		}
+	}
+	return targets, nil
+}
+
+func routeDocumented(route api.Route, documented map[string]map[string]bool) bool {
+	methods := documented[route.Path]
+	if len(methods) == 0 {
+		return false
+	}
+	method := strings.ToUpper(strings.TrimSpace(route.Method))
+	if method == "" {
+		return true
+	}
+	return methods["*"] || methods[method]
+}
+
 func docLinkMatches(query string, link api.DocumentLink) bool {
 	q := strings.ToLower(query)
 	return strings.Contains(strings.ToLower(link.TargetValue), q) || strings.Contains(strings.ToLower(link.Evidence), q) || strings.EqualFold(link.TargetType+":"+link.TargetValue, query)

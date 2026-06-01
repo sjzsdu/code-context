@@ -312,13 +312,22 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(formatDocsForMarkdown(refs) + recommendedCalls("code_context_explore", "code_context_snapshot")), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doc_drift", Description: "Find stale document references to missing files, symbols, or modules"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doc_drift", Description: "Find stale document references to missing files, symbols, modules, or routes"},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 			report, err := eng.DocDrift(ctx)
 			if err != nil {
 				return nil, nil, err
 			}
 			return textResult(formatDocDriftMarkdown(report)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doc_coverage", Description: "Find indexed routes that are not referenced by documentation"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			report, err := eng.DocCoverage(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(formatDocCoverageMarkdown(report)), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_review_context", Description: "Generate git-aware review context with changed symbols, routes, docs, tests, and risk"},
@@ -1070,6 +1079,18 @@ func formatDocDriftMarkdown(report *api.DocDriftReport) string {
 			section = "#" + item.SectionSlug
 		}
 		out += fmt.Sprintf("- `%s:%d%s` %s:%s - %s\n", item.DocumentPath, item.Line, section, item.TargetType, item.TargetValue, item.Reason)
+	}
+	return out
+}
+
+func formatDocCoverageMarkdown(report *api.DocCoverageReport) string {
+	out := "# Documentation Coverage\n\n" + report.Summary + "\n"
+	for _, route := range report.MissingRoutes {
+		method := route.Method
+		if method == "" {
+			method = "*"
+		}
+		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s]\n", method, route.Path, route.Handler, route.FilePath, route.Line, route.Framework)
 	}
 	return out
 }

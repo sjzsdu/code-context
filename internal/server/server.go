@@ -46,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/route-context", s.handleRouteContext)
 	mux.HandleFunc("/api/docs-for", s.handleDocsFor)
 	mux.HandleFunc("/api/doc-drift", s.handleDocDrift)
+	mux.HandleFunc("/api/doc-coverage", s.handleDocCoverage)
 	mux.HandleFunc("/api/map", s.handleMap)
 	mux.HandleFunc("/api/graph", s.handleGraph)
 	mux.HandleFunc("/api/graph/html", s.handleGraphHTML)
@@ -282,6 +283,15 @@ func (s *Server) handleDocsFor(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDocDrift(w http.ResponseWriter, r *http.Request) {
 	result, err := s.eng.DocDrift(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleDocCoverage(w http.ResponseWriter, r *http.Request) {
+	result, err := s.eng.DocCoverage(r.Context())
 	if err != nil {
 		writeError(w, err, 500)
 		return

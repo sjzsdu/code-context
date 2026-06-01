@@ -64,6 +64,7 @@ func main() {
 		newRouteContextCmd(),
 		newDocsForCmd(),
 		newDocDriftCmd(),
+		newDocCoverageCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
 		newFreshnessCmd(),
@@ -859,6 +860,33 @@ func newDocDriftCmd() *cobra.Command {
 					section = fmt.Sprintf(" #%s", item.SectionSlug)
 				}
 				fmt.Printf("  %s:%d%s  %s:%s  %s\n", item.DocumentPath, item.Line, section, item.TargetType, item.TargetValue, item.Reason)
+			}
+			return nil
+		},
+	}
+}
+
+func newDocCoverageCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doc-coverage",
+		Short: "Find indexed routes that are not referenced by documentation",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.DocCoverage(context.Background())
+			if err != nil {
+				return err
+			}
+			fmt.Println(report.Summary)
+			for _, route := range report.MissingRoutes {
+				method := route.Method
+				if method == "" {
+					method = "*"
+				}
+				fmt.Printf("  %-7s %-30s %-18s %s:%d [%s]\n", method, route.Path, route.Handler, route.FilePath, route.Line, route.Framework)
 			}
 			return nil
 		},

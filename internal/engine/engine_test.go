@@ -15,6 +15,7 @@ import "net/http"
 
 func main() {
 	http.HandleFunc("/ok", handler)
+	http.HandleFunc("/undocumented", handler)
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {}
@@ -69,5 +70,16 @@ POST /missing
 	}
 	if foundOK {
 		t.Fatalf("documented existing route should not drift, got %+v", report.Broken)
+	}
+
+	coverage, err := eng.DocCoverage(ctx)
+	if err != nil {
+		t.Fatalf("doc coverage: %v", err)
+	}
+	if coverage.TotalRoutes != 2 || coverage.Documented != 1 || len(coverage.MissingRoutes) != 1 {
+		t.Fatalf("unexpected coverage report: %+v", coverage)
+	}
+	if coverage.MissingRoutes[0].Path != "/undocumented" {
+		t.Fatalf("expected undocumented route, got %+v", coverage.MissingRoutes)
 	}
 }
