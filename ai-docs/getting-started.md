@@ -159,12 +159,29 @@ code-context context Engine
 ### 2.8 LLM 上下文生成
 
 ```bash
-# 生成上下文快照
-code-context snapshot "authentication"
+# 生成项目级上下文快照
+code-context snapshot
 
-# 限制文件数量
+# 生成主题相关上下文快照并限制文件数量
 code-context snapshot "parser" --limit 3
 ```
+
+### 2.8b 当前项目推荐体验流程
+
+```bash
+code-context index
+code-context map
+code-context snapshot
+code-context search Snapshot
+code-context context Snapshot
+code-context impact Snapshot
+code-context impact internal/engine/engine.go
+code-context impact-git --state all
+code-context review-context --state all
+code-context ci
+```
+
+这组命令覆盖项目总览、符号定位、LLM 上下文、影响分析、git 变更分析和 CI 健康检查，适合快速体验 code-context 的核心能力。
 
 ### 2.9 调用链追踪
 
@@ -209,9 +226,10 @@ code-context git-files
 code-context git-diff
 
 # 生成 git 变更文件的上下文快照
-code-context snapshot-git "authentication"
+code-context snapshot-git --state all
 
 # 分析 git 变更文件的影响
+code-context impact-git --state all
 code-context diff-impact-git
 
 # 指定 git 状态

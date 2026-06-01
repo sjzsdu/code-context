@@ -62,6 +62,7 @@ code-context graph neighbors Engine
 code-context graph path internal/engine/engine.go internal/server/server.go
 
 # Generate LLM context with graph recommendations
+code-context snapshot
 code-context snapshot "authentication"
 
 # Analyze change impact
@@ -133,6 +134,23 @@ code-context index                       # full index
 code-context index --incremental         # only changed files
 code-context index -v                    # verbose progress
 ```
+
+#### Recommended dogfood workflow for this repository
+
+```bash
+code-context index
+code-context map
+code-context snapshot
+code-context search Snapshot
+code-context context Snapshot
+code-context impact Snapshot
+code-context impact internal/engine/engine.go
+code-context impact-git --state all
+code-context review-context --state all
+code-context ci
+```
+
+Use this sequence to move from repository overview, to symbol-level understanding, to file/symbol/git impact, and finally to CI-style health checks.
 
 By default, test files are excluded from indexing so graph analysis and context stay focused on production code.
 
@@ -346,18 +364,18 @@ When `--watch` is enabled, the server continuously runs incremental refresh in t
 code-context git-files
 ```
 
-### `snapshot-git <query>` — Generate LLM context from git-tracked files
+### `snapshot-git` — Generate LLM context from git changes
 
 ```bash
-code-context snapshot-git "authentication"
-code-context snapshot-git "parser" --limit 5
+code-context snapshot-git
+code-context snapshot-git --state all --limit 5
 ```
 
-### `diff-impact-git <file>` — Analyze impact using git-aware scope
+### `diff-impact-git` — Analyze impact using git-aware scope
 
 ```bash
-code-context diff-impact-git internal/store/sqlite.go
-code-context diff-impact-git internal/store/sqlite.go --depth 2
+code-context diff-impact-git
+code-context diff-impact-git --state staged --depth 2
 ```
 
 ### `review-context` / `test-impact` — Git review workflows
@@ -403,7 +421,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/graph/html` | `focus?` | Render an interactive HTML graph view |
 | GET | `/api/explain` | `file` | File summary with symbols, imports, and graph guidance |
 | GET | `/api/context` | `name` | Symbol profile with related context and graph guidance |
-| GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
+| GET | `/api/snapshot` | `q?`, `limit?` | Generate project-wide or query-focused LLM context package with recommendations |
 | GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
 | GET | `/api/impact` | `target`, `depth?` | Unified file or symbol impact analysis with JSON output |
 | GET | `/api/impact-git` | `state?`, `depth?` | Unified impact analysis for local git changes |
@@ -498,7 +516,7 @@ Add to your AI client config:
 | `graph_subgraph` | Export a local graph around a file or symbol | `target`, `depth?` |
 | `explain` | Show file summary with graph guidance | `file` |
 | `context` | Show symbol profile with graph guidance | `symbol` |
-| `snapshot` | Generate LLM context for a query | `query`, `limit?` |
+| `snapshot` | Generate project-wide or query-focused LLM context | `query?`, `limit?` |
 | `impact` | Unified file or symbol impact analysis as JSON | `target`, `depth?` |
 | `impact_git` | Unified impact analysis for local git changes as JSON | `state?`, `depth?` |
 | `diff_impact` | Analyze change impact for a file | `file`, `depth?` |

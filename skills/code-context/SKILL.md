@@ -15,8 +15,8 @@ A code context system that reads entire codebases, indexes them structurally usi
 
 - **For Code Analysis**: Quickly understand unfamiliar codebases with `map`, `explain`, `context`
 - **For Graph Navigation**: Explore repository structure with `graph`, `graph path`, `graph neighbors`, `graph subgraph`, and interactive `graph html`
-- **For Dependency Understanding**: Trace imports and find impact with `diff-impact`, `trace`
-- **For Git-aware Context**: Analyze changes with `git-files`, `snapshot-git`, and graph-guided follow-up recommendations
+- **For Dependency Understanding**: Trace imports and find impact with `impact`, `impact-git`, `diff-impact`, and `trace`
+- **For Git-aware Context**: Analyze changes with `git-files`, `snapshot-git`, `impact-git`, `review-context`, and graph-guided follow-up recommendations
 - **For Semantic Search**: Use hybrid search combining keyword and semantic similarity
 - **For LLM Context**: Generate focused context packages with `snapshot`
 - **For Docs + Code Knowledge Graphs**: Bring `.md` / `.txt` documents into the same graph as files, symbols, modules, and packages
@@ -52,7 +52,8 @@ code-context context Engine
 # 5. Explore graph relationships
 code-context graph neighbors Engine
 
-# 6. Generate LLM context
+# 6. Generate project-wide or focused LLM context
+code-context snapshot
 code-context snapshot "authentication"
 
 # 7. Open the interactive visual graph
@@ -75,6 +76,25 @@ watch:
 ```
 
 `watch.*` settings apply both to the standalone `watch` command and to `serve --watch` background refresh.
+
+## Recommended Dogfood Workflow
+
+Use this sequence in the current repository to demonstrate the main value chain:
+
+```bash
+code-context index
+code-context map
+code-context snapshot
+code-context search Snapshot
+code-context context Snapshot
+code-context impact Snapshot
+code-context impact internal/engine/engine.go
+code-context impact-git --state all
+code-context review-context --state all
+code-context ci
+```
+
+This moves from repository overview, to symbol understanding, to graph-aware LLM context, to file/symbol/git impact, and finally to CI health checks.
 
 ## Core Commands
 
@@ -154,11 +174,12 @@ Shows:
 ### Generate LLM Context (Snapshot)
 
 ```bash
+code-context snapshot                    # project-wide context
 code-context snapshot "parser"           # query-based context
 code-context snapshot "parser" --limit 3 # limit files
 ```
 
-Generates a context package for LLM consumption with:
+Generates a project-wide or query-focused context package for LLM consumption with:
 - Related files and their symbols
 - Related documents when relevant
 - Summary of what was found
@@ -274,7 +295,9 @@ code-context snapshot-git --limit 10    # limit files
 ### Diff Impact from Git Changes
 
 ```bash
-code-context diff-impact-git             # impact for unstaged
+code-context impact-git                  # unified impact for unstaged changes
+code-context impact-git --state all --json
+code-context diff-impact-git             # file-level impact for unstaged
 code-context diff-impact-git --state staged --depth 2
 ```
 
@@ -299,6 +322,7 @@ code-context context NewRouter
 ### 3. Generating LLM Context
 
 ```bash
+code-context snapshot
 code-context snapshot "authentication"
 code-context explain internal/auth/auth.go
 ```
@@ -333,6 +357,8 @@ code-context trace "main" "Engine"
 code-context git-files --state all
 code-context git-diff --context 3
 code-context snapshot-git --state unstaged
+code-context impact-git --state all
+code-context review-context --state all
 code-context diff-impact-git --state staged
 ```
 
@@ -475,8 +501,10 @@ go build -o code-context-mcp ./cmd/mcp
 | `graph_subgraph` | Export a local graph around a file or symbol | `target`, `depth?` |
 | `explain` | File summary with graph guidance | `file` |
 | `context` | Symbol profile with graph guidance | `symbol` |
-| `snapshot` | Generate LLM context with recommendations | `query`, `limit?` |
+| `snapshot` | Generate project-wide or query-focused LLM context with recommendations | `query?`, `limit?` |
 | `snapshot_git` | Context from git | `state?`, `limit?` |
+| `impact` | Unified file or symbol impact analysis | `target`, `depth?` |
+| `impact_git` | Unified impact analysis for local git changes | `state?`, `depth?` |
 | `diff_impact` | Change impact analysis | `file`, `depth?` |
 | `diff_impact_git` | Impact from git | `state?`, `depth?` |
 | `trace` | Call chain tracing | `from`, `to` |
@@ -493,12 +521,12 @@ Expect graph payloads to include node types like `file`, `symbol`, `module`, `pa
 ## Tips
 
 - Run `code-context index` first before any search commands
-- Use `snapshot` for generating LLM context - it's the most useful for AI
+- Use `snapshot` without a query for project-wide LLM context, or with a query for focused context
 - Use `map` to understand project structure quickly
 - Use `graph neighbors` or `graph subgraph` when a symbol/file is too isolated in plain search results
 - Use `graph html` when you need a visual-first graph with document nodes, node actions, and content previews
 - Use `--hybrid` flag with search for semantic matching
-- Use git-aware commands (`git-files`, `git-diff`, `snapshot-git`) to analyze changes
-- `diff-impact` is great for understanding what might break when changing a file
+- Use git-aware commands (`git-files`, `git-diff`, `snapshot-git`, `impact-git`, `review-context`) to analyze changes
+- Prefer `impact <file-or-symbol>` for new workflows; use `diff-impact` for legacy file-only impact checks
 - Test files are excluded from indexing by default, so outputs stay focused on production code
 - Create a `.code-context.yaml` config file for persistent settings

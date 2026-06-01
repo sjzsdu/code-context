@@ -72,9 +72,11 @@ code-context 是一个纯 Go 语言实现的代码上下文系统，旨在为 AI
 | `map` | 显示项目架构概览 |
 | `explain` | 显示文件摘要 |
 | `context` | 显示符号详情 |
-| `snapshot` | 生成 LLM 上下文 |
+| `snapshot` | 生成项目级或 query 聚焦的 LLM 上下文 |
 | `trace` | 追踪调用链 |
-| `diff-impact` | 分析变更影响 |
+| `impact` | 统一分析文件或符号影响 |
+| `impact-git` | 统一分析本地 git 变更影响 |
+| `diff-impact` | 分析单文件变更影响 |
 | `serve` | 启动 HTTP 服务器 |
 | `git-files` | 列出 git 变更文件 |
 | `git-diff` | 显示 git diff hunks |
