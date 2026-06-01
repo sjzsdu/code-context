@@ -44,11 +44,18 @@ type RiskScore struct {
 	Reasons []string `json:"reasons"`
 }
 
+type TestCommand struct {
+	Command string   `json:"command"`
+	Files   []string `json:"files,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
+}
+
 type TestImpact struct {
 	State            GitState        `json:"state"`
 	ChangedFiles     []string        `json:"changed_files"`
 	ChangedSymbols   []ChangedSymbol `json:"changed_symbols"`
 	RecommendedTests []string        `json:"recommended_tests"`
+	TestCommands     []TestCommand   `json:"recommended_test_commands,omitempty"`
 	Summary          string          `json:"summary"`
 }
 
@@ -59,6 +66,7 @@ type ReviewContext struct {
 	Routes               []api.Route        `json:"routes"`
 	RelatedDocs          []api.DocumentLink `json:"related_docs"`
 	RecommendedTests     []string           `json:"recommended_tests"`
+	TestCommands         []TestCommand      `json:"recommended_test_commands,omitempty"`
 	Risk                 RiskScore          `json:"risk"`
 	SuggestedReviewOrder []string           `json:"suggested_review_order"`
 	Summary              string             `json:"summary"`
@@ -196,7 +204,8 @@ func (e *Engine) TestImpact(ctx context.Context, state GitState) (*TestImpact, e
 	diffs, _ := e.GitDiff(ctx, state, 0)
 	changedSymbols := e.changedSymbolsForDiffs(ctx, diffs)
 	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changedSymbols)
-	return &TestImpact{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, RecommendedTests: tests, Summary: fmt.Sprintf("%d changed files, %d changed symbols, %d recommended tests", len(files), len(changedSymbols), len(tests))}, nil
+	commands := recommendedTestCommands(tests)
+	return &TestImpact{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, RecommendedTests: tests, TestCommands: commands, Summary: fmt.Sprintf("%d changed files, %d changed symbols, %d recommended tests", len(files), len(changedSymbols), len(tests))}, nil
 }
 
 func (e *Engine) ReviewContext(ctx context.Context, state GitState) (*ReviewContext, error) {
@@ -209,9 +218,10 @@ func (e *Engine) ReviewContext(ctx context.Context, state GitState) (*ReviewCont
 	routes := e.routesForFiles(ctx, files)
 	docs := e.docsForFilesAndSymbols(ctx, files, changedSymbols)
 	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changedSymbols)
+	commands := recommendedTestCommands(tests)
 	risk := e.reviewRisk(ctx, files, changedSymbols, routes, tests)
 	order := suggestedReviewOrder(files, routes, tests)
-	return &ReviewContext{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, Routes: routes, RelatedDocs: docs, RecommendedTests: tests, Risk: risk, SuggestedReviewOrder: order, Summary: fmt.Sprintf("Review %d files (%d symbols). Risk: %s (%d)", len(files), len(changedSymbols), risk.Level, risk.Score)}, nil
+	return &ReviewContext{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, Routes: routes, RelatedDocs: docs, RecommendedTests: tests, TestCommands: commands, Risk: risk, SuggestedReviewOrder: order, Summary: fmt.Sprintf("Review %d files (%d symbols). Risk: %s (%d)", len(files), len(changedSymbols), risk.Level, risk.Score)}, nil
 }
 
 func (e *Engine) changedSymbolsForDiffs(ctx context.Context, diffs []GitDiffFile) []ChangedSymbol {
@@ -318,6 +328,67 @@ func (e *Engine) recommendedTestsForFilesAndSymbols(ctx context.Context, files [
 		}
 	}
 	return tests
+}
+
+func recommendedTestCommands(tests []string) []TestCommand {
+	seen := map[string]*TestCommand{}
+	order := []string{}
+	add := func(command, file, reason string) {
+		if command == "" {
+			return
+		}
+		if existing, ok := seen[command]; ok {
+			existing.Files = appendUnique(existing.Files, file)
+			return
+		}
+		seen[command] = &TestCommand{Command: command, Files: []string{file}, Reason: reason}
+		order = append(order, command)
+	}
+	for _, test := range tests {
+		ext := filepath.Ext(test)
+		dir := filepath.Dir(test)
+		if dir == "." {
+			dir = ""
+		}
+		switch ext {
+		case ".go":
+			pkg := "./" + filepath.ToSlash(dir)
+			if dir == "" {
+				pkg = "."
+			}
+			add("go test "+pkg, test, "Go package test")
+		case ".py":
+			add("pytest "+shellQuotePath(test), test, "pytest file test")
+		case ".ts", ".tsx", ".js", ".jsx":
+			add("npm test -- "+shellQuotePath(test), test, "JavaScript/TypeScript test file")
+		case ".java":
+			className := strings.TrimSuffix(filepath.Base(test), ".java")
+			add("mvn test -Dtest="+className, test, "JUnit/Maven test class")
+		case ".rs":
+			add("cargo test", test, "Rust cargo tests")
+		}
+	}
+	var out []TestCommand
+	for _, command := range order {
+		out = append(out, *seen[command])
+	}
+	return out
+}
+
+func shellQuotePath(path string) string {
+	if path == "" || strings.ContainsAny(path, " \t\n'\"") {
+		return strconv.Quote(path)
+	}
+	return path
+}
+
+func appendUnique(items []string, item string) []string {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
 }
 
 func (e *Engine) reviewRisk(ctx context.Context, files []string, syms []ChangedSymbol, routes []api.Route, tests []string) RiskScore {

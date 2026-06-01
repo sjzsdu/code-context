@@ -340,7 +340,7 @@ code-context review-context --state all
 code-context test-impact --state unstaged
 ```
 
-`review-context` summarizes changed files, changed symbols, route/doc/test impact, risk, and suggested review order. `test-impact` returns recommended tests for changed files and symbols. Supported states are `unstaged`, `staged`, and `all`.
+`review-context` summarizes changed files, changed symbols, route/doc/test impact, risk, suggested review order, and runnable test commands. `test-impact` returns recommended tests for changed files and symbols plus commands such as `go test ./pkg`, `pytest file`, `npm test -- file`, `mvn test -Dtest=...`, or `cargo test`. Supported states are `unstaged`, `staged`, and `all`.
 
 ### Global Flags
 

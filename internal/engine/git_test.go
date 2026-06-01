@@ -157,6 +157,38 @@ func TestParseGitDiffAndSnippetExtraction(t *testing.T) {
 	}
 }
 
+func TestRecommendedTestCommands(t *testing.T) {
+	tests := []string{
+		"internal/engine/git_test.go",
+		"internal/parser/parser_test.go",
+		"tests/test_api.py",
+		"web/app.spec.ts",
+		"src/UserServiceTest.java",
+		"crates/core_test.rs",
+		"internal/engine/git_test.go",
+	}
+	commands := recommendedTestCommands(tests)
+	want := []string{
+		"go test ./internal/engine",
+		"go test ./internal/parser",
+		"pytest tests/test_api.py",
+		"npm test -- web/app.spec.ts",
+		"mvn test -Dtest=UserServiceTest",
+		"cargo test",
+	}
+	if len(commands) != len(want) {
+		t.Fatalf("expected %d commands, got %d: %+v", len(want), len(commands), commands)
+	}
+	for i, command := range commands {
+		if command.Command != want[i] {
+			t.Fatalf("command[%d] got %q, want %q", i, command.Command, want[i])
+		}
+	}
+	if len(commands[0].Files) != 1 || commands[0].Files[0] != "internal/engine/git_test.go" {
+		t.Fatalf("expected duplicate go test file to be deduped, got %+v", commands[0].Files)
+	}
+}
+
 func setupIndexedGitRepo(t *testing.T) (*Engine, func()) {
 	t.Helper()
 
@@ -167,6 +199,8 @@ func setupIndexedGitRepo(t *testing.T) (*Engine, func()) {
 
 	writeFile(t, filepath.Join(tmpDir, "a.go"), "package main\n\nimport \"fmt\"\n\nfunc A() { fmt.Println(\"a\") }\n")
 	writeFile(t, filepath.Join(tmpDir, "b.go"), "package main\n\nimport \"fmt\"\n\nfunc B() { fmt.Println(\"b\") }\n")
+	writeFile(t, filepath.Join(tmpDir, "a_test.go"), "package main\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n")
+	writeFile(t, filepath.Join(tmpDir, "b_test.go"), "package main\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {}\n")
 
 	runGit(t, tmpDir, "init")
 	runGit(t, tmpDir, "add", "a.go", "b.go")

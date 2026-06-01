@@ -76,11 +76,17 @@ func setupTestServer(t *testing.T) (*httptest.Server, func()) {
 	if err := os.WriteFile(file2, []byte(file2Content), 0o644); err != nil {
 		t.Fatalf("failed to write go file: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "a_test.go"), []byte("package a\n\nimport \"testing\"\n\nfunc TestFoo(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go test file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "b_test.go"), []byte("package a\n\nimport \"testing\"\n\nfunc TestBar(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go test file: %v", err)
+	}
 
 	runGit(t, tmpDir, "init")
 	runGit(t, tmpDir, "config", "user.email", "test@example.com")
 	runGit(t, tmpDir, "config", "user.name", "Test User")
-	runGit(t, tmpDir, "add", "a.go", "b.go")
+	runGit(t, tmpDir, "add", "a.go", "b.go", "a_test.go", "b_test.go")
 	runGit(t, tmpDir, "commit", "-m", "initial commit")
 
 	dbPath := filepath.Join(tmpDir, "index.db")
@@ -1146,8 +1152,8 @@ func TestNewAnalysisEndpoints(t *testing.T) {
 		{name: "doc-drift", path: "/api/doc-drift", wantFields: []string{"total_links", "broken", "summary"}},
 		{name: "freshness", path: "/api/freshness?limit=2", wantFields: []string{"stale", "pending_count", "items", "summary"}},
 		{name: "doctor", path: "/api/doctor", wantFields: []string{"ok", "checks", "schema", "summary"}},
-		{name: "review-context", path: "/api/review-context?state=all", wantFields: []string{"changed_files", "risk", "summary"}},
-		{name: "test-impact", path: "/api/test-impact?state=all", wantFields: []string{"changed_files", "recommended_tests", "summary"}},
+		{name: "review-context", path: "/api/review-context?state=all", wantFields: []string{"changed_files", "risk", "summary", "recommended_test_commands"}},
+		{name: "test-impact", path: "/api/test-impact?state=all", wantFields: []string{"changed_files", "recommended_tests", "recommended_test_commands", "summary"}},
 		{name: "symbol-impact", path: "/api/symbol-impact?name=Foo", wantFields: []string{"symbol", "risk", "summary"}},
 	}
 

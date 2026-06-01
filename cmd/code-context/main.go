@@ -1287,6 +1287,7 @@ func newReviewContextCmd() *cobra.Command {
 			for _, t := range r.RecommendedTests {
 				fmt.Printf("  %s\n", t)
 			}
+			printTestCommands(r.TestCommands)
 			fmt.Printf("\nSuggested review order:\n")
 			for i, f := range r.SuggestedReviewOrder {
 				fmt.Printf("  %d. %s\n", i+1, f)
@@ -1326,6 +1327,7 @@ func newTestImpactCmd() *cobra.Command {
 			for _, r := range t.RecommendedTests {
 				fmt.Printf("  %s\n", r)
 			}
+			printTestCommands(t.TestCommands)
 			return nil
 		},
 	}
@@ -1370,6 +1372,20 @@ func newSymbolImpactCmd() *cobra.Command {
 			}
 			return nil
 		},
+	}
+}
+
+func printTestCommands(commands []engine.TestCommand) {
+	if len(commands) == 0 {
+		return
+	}
+	fmt.Printf("Recommended test commands (%d):\n", len(commands))
+	for _, cmd := range commands {
+		if cmd.Reason != "" {
+			fmt.Printf("  %s  # %s\n", cmd.Command, cmd.Reason)
+		} else {
+			fmt.Printf("  %s\n", cmd.Command)
+		}
 	}
 }
 

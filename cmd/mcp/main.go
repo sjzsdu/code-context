@@ -1091,6 +1091,7 @@ func formatReviewContextMarkdown(r *engine.ReviewContext) string {
 	for _, t := range r.RecommendedTests {
 		out += "- `" + t + "`\n"
 	}
+	out += formatTestCommandsMarkdown(r.TestCommands)
 	out += "\n## Suggested Review Order\n"
 	for i, f := range r.SuggestedReviewOrder {
 		out += fmt.Sprintf("%d. `%s`\n", i+1, f)
@@ -1106,6 +1107,22 @@ func formatTestImpactMarkdown(t *engine.TestImpact) string {
 	out += "\n## Recommended Tests\n"
 	for _, test := range t.RecommendedTests {
 		out += "- `" + test + "`\n"
+	}
+	out += formatTestCommandsMarkdown(t.TestCommands)
+	return out
+}
+
+func formatTestCommandsMarkdown(commands []engine.TestCommand) string {
+	if len(commands) == 0 {
+		return ""
+	}
+	out := fmt.Sprintf("\n## Recommended Test Commands (%d)\n", len(commands))
+	for _, cmd := range commands {
+		if cmd.Reason != "" {
+			out += fmt.Sprintf("- `%s` - %s\n", cmd.Command, cmd.Reason)
+		} else {
+			out += fmt.Sprintf("- `%s`\n", cmd.Command)
+		}
 	}
 	return out
 }
