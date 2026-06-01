@@ -198,7 +198,7 @@ code-context callers NewEngine
 code-context callees ReviewContext
 ```
 
-Shows heuristic call graph edges extracted during indexing. Edges include source/target file and line metadata plus confidence labels.
+Shows heuristic call graph edges extracted during indexing. Edges include source/target file and line metadata plus confidence labels. The extractor ignores matches inside comments and string literals to reduce false-positive edges.
 
 ### `routes [query]` — List framework routes
 

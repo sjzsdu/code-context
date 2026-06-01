@@ -303,7 +303,7 @@ func extractCalls(file string, content string, language api.Language, symbols []
 			continue
 		}
 		name := content[match[2]:match[3]]
-		if shouldSkipCall(name, language) {
+		if shouldSkipCall(name, language) || isCallMatchInNonCode(content, match[2], language) {
 			continue
 		}
 		line := offsetToLine(lineStarts, match[2])
@@ -362,6 +362,67 @@ func shouldSkipCall(name string, language api.Language) bool {
 	}
 	_ = language
 	return keywords[base]
+}
+
+func isCallMatchInNonCode(content string, offset int, language api.Language) bool {
+	lineStart := strings.LastIndex(content[:offset], "\n") + 1
+	linePrefix := content[lineStart:offset]
+	if inLineComment(linePrefix, language) || inStringLiteral(linePrefix) {
+		return true
+	}
+	return inBlockComment(content, offset, language)
+}
+
+func inLineComment(prefix string, language api.Language) bool {
+	markers := []string{"//"}
+	if language == api.Python {
+		markers = append(markers, "#")
+	}
+	for _, marker := range markers {
+		idx := strings.Index(prefix, marker)
+		if idx >= 0 && !inStringLiteral(prefix[:idx]) {
+			return true
+		}
+	}
+	return false
+}
+
+func inStringLiteral(prefix string) bool {
+	var quote rune
+	escaped := false
+	for _, r := range prefix {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote != '`' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' || r == '`' {
+			quote = r
+		}
+	}
+	return quote != 0
+}
+
+func inBlockComment(content string, offset int, language api.Language) bool {
+	if language == api.Python {
+		return false
+	}
+	before := content[:offset]
+	start := strings.LastIndex(before, "/*")
+	if start < 0 {
+		return false
+	}
+	end := strings.LastIndex(before, "*/")
+	return end < start
 }
 
 func execSymbolQuery(qd lang.SymbolQuery, root *sitter.Node, src []byte, file string, tsLang *sitter.Language) ([]api.Symbol, error) {

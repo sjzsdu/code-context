@@ -232,6 +232,31 @@ public class UserController {
 	}
 }
 
+func TestExtractCallsSkipsCommentsAndStrings(t *testing.T) {
+	content := `package main
+
+func Caller() {
+	// FakeCall()
+	message := "FakeStringCall()"
+	/* FakeBlockCall() */
+	RealCall()
+}
+
+func RealCall() {}
+`
+	symbols := []api.Symbol{
+		{Name: "Caller", Kind: api.Function, FilePath: "main.go", Line: 3, EndLine: 8},
+		{Name: "RealCall", Kind: api.Function, FilePath: "main.go", Line: 10, EndLine: 10},
+	}
+	calls := extractCalls("main.go", content, api.Go, symbols)
+	if len(calls) != 1 {
+		t.Fatalf("expected one real call, got %+v", calls)
+	}
+	if calls[0].FromSymbol != "Caller" || calls[0].ToName != "RealCall" {
+		t.Fatalf("unexpected call edge: %+v", calls[0])
+	}
+}
+
 func expectSymbol(t *testing.T, symbols []api.Symbol, name string, kind api.SymbolKind) {
 	t.Helper()
 	for _, s := range symbols {
