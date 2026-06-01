@@ -173,14 +173,15 @@ code-context context Engine
 
 Shows definition, methods, related symbols, related files, and graph-guided reading suggestions with bridge/hotspot insights.
 
-### `snapshot <query>` — Generate LLM context
+### `snapshot [query]` — Generate LLM context
 
 ```bash
+code-context snapshot
 code-context snapshot "authentication"
 code-context snapshot "parser" --limit 5
 ```
 
-Generates a context package for LLM consumption, including graph summaries, relation highlights, reading paths, and recommended next files.
+Generates a project-wide or query-focused context package for LLM consumption, including graph summaries, relation highlights, reading paths, and recommended next files.
 
 ### `graph` — Export and explore the repository graph
 

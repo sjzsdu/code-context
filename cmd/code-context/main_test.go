@@ -636,6 +636,42 @@ func TestSnapshotCmdIncludesGraphGuidance(t *testing.T) {
 	}
 }
 
+func TestSnapshotCmdAcceptsNoQuery(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	eng, err := engine.New(root, dbPath)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		t.Fatalf("index repo: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	cmd := newSnapshotCmd()
+	cmd.SetArgs([]string{"--limit", "1"})
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute snapshot cmd without query: %v", err)
+	}
+	if !strings.Contains(out, "=== Code Snapshot ===") || !strings.Contains(out, "--- a.go ---") {
+		t.Fatalf("expected snapshot output for indexed project, got:\n%s", out)
+	}
+}
+
 func TestSnapshotGitCmdIncludesGraphGuidance(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-snapshot-git-analysis-test-*")
 	if err != nil {

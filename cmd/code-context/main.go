@@ -34,7 +34,7 @@ type runtimeConfig struct {
 
 func main() {
 	cmd := &cobra.Command{
-		Use:   "github.com/sjzsdu/code-context",
+		Use:   "code-context",
 		Short: "A code memory system for intelligent codebase indexing and search",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadRuntimeConfig(root)
@@ -1390,9 +1390,9 @@ func newContextCmd() *cobra.Command {
 func newSnapshotCmd() *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "snapshot <query>",
-		Short: "Generate LLM context package for a query",
-		Args:  cobra.ExactArgs(1),
+		Use:   "snapshot [query]",
+		Short: "Generate LLM context package for the project or an optional query",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eng, err := engine.New(root, dbPath)
 			if err != nil {
@@ -1400,7 +1400,11 @@ func newSnapshotCmd() *cobra.Command {
 			}
 			defer eng.Close()
 
-			s, err := eng.Snapshot(context.Background(), args[0], limit)
+			query := ""
+			if len(args) > 0 {
+				query = args[0]
+			}
+			s, err := eng.Snapshot(context.Background(), query, limit)
 			if err != nil {
 				return err
 			}

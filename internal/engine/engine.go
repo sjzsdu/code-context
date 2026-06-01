@@ -2311,6 +2311,36 @@ func (e *Engine) Snapshot(ctx context.Context, query string, maxFiles int) (*Sna
 	if maxFiles <= 0 {
 		maxFiles = 5
 	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		files, err := e.store.ListFiles(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		var summaries []FileSummary
+		for _, f := range files {
+			if len(summaries) >= maxFiles {
+				break
+			}
+			fs, err := e.Explain(ctx, f.Path)
+			if err != nil {
+				continue
+			}
+			summaries = append(summaries, *fs)
+		}
+		recommendedFiles := snapshotRecommendedFiles(summaries, maxFiles)
+		summary := fmt.Sprintf("Found %d indexed files for project snapshot", len(summaries))
+		if len(recommendedFiles) > 0 {
+			summary += fmt.Sprintf(". Recommended next files: %s", strings.Join(recommendedFiles, ", "))
+		}
+		return &Snapshot{
+			Query:            query,
+			Files:            summaries,
+			Summary:          summary,
+			RecommendedFiles: recommendedFiles,
+			Analysis:         mergeGraphAnalysesFromFiles(summaries),
+		}, nil
+	}
 
 	syms, err := e.search.SearchSymbols(ctx, query, nil, 20)
 	if err != nil {
