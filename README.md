@@ -231,9 +231,10 @@ Aggregates matching routes, resolved handlers, callers, callees, related docs, r
 code-context docs-for NewEngine
 code-context doc-drift --json --fail-on-broken
 code-context doc-coverage --json --min-route-coverage 80 --min-symbol-coverage 60
+code-context ci --json
 ```
 
-`docs-for` finds documentation links that mention a file, symbol, module, or route reference such as `GET /api/items` and includes Markdown section metadata (`section_title`, `section_slug`, `section_line`) so agents can jump to the relevant heading. `doc-drift` reports broken references where documentation points to missing files, symbols, modules, or routes. `doc-coverage` reports indexed routes and public symbols that are not referenced by documentation so API docs can be completed proactively. Both diagnostics support `--json` for CI and agent automation; `doc-drift --fail-on-broken` and coverage thresholds can make documentation health checks fail builds.
+`docs-for` finds documentation links that mention a file, symbol, module, or route reference such as `GET /api/items` and includes Markdown section metadata (`section_title`, `section_slug`, `section_line`) so agents can jump to the relevant heading. `doc-drift` reports broken references where documentation points to missing files, symbols, modules, or routes. `doc-coverage` reports indexed routes and public symbols that are not referenced by documentation so API docs can be completed proactively. Both diagnostics support `--json` for CI and agent automation; `doc-drift --fail-on-broken` and coverage thresholds can make documentation health checks fail builds. `ci` runs doctor, doc drift, and doc coverage together using CLI flags or `.code-context.yaml` defaults.
 
 ### `trace <from> <to>` — Call chain tracing
 

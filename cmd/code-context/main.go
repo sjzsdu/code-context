@@ -69,6 +69,7 @@ func main() {
 		newStatusCmd(),
 		newFreshnessCmd(),
 		newDoctorCmd(),
+		newCICmd(),
 		newRebuildCmd(),
 		newMapCmd(),
 		newGraphCmd(),
@@ -360,6 +361,108 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	return cmd
+}
+
+type ciReport struct {
+	OK          bool                   `json:"ok"`
+	Summary     string                 `json:"summary"`
+	Doctor      *api.DoctorReport      `json:"doctor,omitempty"`
+	DocDrift    *api.DocDriftReport    `json:"doc_drift,omitempty"`
+	DocCoverage *api.DocCoverageReport `json:"doc_coverage,omitempty"`
+	Failures    []string               `json:"failures,omitempty"`
+}
+
+func newCICmd() *cobra.Command {
+	var jsonOut bool
+	var failOnBroken bool
+	var minRouteCoverage float64
+	var minSymbolCoverage float64
+	cmd := &cobra.Command{
+		Use:   "ci",
+		Short: "Run doctor and documentation health checks for CI",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			loaded, err := config.Load(root)
+			if err != nil {
+				if err == config.ErrNotFound {
+					return nil
+				}
+				return err
+			}
+			if !cmd.Flags().Changed("fail-on-broken") && loaded.Config.Docs.FailOnBroken {
+				failOnBroken = true
+			}
+			if !cmd.Flags().Changed("min-route-coverage") && loaded.Config.Docs.MinRouteCoverage != nil {
+				minRouteCoverage = *loaded.Config.Docs.MinRouteCoverage
+			}
+			if !cmd.Flags().Changed("min-symbol-coverage") && loaded.Config.Docs.MinSymbolCoverage != nil {
+				minSymbolCoverage = *loaded.Config.Docs.MinSymbolCoverage
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			report := &ciReport{OK: true}
+			ctx := context.Background()
+			report.Doctor, err = eng.Doctor(ctx)
+			if err != nil {
+				return err
+			}
+			if !report.Doctor.OK {
+				report.OK = false
+				report.Failures = append(report.Failures, "doctor failed")
+			}
+			report.DocDrift, err = eng.DocDrift(ctx)
+			if err != nil {
+				return err
+			}
+			if failOnBroken && len(report.DocDrift.Broken) > 0 {
+				report.OK = false
+				report.Failures = append(report.Failures, fmt.Sprintf("doc-drift found %d broken references", len(report.DocDrift.Broken)))
+			}
+			report.DocCoverage, err = eng.DocCoverage(ctx)
+			if err != nil {
+				return err
+			}
+			if minRouteCoverage > 100 || minSymbolCoverage > 100 {
+				return fmt.Errorf("coverage thresholds must be between 0 and 100")
+			}
+			if coverageErr := docCoverageThresholdError(report.DocCoverage, minRouteCoverage, minSymbolCoverage); coverageErr != nil {
+				report.OK = false
+				report.Failures = append(report.Failures, coverageErr.Error())
+			}
+			if report.OK {
+				report.Summary = "ci checks passed"
+			} else {
+				report.Summary = fmt.Sprintf("ci checks failed: %s", strings.Join(report.Failures, "; "))
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(report); err != nil {
+					return err
+				}
+			} else {
+				fmt.Println(report.Summary)
+				fmt.Printf("  doctor: %s\n", report.Doctor.Summary)
+				fmt.Printf("  doc-drift: %s\n", report.DocDrift.Summary)
+				fmt.Printf("  doc-coverage: %s\n", report.DocCoverage.Summary)
+			}
+			if !report.OK {
+				return fmt.Errorf("%s", report.Summary)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	cmd.Flags().BoolVar(&failOnBroken, "fail-on-broken", false, "fail when broken document references are found")
+	cmd.Flags().Float64Var(&minRouteCoverage, "min-route-coverage", -1, "fail when route doc coverage is below this percentage (0-100)")
+	cmd.Flags().Float64Var(&minSymbolCoverage, "min-symbol-coverage", -1, "fail when public symbol doc coverage is below this percentage (0-100)")
 	return cmd
 }
 
