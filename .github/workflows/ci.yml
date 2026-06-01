@@ -53,3 +53,33 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11.4
+
+  code-context:
+    name: Code Context Health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build code-context CLI
+        run: |
+          mkdir -p ./.code-context/bin
+          go build -o ./.code-context/bin/code-context ./cmd/code-context
+
+      - name: Index repository
+        run: ./.code-context/bin/code-context --root . index
+
+      - name: Run code-context health checks
+        run: ./.code-context/bin/code-context --root . ci --json > code-context-ci-report.json
+
+      - name: Upload code-context report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-context-ci-report
+          path: code-context-ci-report.json
