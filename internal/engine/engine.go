@@ -1585,6 +1585,77 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 	}, nil
 }
 
+func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
+	checks := []api.DoctorCheck{}
+	add := func(name, status, msg string) {
+		checks = append(checks, api.DoctorCheck{Name: name, Status: status, Message: msg})
+	}
+	if info, err := os.Stat(e.root); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		add("root", "error", err.Error())
+	} else {
+		add("root", "ok", e.root)
+	}
+	if e.dbPath == "" {
+		add("database", "warn", "using default database path")
+	} else if _, err := os.Stat(e.dbPath); err != nil {
+		add("database", "warn", fmt.Sprintf("database file not found yet: %v", err))
+	} else {
+		add("database", "ok", e.dbPath)
+	}
+	schema, err := e.store.SchemaStatus(ctx)
+	if err != nil {
+		add("schema", "error", err.Error())
+		schema = &api.SchemaStatus{ExpectedVersion: graphExportVersion}
+	} else if len(schema.MissingTables) > 0 || len(schema.MissingIndexes) > 0 {
+		add("schema", "error", fmt.Sprintf("missing %d tables and %d indexes", len(schema.MissingTables), len(schema.MissingIndexes)))
+	} else {
+		add("schema", "ok", schema.ExpectedVersion)
+	}
+	stats, err := e.store.Stats(ctx)
+	if err != nil {
+		add("stats", "error", err.Error())
+	} else {
+		if stats.IndexVersion == "" {
+			stats.IndexVersion = graphExportVersion
+		}
+		add("stats", "ok", fmt.Sprintf("%d files, %d symbols, %d imports, %d docs", stats.TotalFiles, stats.TotalSymbols, stats.TotalImports, stats.TotalDocuments))
+	}
+	if pending, err := e.PendingFiles(ctx, 50); err != nil {
+		add("freshness", "warn", err.Error())
+	} else if len(pending) > 0 {
+		add("freshness", "warn", fmt.Sprintf("%d pending/stale files", len(pending)))
+	} else {
+		add("freshness", "ok", "index matches indexed files on disk")
+	}
+	ok := true
+	warns := 0
+	for _, c := range checks {
+		if c.Status == "error" {
+			ok = false
+		}
+		if c.Status == "warn" {
+			warns++
+		}
+	}
+	summary := "doctor passed"
+	if !ok {
+		summary = "doctor found errors"
+	} else if warns > 0 {
+		summary = fmt.Sprintf("doctor passed with %d warnings", warns)
+	}
+	return &api.DoctorReport{OK: ok, Summary: summary, Root: e.root, DatabasePath: e.dbPath, Schema: *schema, Index: stats, Checks: checks}, nil
+}
+
+func (e *Engine) Rebuild(ctx context.Context, verbose bool) (*api.IndexStats, error) {
+	if err := e.store.ResetIndex(ctx); err != nil {
+		return nil, err
+	}
+	return e.Index(ctx, verbose)
+}
+
 func (e *Engine) PendingFiles(ctx context.Context, limit int) ([]string, error) {
 	files, err := e.store.ListFiles(ctx, nil)
 	if err != nil {

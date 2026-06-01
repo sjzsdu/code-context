@@ -66,6 +66,10 @@ func (m *searchMockStore) ListRoutes(ctx context.Context, query string) ([]api.R
 func (m *searchMockStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	return &api.IndexStats{}, nil
 }
+func (m *searchMockStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error) {
+	return &api.SchemaStatus{}, nil
+}
+func (m *searchMockStore) ResetIndex(ctx context.Context) error                   { return nil }
 func (m *searchMockStore) GetDocumentStats(ctx context.Context) (int, int, error) { return 0, 0, nil }
 func (m *searchMockStore) UpsertDocument(ctx context.Context, doc *api.Document) (int64, error) {
 	return 0, nil

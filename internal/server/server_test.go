@@ -937,6 +937,44 @@ func TestIndexEndpointWrongMethod(t *testing.T) {
 	}
 }
 
+func TestRebuildEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/rebuild", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload api.IndexStats
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.IndexedFiles == 0 {
+		t.Fatalf("expected rebuilt files, got: %+v", payload)
+	}
+}
+
+func TestRebuildEndpointWrongMethod(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Get(ts.URL + "/api/rebuild")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", resp.StatusCode)
+	}
+}
+
 func TestGitFilesEndpoint(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
@@ -1103,6 +1141,7 @@ func TestNewAnalysisEndpoints(t *testing.T) {
 		{name: "route-context", path: "/api/route-context?q=foo", wantFields: []string{"query", "routes", "risk", "summary"}},
 		{name: "docs-for", path: "/api/docs-for?q=Foo", wantFields: []string{"query", "links"}},
 		{name: "doc-drift", path: "/api/doc-drift", wantFields: []string{"total_links", "broken", "summary"}},
+		{name: "doctor", path: "/api/doctor", wantFields: []string{"ok", "checks", "schema", "summary"}},
 		{name: "review-context", path: "/api/review-context?state=all", wantFields: []string{"changed_files", "risk", "summary"}},
 		{name: "test-impact", path: "/api/test-impact?state=all", wantFields: []string{"changed_files", "recommended_tests", "summary"}},
 		{name: "symbol-impact", path: "/api/symbol-impact?name=Foo", wantFields: []string{"symbol", "risk", "summary"}},

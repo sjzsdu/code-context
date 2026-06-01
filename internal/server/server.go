@@ -66,6 +66,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/symbol-impact", s.handleSymbolImpact)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/doctor", s.handleDoctor)
+	mux.HandleFunc("/api/rebuild", s.handleRebuild)
 	mux.HandleFunc("/api/index", s.handleIndex)
 	return mux
 }
@@ -302,6 +304,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status)
+}
+
+func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	report, err := s.eng.Doctor(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, report)
+}
+
+func (s *Server) handleRebuild(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("POST only"), 405)
+		return
+	}
+	stats, err := s.eng.Rebuild(r.Context(), false)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, stats)
 }
 
 func (s *Server) handleMap(w http.ResponseWriter, r *http.Request) {

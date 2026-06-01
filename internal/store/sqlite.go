@@ -16,6 +16,8 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+const SchemaVersion = "schema.v1.code-context"
+
 type sqliteStore struct {
 	db *sql.DB
 }
@@ -36,6 +38,75 @@ func (s *sqliteStore) Init(ctx context.Context) error {
 	}
 	_, err := s.db.ExecContext(ctx, schemaSQL)
 	return err
+}
+
+func (s *sqliteStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error) {
+	expectedTables := []string{"files", "symbols", "imports", "symbols_fts", "calls", "routes", "documents", "document_links"}
+	expectedIndexes := []string{"idx_symbols_name", "idx_symbols_kind", "idx_symbols_file", "idx_imports_source", "idx_imports_file", "idx_calls_from", "idx_calls_to", "idx_calls_file", "idx_routes_path", "idx_routes_handler", "idx_routes_file", "idx_document_links_doc", "idx_document_links_target"}
+	tables, err := s.sqliteObjects(ctx, "table")
+	if err != nil {
+		return nil, err
+	}
+	indexes, err := s.sqliteObjects(ctx, "index")
+	if err != nil {
+		return nil, err
+	}
+	return &api.SchemaStatus{ExpectedVersion: SchemaVersion, Tables: intersectNames(tables, expectedTables), MissingTables: missingNames(tables, expectedTables), Indexes: intersectNames(indexes, expectedIndexes), MissingIndexes: missingNames(indexes, expectedIndexes)}, nil
+}
+
+func (s *sqliteStore) sqliteObjects(ctx context.Context, typ string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = ?`, typ)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
+}
+
+func missingNames(existing map[string]bool, expected []string) []string {
+	var out []string
+	for _, name := range expected {
+		if !existing[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func intersectNames(existing map[string]bool, expected []string) []string {
+	var out []string
+	for _, name := range expected {
+		if existing[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func (s *sqliteStore) ResetIndex(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DELETE FROM document_links`,
+		`DELETE FROM documents`,
+		`DELETE FROM files`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *sqliteStore) UpsertFile(ctx context.Context, f *api.FileInfo) (int64, error) {

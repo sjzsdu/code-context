@@ -66,6 +66,8 @@ func main() {
 		newDocDriftCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
+		newDoctorCmd(),
+		newRebuildCmd(),
 		newMapCmd(),
 		newGraphCmd(),
 		newExplainCmd(),
@@ -242,6 +244,64 @@ func newIndexCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&incremental, "incremental", false, "only reindex changed files")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print per-file indexing progress")
+	return cmd
+}
+
+func newRebuildCmd() *cobra.Command {
+	var verbose bool
+	cmd := &cobra.Command{
+		Use:   "rebuild",
+		Short: "Clear the current index and rebuild it from disk",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			stats, err := eng.Rebuild(context.Background(), verbose)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Rebuilt index: %d files, %d symbols, %d imports, %d docs (%.1fs)\n", stats.IndexedFiles, stats.TotalSymbols, stats.TotalImports, stats.TotalDocuments, stats.Duration)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print per-file indexing progress")
+	return cmd
+}
+
+func newDoctorCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Check database schema, index freshness, and service health",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.Doctor(context.Background())
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
+			}
+			fmt.Println(report.Summary)
+			for _, c := range report.Checks {
+				fmt.Printf("  [%s] %s: %s\n", c.Status, c.Name, c.Message)
+			}
+			if len(report.Schema.MissingTables) > 0 || len(report.Schema.MissingIndexes) > 0 {
+				fmt.Printf("Missing tables: %s\n", strings.Join(report.Schema.MissingTables, ", "))
+				fmt.Printf("Missing indexes: %s\n", strings.Join(report.Schema.MissingIndexes, ", "))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
 	return cmd
 }
 

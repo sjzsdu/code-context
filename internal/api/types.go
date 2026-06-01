@@ -235,6 +235,33 @@ type ServiceStatus struct {
 	Watch        *WatchStatus `json:"watch,omitempty"`
 }
 
+// DoctorCheck reports one health check result.
+type DoctorCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // ok, warn, error
+	Message string `json:"message"`
+}
+
+// SchemaStatus reports SQLite schema capabilities.
+type SchemaStatus struct {
+	ExpectedVersion string   `json:"expected_version"`
+	Tables          []string `json:"tables"`
+	MissingTables   []string `json:"missing_tables,omitempty"`
+	Indexes         []string `json:"indexes,omitempty"`
+	MissingIndexes  []string `json:"missing_indexes,omitempty"`
+}
+
+// DoctorReport summarizes repository/index health.
+type DoctorReport struct {
+	OK           bool          `json:"ok"`
+	Summary      string        `json:"summary"`
+	Root         string        `json:"root"`
+	DatabasePath string        `json:"database_path"`
+	Schema       SchemaStatus  `json:"schema"`
+	Index        *IndexStats   `json:"index,omitempty"`
+	Checks       []DoctorCheck `json:"checks"`
+}
+
 // Document represents a document file.
 type Document struct {
 	ID          int64  `json:"id"`

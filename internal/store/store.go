@@ -26,6 +26,8 @@ type Store interface {
 	GetCallers(ctx context.Context, toName string) ([]api.CallEdge, error)
 	ListRoutes(ctx context.Context, query string) ([]api.Route, error)
 	Stats(ctx context.Context) (*api.IndexStats, error)
+	SchemaStatus(ctx context.Context) (*api.SchemaStatus, error)
+	ResetIndex(ctx context.Context) error
 	UpsertDocument(ctx context.Context, doc *api.Document) (int64, error)
 	GetDocument(ctx context.Context, path string) (*api.Document, error)
 	DeleteDocument(ctx context.Context, path string) error

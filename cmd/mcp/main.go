@@ -155,6 +155,19 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(out), nil, nil
 		})
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_doctor", Description: "Check database schema, index freshness, and service health"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			report, err := eng.Doctor(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			out, err := marshalIndentedJSON(report)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_search", Description: "Search symbols by name in the indexed codebase"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, any, error) {
 			if args.Query == "" {
