@@ -493,9 +493,9 @@ func (s *sqliteStore) GetCallees(ctx context.Context, fromSymbol string) ([]api.
 func (s *sqliteStore) GetCallers(ctx context.Context, toName string) ([]api.CallEdge, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT f.path, c.from_symbol, c.to_name, c.line, c.confidence
-		 FROM calls c JOIN files f ON f.id = c.file_id
-		 WHERE c.to_name = ? OR c.to_name LIKE ?
-		 ORDER BY f.path, c.line`, toName, "%"+toName)
+			 FROM calls c JOIN files f ON f.id = c.file_id
+			 WHERE c.to_name = ? OR c.to_name LIKE ? OR c.to_name LIKE ?
+			 ORDER BY f.path, c.line`, toName, "%."+toName, "%::"+toName)
 	if err != nil {
 		return nil, err
 	}

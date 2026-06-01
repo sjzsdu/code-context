@@ -299,6 +299,38 @@ func TestReplaceImports(t *testing.T) {
 	}
 }
 
+func TestGetCallersMatchesQualifiedNamesBySeparator(t *testing.T) {
+	st, clean := newTestStore(t)
+	defer clean()
+	ctx := context.Background()
+	f := &api.FileInfo{Path: "calls/main.go", Language: api.Go, ContentHash: "h", Size: 20}
+	id, err := st.UpsertFile(ctx, f)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	calls := []api.CallEdge{
+		{FromSymbol: "A", ToName: "Target", Line: 1, Confidence: "HEURISTIC"},
+		{FromSymbol: "B", ToName: "pkg.Target", Line: 2, Confidence: "HEURISTIC"},
+		{FromSymbol: "C", ToName: "mod::Target", Line: 3, Confidence: "HEURISTIC"},
+		{FromSymbol: "D", ToName: "MyTarget", Line: 4, Confidence: "HEURISTIC"},
+	}
+	if err := st.ReplaceCalls(ctx, id, calls); err != nil {
+		t.Fatalf("replace calls: %v", err)
+	}
+	got, err := st.GetCallers(ctx, "Target")
+	if err != nil {
+		t.Fatalf("get callers: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected exact/dot/colon callers only, got %+v", got)
+	}
+	for _, call := range got {
+		if call.ToName == "MyTarget" {
+			t.Fatalf("unexpected suffix false positive: %+v", got)
+		}
+	}
+}
+
 func TestSearchSymbols(t *testing.T) {
 	st, clean := newTestStore(t)
 	defer clean()
