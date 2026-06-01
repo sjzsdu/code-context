@@ -224,7 +224,7 @@ code-context docs-for NewEngine
 code-context doc-drift
 ```
 
-`docs-for` finds documentation links that mention a file, symbol, or module and includes Markdown section metadata (`section_title`, `section_slug`, `section_line`) so agents can jump to the relevant heading. `doc-drift` reports broken references where documentation points to missing files, symbols, or modules.
+`docs-for` finds documentation links that mention a file, symbol, module, or route reference such as `GET /api/items` and includes Markdown section metadata (`section_title`, `section_slug`, `section_line`) so agents can jump to the relevant heading. `doc-drift` reports broken references where documentation points to missing files, symbols, modules, or routes.
 
 ### `trace <from> <to>` — Call chain tracing
 

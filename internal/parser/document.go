@@ -14,6 +14,7 @@ var (
 	camelCasePattern = regexp.MustCompile(`\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b`)
 	snakeCasePattern = regexp.MustCompile(`\b([a-z]+_[a-z0-9_]+)\b`)
 	headingPattern   = regexp.MustCompile(`^#+\s+(.+)$`)
+	docRoutePattern  = regexp.MustCompile(`\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[A-Za-z0-9_./:{}*+~-]*)`)
 	knownModules     = map[string]bool{
 		"internal/api":     true,
 		"internal/parser":  true,
@@ -170,6 +171,30 @@ func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 				Confidence:   0.8,
 			})
 		}
+	}
+
+	for _, m := range docRoutePattern.FindAllStringSubmatch(content, -1) {
+		if len(m) < 3 {
+			continue
+		}
+		method := strings.ToUpper(strings.TrimSpace(m[1]))
+		path := strings.TrimRight(strings.TrimSpace(m[2]), "`.,;:)")
+		if path == "" || path == "/" {
+			continue
+		}
+
+		line := findLineNumber(content, m[0])
+		section := sectionForLine(sections, line)
+		links = append(links, api.DocumentLink{
+			TargetType:   "route",
+			TargetValue:  method + " " + path,
+			Line:         line,
+			SectionTitle: section.Title,
+			SectionSlug:  section.Slug,
+			SectionLine:  section.Line,
+			Evidence:     strings.TrimSpace(m[0]),
+			Confidence:   0.85,
+		})
 	}
 
 	for _, m := range camelCasePattern.FindAllStringSubmatch(content, -1) {

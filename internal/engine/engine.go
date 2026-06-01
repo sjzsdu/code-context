@@ -227,9 +227,48 @@ func (e *Engine) docLinkDriftReason(ctx context.Context, link api.DocumentLink) 
 			}
 		}
 		return "referenced module has no indexed files"
+	case "route":
+		return e.routeLinkDriftReason(ctx, link.TargetValue)
 	default:
 		return "unknown document link target type"
 	}
+}
+
+func (e *Engine) routeLinkDriftReason(ctx context.Context, target string) string {
+	method, path := parseDocumentRouteTarget(target)
+	if path == "" {
+		return "referenced route is malformed"
+	}
+	routes, err := e.store.ListRoutes(ctx, path)
+	if err != nil {
+		return "could not check route"
+	}
+	hasPath := false
+	for _, route := range routes {
+		if route.Path != path {
+			continue
+		}
+		hasPath = true
+		indexedMethod := strings.ToUpper(strings.TrimSpace(route.Method))
+		if method == "" || method == "*" || indexedMethod == "" || indexedMethod == method {
+			return ""
+		}
+	}
+	if hasPath {
+		return "referenced route method was not found"
+	}
+	return "referenced route was not found"
+}
+
+func parseDocumentRouteTarget(target string) (method, path string) {
+	fields := strings.Fields(strings.TrimSpace(target))
+	if len(fields) == 0 {
+		return "", ""
+	}
+	if len(fields) == 1 {
+		return "", strings.TrimSpace(fields[0])
+	}
+	return strings.ToUpper(strings.TrimSpace(fields[0])), strings.TrimSpace(fields[1])
 }
 
 func (e *Engine) BuildGraph(ctx context.Context) error {
