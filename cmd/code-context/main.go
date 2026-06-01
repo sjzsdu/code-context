@@ -66,6 +66,7 @@ func main() {
 		newDocDriftCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
+		newFreshnessCmd(),
 		newDoctorCmd(),
 		newRebuildCmd(),
 		newMapCmd(),
@@ -621,17 +622,62 @@ func newStatusCmd() *cobra.Command {
 				if status.Watch.LastError != "" {
 					fmt.Printf("Last error:    %s\n", status.Watch.LastError)
 				}
+				if status.Watch.Freshness != nil {
+					fmt.Printf("Freshness:     %s\n", status.Watch.Freshness.Summary)
+				}
 				if status.Watch.Stale {
 					fmt.Printf("Index stale:   true\n")
 					fmt.Printf("Pending files: %d\n", len(status.Watch.PendingFiles))
-					for _, f := range status.Watch.PendingFiles {
-						fmt.Printf("  %s\n", f)
+					if status.Watch.Freshness != nil {
+						for _, item := range status.Watch.Freshness.Items {
+							fmt.Printf("  %s [%s %s]\n", item.Path, item.Kind, item.Reason)
+						}
+					} else {
+						for _, f := range status.Watch.PendingFiles {
+							fmt.Printf("  %s\n", f)
+						}
 					}
 				}
 			}
 			return nil
 		},
 	}
+}
+
+func newFreshnessCmd() *cobra.Command {
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "freshness",
+		Short: "Show indexed files/documents that differ from the filesystem",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.Freshness(context.Background(), limit)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
+			}
+			fmt.Println(report.Summary)
+			for _, item := range report.Items {
+				fmt.Printf("  %s [%s %s]\n", item.Path, item.Kind, item.Reason)
+			}
+			if report.Truncated {
+				fmt.Printf("  ... truncated at %d items\n", len(report.Items))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "max pending items to print, 0 for all")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	return cmd
 }
 
 func newCallersCmd() *cobra.Command {

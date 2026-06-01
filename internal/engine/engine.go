@@ -1572,9 +1572,10 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 		stats.IndexVersion = graphExportVersion
 	}
 	watch := e.currentWatchStatus()
-	if pending, err := e.PendingFiles(ctx, 20); err == nil && len(pending) > 0 {
-		watch.Stale = true
-		watch.PendingFiles = pending
+	if freshness, err := e.Freshness(ctx, 20); err == nil {
+		watch.Stale = freshness.Stale
+		watch.Freshness = freshness
+		watch.PendingFiles = freshnessPaths(freshness.Items)
 	}
 	return &api.ServiceStatus{
 		Root:         e.root,
@@ -1623,12 +1624,13 @@ func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
 		}
 		add("stats", "ok", fmt.Sprintf("%d files, %d symbols, %d imports, %d docs", stats.TotalFiles, stats.TotalSymbols, stats.TotalImports, stats.TotalDocuments))
 	}
-	if pending, err := e.PendingFiles(ctx, 50); err != nil {
-		add("freshness", "warn", err.Error())
-	} else if len(pending) > 0 {
-		add("freshness", "warn", fmt.Sprintf("%d pending/stale files", len(pending)))
+	freshness, freshnessErr := e.Freshness(ctx, 50)
+	if freshnessErr != nil {
+		add("freshness", "warn", freshnessErr.Error())
+	} else if freshness.Stale {
+		add("freshness", "warn", freshness.Summary)
 	} else {
-		add("freshness", "ok", "index matches indexed files on disk")
+		add("freshness", "ok", freshness.Summary)
 	}
 	ok := true
 	warns := 0
@@ -1646,7 +1648,7 @@ func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
 	} else if warns > 0 {
 		summary = fmt.Sprintf("doctor passed with %d warnings", warns)
 	}
-	return &api.DoctorReport{OK: ok, Summary: summary, Root: e.root, DatabasePath: e.dbPath, Schema: *schema, Index: stats, Checks: checks}, nil
+	return &api.DoctorReport{OK: ok, Summary: summary, Root: e.root, DatabasePath: e.dbPath, Schema: *schema, Freshness: freshness, Index: stats, Checks: checks}, nil
 }
 
 func (e *Engine) Rebuild(ctx context.Context, verbose bool) (*api.IndexStats, error) {
@@ -1657,28 +1659,86 @@ func (e *Engine) Rebuild(ctx context.Context, verbose bool) (*api.IndexStats, er
 }
 
 func (e *Engine) PendingFiles(ctx context.Context, limit int) ([]string, error) {
+	report, err := e.Freshness(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return freshnessPaths(report.Items), nil
+}
+
+func (e *Engine) Freshness(ctx context.Context, limit int) (*api.FreshnessReport, error) {
 	files, err := e.store.ListFiles(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	var pending []string
+	docs, err := e.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report := &api.FreshnessReport{}
+	add := func(item api.FreshnessItem) {
+		report.PendingCount++
+		switch item.Reason {
+		case "modified":
+			report.ModifiedCount++
+		case "deleted":
+			report.DeletedCount++
+		case "unreadable":
+			report.UnreadableCount++
+		}
+		if limit <= 0 || len(report.Items) < limit {
+			report.Items = append(report.Items, item)
+		} else {
+			report.Truncated = true
+		}
+	}
 	for _, f := range files {
 		select {
 		case <-ctx.Done():
-			return pending, ctx.Err()
+			return report, ctx.Err()
 		default:
 		}
-		content, err := os.ReadFile(filepath.Join(e.root, f.Path))
-		if err != nil {
-			pending = append(pending, f.Path)
-		} else if sha256HexEngine(content) != f.ContentHash {
-			pending = append(pending, f.Path)
-		}
-		if limit > 0 && len(pending) >= limit {
-			break
-		}
+		e.checkFreshnessPath(f.Path, "source", f.ContentHash, add)
 	}
-	return pending, nil
+	for _, d := range docs {
+		select {
+		case <-ctx.Done():
+			return report, ctx.Err()
+		default:
+		}
+		e.checkFreshnessPath(d.Path, "document", d.ContentHash, add)
+	}
+	report.Stale = report.PendingCount > 0
+	if report.Stale {
+		report.Summary = fmt.Sprintf("%d pending indexed items: %d modified, %d deleted, %d unreadable", report.PendingCount, report.ModifiedCount, report.DeletedCount, report.UnreadableCount)
+	} else {
+		report.Summary = "index matches indexed source and document files on disk"
+	}
+	return report, nil
+}
+
+func (e *Engine) checkFreshnessPath(path, kind, indexedHash string, add func(api.FreshnessItem)) {
+	content, err := os.ReadFile(filepath.Join(e.root, path))
+	if err != nil {
+		reason := "unreadable"
+		if os.IsNotExist(err) {
+			reason = "deleted"
+		}
+		add(api.FreshnessItem{Path: path, Kind: kind, Reason: reason, IndexedHash: indexedHash, Message: err.Error()})
+		return
+	}
+	fsHash := sha256HexEngine(content)
+	if fsHash != indexedHash {
+		add(api.FreshnessItem{Path: path, Kind: kind, Reason: "modified", IndexedHash: indexedHash, FilesystemHash: fsHash})
+	}
+}
+
+func freshnessPaths(items []api.FreshnessItem) []string {
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		paths = append(paths, item.Path)
+	}
+	return paths
 }
 
 func sha256HexEngine(data []byte) string {

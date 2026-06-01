@@ -212,18 +212,41 @@ type IndexStats struct {
 
 // WatchStatus reports workflow refresh state for watch-enabled processes.
 type WatchStatus struct {
-	Enabled            bool     `json:"enabled"`
-	Running            bool     `json:"running"`
-	Stale              bool     `json:"stale,omitempty"`
-	PendingFiles       []string `json:"pending_files,omitempty"`
-	Interval           string   `json:"interval,omitempty"`
-	Debounce           string   `json:"debounce,omitempty"`
-	LastRefreshUnix    int64    `json:"last_refresh_unix,omitempty"`
-	LastRefreshAt      string   `json:"last_refresh_at,omitempty"`
-	LastRefreshStatus  string   `json:"last_refresh_status,omitempty"`
-	LastRefreshSummary string   `json:"last_refresh_summary,omitempty"`
-	LastError          string   `json:"last_error,omitempty"`
-	RefreshCount       int      `json:"refresh_count,omitempty"`
+	Enabled            bool             `json:"enabled"`
+	Running            bool             `json:"running"`
+	Stale              bool             `json:"stale,omitempty"`
+	PendingFiles       []string         `json:"pending_files,omitempty"`
+	Freshness          *FreshnessReport `json:"freshness,omitempty"`
+	Interval           string           `json:"interval,omitempty"`
+	Debounce           string           `json:"debounce,omitempty"`
+	LastRefreshUnix    int64            `json:"last_refresh_unix,omitempty"`
+	LastRefreshAt      string           `json:"last_refresh_at,omitempty"`
+	LastRefreshStatus  string           `json:"last_refresh_status,omitempty"`
+	LastRefreshSummary string           `json:"last_refresh_summary,omitempty"`
+	LastError          string           `json:"last_error,omitempty"`
+	RefreshCount       int              `json:"refresh_count,omitempty"`
+}
+
+// FreshnessItem reports why an indexed source/document needs refresh.
+type FreshnessItem struct {
+	Path           string `json:"path"`
+	Kind           string `json:"kind"`   // source or document
+	Reason         string `json:"reason"` // modified, deleted, unreadable
+	IndexedHash    string `json:"indexed_hash,omitempty"`
+	FilesystemHash string `json:"filesystem_hash,omitempty"`
+	Message        string `json:"message,omitempty"`
+}
+
+// FreshnessReport summarizes index freshness against the filesystem.
+type FreshnessReport struct {
+	Stale           bool            `json:"stale"`
+	PendingCount    int             `json:"pending_count"`
+	ModifiedCount   int             `json:"modified_count,omitempty"`
+	DeletedCount    int             `json:"deleted_count,omitempty"`
+	UnreadableCount int             `json:"unreadable_count,omitempty"`
+	Items           []FreshnessItem `json:"items,omitempty"`
+	Truncated       bool            `json:"truncated,omitempty"`
+	Summary         string          `json:"summary"`
 }
 
 // ServiceStatus reports workflow and indexing metadata for the running service.
@@ -253,13 +276,14 @@ type SchemaStatus struct {
 
 // DoctorReport summarizes repository/index health.
 type DoctorReport struct {
-	OK           bool          `json:"ok"`
-	Summary      string        `json:"summary"`
-	Root         string        `json:"root"`
-	DatabasePath string        `json:"database_path"`
-	Schema       SchemaStatus  `json:"schema"`
-	Index        *IndexStats   `json:"index,omitempty"`
-	Checks       []DoctorCheck `json:"checks"`
+	OK           bool             `json:"ok"`
+	Summary      string           `json:"summary"`
+	Root         string           `json:"root"`
+	DatabasePath string           `json:"database_path"`
+	Schema       SchemaStatus     `json:"schema"`
+	Freshness    *FreshnessReport `json:"freshness,omitempty"`
+	Index        *IndexStats      `json:"index,omitempty"`
+	Checks       []DoctorCheck    `json:"checks"`
 }
 
 // Document represents a document file.

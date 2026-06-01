@@ -373,6 +373,9 @@ func TestStatusEndpoint(t *testing.T) {
 	if payload.Watch == nil {
 		t.Fatalf("expected watch metadata in service status, got %+v", payload)
 	}
+	if payload.Watch.Freshness == nil || !payload.Watch.Freshness.Stale || payload.Watch.Freshness.ModifiedCount == 0 {
+		t.Fatalf("expected structured stale freshness metadata, got %+v", payload.Watch)
+	}
 }
 
 func TestGraphEndpoint(t *testing.T) {
@@ -1141,6 +1144,7 @@ func TestNewAnalysisEndpoints(t *testing.T) {
 		{name: "route-context", path: "/api/route-context?q=foo", wantFields: []string{"query", "routes", "risk", "summary"}},
 		{name: "docs-for", path: "/api/docs-for?q=Foo", wantFields: []string{"query", "links"}},
 		{name: "doc-drift", path: "/api/doc-drift", wantFields: []string{"total_links", "broken", "summary"}},
+		{name: "freshness", path: "/api/freshness?limit=2", wantFields: []string{"stale", "pending_count", "items", "summary"}},
 		{name: "doctor", path: "/api/doctor", wantFields: []string{"ok", "checks", "schema", "summary"}},
 		{name: "review-context", path: "/api/review-context?state=all", wantFields: []string{"changed_files", "risk", "summary"}},
 		{name: "test-impact", path: "/api/test-impact?state=all", wantFields: []string{"changed_files", "recommended_tests", "summary"}},

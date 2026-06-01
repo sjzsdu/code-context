@@ -75,6 +75,7 @@ code-context doc-drift
 
 # Check and repair index health
 code-context doctor
+code-context freshness
 code-context rebuild
 
 # Show index stats
@@ -288,15 +289,17 @@ code-context status
 
 Shows root/database metadata, graph version, index version, last indexed time, and current watch refresh state.
 
-### `doctor` / `rebuild` — Index health and repair
+### `freshness` / `doctor` / `rebuild` — Index health and repair
 
 ```bash
+code-context freshness
+code-context freshness --json --limit 0
 code-context doctor
 code-context doctor --json
 code-context rebuild
 ```
 
-`doctor` validates the project root, SQLite database, expected schema tables/indexes, index statistics, and stale pending files. `rebuild` clears the current index tables and runs a full reindex from disk.
+`freshness` reports indexed source/document files that are modified, deleted, or unreadable compared with the filesystem. `doctor` validates the project root, SQLite database, expected schema tables/indexes, index statistics, and freshness. `rebuild` clears the current index tables and runs a full reindex from disk.
 
 ### `serve` — Start HTTP server
 
@@ -385,6 +388,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/symbol-impact` | `name` | Return symbol-level callers, callees, docs, routes, tests, and risk |
 | GET | `/api/stats` | — | Index statistics with version metadata |
 | GET | `/api/status` | — | Service/workflow status including watch metadata |
+| GET | `/api/freshness` | `limit?` | Report indexed files/documents that differ from the filesystem |
 | GET | `/api/doctor` | — | Check database schema, index freshness, and service health |
 | POST | `/api/index` | `incremental?` | Trigger indexing |
 | POST | `/api/rebuild` | — | Clear the current index and rebuild from disk |
@@ -456,6 +460,7 @@ Add to your AI client config:
 | `docs_for` | Find documentation references for a file, symbol, or module | `query` |
 | `doc_drift` | Report broken documentation references | - |
 | `stats` | Show index statistics | - |
+| `code_context_freshness` | Report indexed files/documents that differ from the filesystem | `limit?` |
 | `code_context_doctor` | Check database schema, index freshness, and service health | - |
 | `map` | Show project architecture overview with graph analysis | - |
 | `graph` | Export repository or focused graph JSON | `focus?` |

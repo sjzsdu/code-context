@@ -184,6 +184,13 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 			atomic.AddInt64(&skipped, 1)
 		}
 	}
+	existingDocs, _ := idx.store.ListDocuments(ctx)
+	for _, d := range existingDocs {
+		if !fileSet[d.Path] {
+			idx.store.DeleteDocument(ctx, d.Path)
+			atomic.AddInt64(&skipped, 1)
+		}
+	}
 
 	stats, _ := idx.store.Stats(ctx)
 	return &api.IndexStats{
@@ -291,6 +298,13 @@ func (idx *Indexer) IndexIncremental(ctx context.Context, verbose bool) (*api.In
 	for _, ef := range existingFiles {
 		if !fileSet[ef.Path] {
 			idx.store.DeleteFile(ctx, ef.Path)
+			removed++
+		}
+	}
+	existingDocs, _ := idx.store.ListDocuments(ctx)
+	for _, d := range existingDocs {
+		if !fileSet[d.Path] {
+			idx.store.DeleteDocument(ctx, d.Path)
 			removed++
 		}
 	}
