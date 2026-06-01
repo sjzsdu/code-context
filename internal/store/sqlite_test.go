@@ -46,6 +46,25 @@ func TestInit(t *testing.T) {
 	}
 }
 
+func TestSchemaStatusIncludesMigrationVersion(t *testing.T) {
+	st, clean := newTestStore(t)
+	defer clean()
+
+	status, err := st.SchemaStatus(context.Background())
+	if err != nil {
+		t.Fatalf("schema status: %v", err)
+	}
+	if status.ExpectedVersion != SchemaVersion {
+		t.Fatalf("expected version %q, got %q", SchemaVersion, status.ExpectedVersion)
+	}
+	if status.AppliedVersion != SchemaVersion || !status.VersionOK {
+		t.Fatalf("migration version not recorded: %+v", status)
+	}
+	if len(status.MissingTables) > 0 || len(status.MissingIndexes) > 0 {
+		t.Fatalf("unexpected missing schema objects: %+v", status)
+	}
+}
+
 func TestUpsertAndGetFile(t *testing.T) {
 	st, clean := newTestStore(t)
 	defer clean()

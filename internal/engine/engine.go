@@ -1831,11 +1831,13 @@ func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
 	schema, err := e.store.SchemaStatus(ctx)
 	if err != nil {
 		add("schema", "error", err.Error())
-		schema = &api.SchemaStatus{ExpectedVersion: graphExportVersion}
+		schema = &api.SchemaStatus{ExpectedVersion: store.SchemaVersion}
 	} else if len(schema.MissingTables) > 0 || len(schema.MissingIndexes) > 0 {
 		add("schema", "error", fmt.Sprintf("missing %d tables and %d indexes", len(schema.MissingTables), len(schema.MissingIndexes)))
+	} else if !schema.VersionOK {
+		add("schema", "error", fmt.Sprintf("schema version mismatch: applied %q, expected %q", schema.AppliedVersion, schema.ExpectedVersion))
 	} else {
-		add("schema", "ok", schema.ExpectedVersion)
+		add("schema", "ok", fmt.Sprintf("%s applied", schema.AppliedVersion))
 	}
 	stats, err := e.store.Stats(ctx)
 	if err != nil {

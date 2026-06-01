@@ -268,6 +268,8 @@ type DoctorCheck struct {
 // SchemaStatus reports SQLite schema capabilities.
 type SchemaStatus struct {
 	ExpectedVersion string   `json:"expected_version"`
+	AppliedVersion  string   `json:"applied_version,omitempty"`
+	VersionOK       bool     `json:"version_ok"`
 	Tables          []string `json:"tables"`
 	MissingTables   []string `json:"missing_tables,omitempty"`
 	Indexes         []string `json:"indexes,omitempty"`

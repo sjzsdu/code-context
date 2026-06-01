@@ -39,7 +39,24 @@ func (s *sqliteStore) Init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return err
 	}
-	return s.ensureDocumentLinkColumns(ctx)
+	if err := s.ensureDocumentLinkColumns(ctx); err != nil {
+		return err
+	}
+	return s.recordSchemaVersion(ctx, SchemaVersion)
+}
+
+func (s *sqliteStore) recordSchemaVersion(ctx context.Context, version string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT(version) DO NOTHING`, version)
+	return err
+}
+
+func (s *sqliteStore) appliedSchemaVersion(ctx context.Context) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(ctx, `SELECT version FROM schema_migrations ORDER BY applied_at DESC, version DESC LIMIT 1`).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return version, err
 }
 
 func (s *sqliteStore) ensureDocumentLinkColumns(ctx context.Context) error {
@@ -79,7 +96,7 @@ func (s *sqliteStore) ensureDocumentLinkColumns(ctx context.Context) error {
 }
 
 func (s *sqliteStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error) {
-	expectedTables := []string{"files", "symbols", "imports", "symbols_fts", "calls", "routes", "documents", "document_links"}
+	expectedTables := []string{"schema_migrations", "files", "symbols", "imports", "symbols_fts", "calls", "routes", "documents", "document_links"}
 	expectedIndexes := []string{"idx_symbols_name", "idx_symbols_kind", "idx_symbols_file", "idx_imports_source", "idx_imports_file", "idx_calls_from", "idx_calls_to", "idx_calls_file", "idx_routes_path", "idx_routes_handler", "idx_routes_file", "idx_document_links_doc", "idx_document_links_target"}
 	tables, err := s.sqliteObjects(ctx, "table")
 	if err != nil {
@@ -89,7 +106,11 @@ func (s *sqliteStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, erro
 	if err != nil {
 		return nil, err
 	}
-	return &api.SchemaStatus{ExpectedVersion: SchemaVersion, Tables: intersectNames(tables, expectedTables), MissingTables: missingNames(tables, expectedTables), Indexes: intersectNames(indexes, expectedIndexes), MissingIndexes: missingNames(indexes, expectedIndexes)}, nil
+	appliedVersion, err := s.appliedSchemaVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &api.SchemaStatus{ExpectedVersion: SchemaVersion, AppliedVersion: appliedVersion, VersionOK: appliedVersion == SchemaVersion, Tables: intersectNames(tables, expectedTables), MissingTables: missingNames(tables, expectedTables), Indexes: intersectNames(indexes, expectedIndexes), MissingIndexes: missingNames(indexes, expectedIndexes)}, nil
 }
 
 func (s *sqliteStore) sqliteObjects(ctx context.Context, typ string) (map[string]bool, error) {
