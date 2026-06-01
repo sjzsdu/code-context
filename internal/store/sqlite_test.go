@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 
@@ -63,6 +64,95 @@ func TestSchemaStatusIncludesMigrationVersion(t *testing.T) {
 	if len(status.MissingTables) > 0 || len(status.MissingIndexes) > 0 {
 		t.Fatalf("unexpected missing schema objects: %+v", status)
 	}
+}
+
+func TestInitMigratesLegacyDocumentLinks(t *testing.T) {
+	f, err := os.CreateTemp("", "code_memory_legacy_*.db")
+	if err != nil {
+		t.Fatalf("create temp db: %v", err)
+	}
+	dbPath := f.Name()
+	_ = f.Close()
+	defer os.Remove(dbPath)
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL DEFAULT (unixepoch()));
+INSERT INTO schema_migrations(version) VALUES ('schema.v1.code-context');
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT UNIQUE NOT NULL,
+    language TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    title TEXT,
+    summary TEXT,
+    size INTEGER NOT NULL DEFAULT 0,
+    indexed_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE TABLE document_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_value TEXT NOT NULL,
+    line INTEGER NOT NULL DEFAULT 0,
+    evidence TEXT,
+    confidence REAL NOT NULL DEFAULT 1.0
+);`)
+	_ = db.Close()
+	if err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+
+	st, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.Init(context.Background()); err != nil {
+		t.Fatalf("init migrates legacy schema: %v", err)
+	}
+	status, err := st.SchemaStatus(context.Background())
+	if err != nil {
+		t.Fatalf("schema status: %v", err)
+	}
+	if status.AppliedVersion != SchemaVersion || !status.VersionOK {
+		t.Fatalf("expected latest schema after migration, got %+v", status)
+	}
+	for _, col := range []string{"section_title", "section_slug", "section_line"} {
+		if !documentLinkColumnExists(t, st, col) {
+			t.Fatalf("expected migrated column %s", col)
+		}
+	}
+}
+
+func documentLinkColumnExists(t *testing.T, st Store, column string) bool {
+	t.Helper()
+	s := st.(*sqliteStore)
+	rows, err := s.db.QueryContext(context.Background(), `PRAGMA table_info(document_links)`)
+	if err != nil {
+		t.Fatalf("table info: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan table info: %v", err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table info rows: %v", err)
+	}
+	return false
 }
 
 func TestUpsertAndGetFile(t *testing.T) {

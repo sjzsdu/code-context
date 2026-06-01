@@ -301,7 +301,7 @@ code-context doctor --json
 code-context rebuild
 ```
 
-`freshness` reports indexed source/document files that are modified, deleted, or unreadable compared with the filesystem. `doctor` validates the project root, SQLite database, applied schema migration version, expected schema tables/indexes, index statistics, and freshness. `rebuild` clears the current index tables and runs a full reindex from disk.
+`freshness` reports indexed source/document files that are modified, deleted, or unreadable compared with the filesystem. `doctor` validates the project root, SQLite database, applied schema migration version, expected schema tables/indexes, index statistics, and freshness. Schema upgrades are applied through ordered migrations recorded in `schema_migrations`. `rebuild` clears the current index tables and runs a full reindex from disk.
 
 ### `serve` — Start HTTP server
 

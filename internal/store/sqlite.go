@@ -16,7 +16,17 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const SchemaVersion = "schema.v1.code-context"
+const SchemaVersion = "schema.v2.code-context"
+
+type schemaMigration struct {
+	version string
+	apply   func(context.Context, *sqliteStore) error
+}
+
+var schemaMigrations = []schemaMigration{
+	{version: "schema.v1.code-context", apply: func(context.Context, *sqliteStore) error { return nil }},
+	{version: "schema.v2.code-context", apply: migrateDocumentLinkSections},
+}
 
 type sqliteStore struct {
 	db *sql.DB
@@ -39,10 +49,32 @@ func (s *sqliteStore) Init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return err
 	}
-	if err := s.ensureDocumentLinkColumns(ctx); err != nil {
-		return err
+	return s.runSchemaMigrations(ctx)
+}
+
+func (s *sqliteStore) runSchemaMigrations(ctx context.Context) error {
+	for _, migration := range schemaMigrations {
+		applied, err := s.schemaVersionApplied(ctx, migration.version)
+		if err != nil {
+			return err
+		}
+		if applied {
+			continue
+		}
+		if err := migration.apply(ctx, s); err != nil {
+			return fmt.Errorf("apply schema migration %s: %w", migration.version, err)
+		}
+		if err := s.recordSchemaVersion(ctx, migration.version); err != nil {
+			return err
+		}
 	}
-	return s.recordSchemaVersion(ctx, SchemaVersion)
+	return nil
+}
+
+func (s *sqliteStore) schemaVersionApplied(ctx context.Context, version string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&count)
+	return count > 0, err
 }
 
 func (s *sqliteStore) recordSchemaVersion(ctx context.Context, version string) error {
@@ -59,7 +91,7 @@ func (s *sqliteStore) appliedSchemaVersion(ctx context.Context) (string, error) 
 	return version, err
 }
 
-func (s *sqliteStore) ensureDocumentLinkColumns(ctx context.Context) error {
+func migrateDocumentLinkSections(ctx context.Context, s *sqliteStore) error {
 	columns := map[string]string{
 		"section_title": `ALTER TABLE document_links ADD COLUMN section_title TEXT NOT NULL DEFAULT ''`,
 		"section_slug":  `ALTER TABLE document_links ADD COLUMN section_slug TEXT NOT NULL DEFAULT ''`,
