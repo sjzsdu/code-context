@@ -400,6 +400,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/context` | `name` | Symbol profile with related context and graph guidance |
 | GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
 | GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
+| GET | `/api/impact` | `target`, `depth?` | Unified file or symbol impact analysis with JSON output |
 | GET | `/api/diff-impact` | `file`, `depth?` | Analyze change impact and related tests |
 | GET | `/api/git/files` | `state?` | List git changed files for `unstaged`, `staged`, or `all` |
 | GET | `/api/git/diff` | `state?`, `context?` | Return git diff hunks for changed files |

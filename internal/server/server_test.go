@@ -898,6 +898,59 @@ func TestDiffImpactEndpoint(t *testing.T) {
 	}
 }
 
+func TestImpactEndpointForFileAndSymbol(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	fileResp, err := http.Get(ts.URL + "/api/impact?target=" + url.QueryEscape("a.go") + "&depth=2")
+	if err != nil {
+		t.Fatalf("file impact request failed: %v", err)
+	}
+	defer fileResp.Body.Close()
+	if fileResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(fileResp.Body)
+		t.Fatalf("expected 200, got %d: %s", fileResp.StatusCode, string(body))
+	}
+	var filePayload map[string]interface{}
+	if err := json.NewDecoder(fileResp.Body).Decode(&filePayload); err != nil {
+		t.Fatalf("decode file impact: %v", err)
+	}
+	if filePayload["kind"] != "file" || filePayload["file_impact"] == nil {
+		t.Fatalf("expected file impact payload, got: %v", filePayload)
+	}
+
+	symbolResp, err := http.Get(ts.URL + "/api/impact?target=" + url.QueryEscape("Foo"))
+	if err != nil {
+		t.Fatalf("symbol impact request failed: %v", err)
+	}
+	defer symbolResp.Body.Close()
+	if symbolResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(symbolResp.Body)
+		t.Fatalf("expected 200, got %d: %s", symbolResp.StatusCode, string(body))
+	}
+	var symbolPayload map[string]interface{}
+	if err := json.NewDecoder(symbolResp.Body).Decode(&symbolPayload); err != nil {
+		t.Fatalf("decode symbol impact: %v", err)
+	}
+	if symbolPayload["kind"] != "symbol" || symbolPayload["symbol_impact"] == nil {
+		t.Fatalf("expected symbol impact payload, got: %v", symbolPayload)
+	}
+}
+
+func TestImpactMissingParam(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/impact")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 func TestDiffImpactMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

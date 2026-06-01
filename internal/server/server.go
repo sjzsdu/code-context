@@ -60,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/git/diff", s.handleGitDiff)
 	mux.HandleFunc("/api/snapshot-git", s.handleSnapshotGit)
 	mux.HandleFunc("/api/trace", s.handleTrace)
+	mux.HandleFunc("/api/impact", s.handleImpact)
 	mux.HandleFunc("/api/diff-impact", s.handleDiffImpact)
 	mux.HandleFunc("/api/diff-impact-git", s.handleDiffImpactGit)
 	mux.HandleFunc("/api/review-context", s.handleReviewContext)
@@ -563,6 +564,22 @@ func (s *Server) handleDiffImpact(w http.ResponseWriter, r *http.Request) {
 
 	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
 	result, err := s.eng.DiffImpact(r.Context(), file, depth)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleImpact(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		writeError(w, fmt.Errorf("missing 'target' parameter"), 400)
+		return
+	}
+
+	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
+	result, err := s.eng.Impact(r.Context(), target, depth)
 	if err != nil {
 		writeError(w, err, 500)
 		return
