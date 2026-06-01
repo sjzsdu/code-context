@@ -206,7 +206,7 @@ code-context routes
 code-context routes users
 ```
 
-Lists routes detected from common framework patterns such as Go `http.HandleFunc`, Gin/chi methods, Express, NestJS decorators, FastAPI/Flask decorators, Django paths, Spring mappings, Rust route attributes, and Axum `.route` calls.
+Lists routes detected from common framework patterns such as Go `http.HandleFunc`, Gin/chi methods, Express, NestJS decorators, FastAPI/Flask decorators, Django paths, Spring mappings, Rust route attributes, and Axum `.route` calls. Route extraction also merges common framework prefixes such as NestJS `@Controller`, Spring class-level `@RequestMapping`, FastAPI `APIRouter(prefix=...)`, and Flask `Blueprint(url_prefix=...)`.
 
 ### `route-context <query>` — Route-level impact package
 

@@ -113,9 +113,9 @@ var routePatterns = map[api.Language][]routePattern{
 
 func jsRoutePatterns() []routePattern {
 	return []routePattern{
-		{regexp.MustCompile(`(?m)\b(?:app|router)\.(get|post|put|patch|delete|head|options|use)\s*\(\s*["\x60]([^"\x60]+)["\x60]\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*,\s*([A-Za-z_][A-Za-z0-9_\.]*)`), "", "express", 2, 3},
-		{regexp.MustCompile(`(?m)@(Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*["\x60]([^"\x60]*)["\x60]\s*\)`), "", "nestjs", 2, 0},
-		{regexp.MustCompile(`(?m)<Route\s+[^>]*path=["\x60]([^"\x60]+)["\x60][^>]*(?:component=\{?([A-Za-z_][A-Za-z0-9_]*)\}?|element=\{?<([A-Za-z_][A-Za-z0-9_]*)\b)`), "", "react-router", 1, 2},
+		{regexp.MustCompile(`(?m)\b(?:app|router)\.(get|post|put|patch|delete|head|options|use)\s*\(\s*["'\x60]([^"'\x60]+)["'\x60]\s*(?:,\s*[A-Za-z_][A-Za-z0-9_]*\s*)*,\s*([A-Za-z_][A-Za-z0-9_\.]*)`), "", "express", 2, 3},
+		{regexp.MustCompile(`(?m)@(Get|Post|Put|Patch|Delete|Head|Options)\s*\(\s*["'\x60]([^"'\x60]*)["'\x60]\s*\)`), "", "nestjs", 2, 0},
+		{regexp.MustCompile(`(?m)<Route\s+[^>]*path=["'\x60]([^"'\x60]+)["'\x60][^>]*(?:component=\{?([A-Za-z_][A-Za-z0-9_]*)\}?|element=\{?<([A-Za-z_][A-Za-z0-9_]*)\b)`), "", "react-router", 1, 2},
 	}
 }
 
@@ -142,6 +142,7 @@ func extractRoutes(file string, content string, language api.Language) []api.Rou
 			if path == "" {
 				continue
 			}
+			path = applyRoutePrefix(content, language, rp.framework, match[0], path)
 			line := offsetToLine(lineStarts, match[0])
 			if handler == "" {
 				handler = nextSymbolName(content, match[1])
@@ -155,6 +156,90 @@ func extractRoutes(file string, content string, language api.Language) []api.Rou
 		}
 	}
 	return routes
+}
+
+func applyRoutePrefix(content string, language api.Language, framework string, routeOffset int, path string) string {
+	prefix := ""
+	switch language {
+	case api.TypeScript, api.JavaScript:
+		if framework == "nestjs" {
+			prefix = nearestDecoratorPrefix(content[:routeOffset], regexp.MustCompile(`@Controller\s*\(\s*["'\x60]([^"'\x60]*)["'\x60]`))
+		}
+	case api.Java:
+		if framework == "spring" {
+			prefix = nearestJavaClassRequestMappingPrefix(content[:routeOffset])
+		}
+	case api.Python:
+		prefix = pythonDecoratorPrefix(content, routeOffset)
+	}
+	return joinRoutePaths(prefix, path)
+}
+
+func nearestDecoratorPrefix(before string, re *regexp.Regexp) string {
+	matches := re.FindAllStringSubmatch(before, -1)
+	if len(matches) == 0 || len(matches[len(matches)-1]) < 2 {
+		return ""
+	}
+	return matches[len(matches)-1][1]
+}
+
+func nearestJavaClassRequestMappingPrefix(before string) string {
+	re := regexp.MustCompile(`(?s)@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']+)["'][^)]*\)\s*(?:public\s+)?(?:abstract\s+)?class\s+[A-Za-z_][A-Za-z0-9_]*`)
+	matches := re.FindAllStringSubmatch(before, -1)
+	if len(matches) == 0 || len(matches[len(matches)-1]) < 2 {
+		return ""
+	}
+	return matches[len(matches)-1][1]
+}
+
+func pythonDecoratorPrefix(content string, routeOffset int) string {
+	decoratorStart := routeOffset
+	lineStart := strings.LastIndex(content[:routeOffset], "\n")
+	if lineStart >= 0 {
+		decoratorStart = lineStart + 1
+	}
+	lineEndRel := strings.Index(content[decoratorStart:], "\n")
+	lineEnd := len(content)
+	if lineEndRel >= 0 {
+		lineEnd = decoratorStart + lineEndRel
+	}
+	line := content[decoratorStart:lineEnd]
+	m := regexp.MustCompile(`@([A-Za-z_][A-Za-z0-9_]*)\.`).FindStringSubmatch(line)
+	if len(m) < 2 || m[1] == "app" {
+		return ""
+	}
+	name := regexp.QuoteMeta(m[1])
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?m)\b` + name + `\s*=\s*APIRouter\s*\([^)]*prefix\s*=\s*["']([^"']+)["']`),
+		regexp.MustCompile(`(?m)\b` + name + `\s*=\s*Blueprint\s*\([^)]*url_prefix\s*=\s*["']([^"']+)["']`),
+	}
+	before := content[:routeOffset]
+	for _, re := range patterns {
+		matches := re.FindAllStringSubmatch(before, -1)
+		if len(matches) > 0 && len(matches[len(matches)-1]) > 1 {
+			return matches[len(matches)-1][1]
+		}
+	}
+	return ""
+}
+
+func joinRoutePaths(prefix, path string) string {
+	if prefix == "" || prefix == "/" {
+		if path == "" {
+			return "/"
+		}
+		if strings.HasPrefix(path, "/") {
+			return path
+		}
+		return "/" + path
+	}
+	if path == "" || path == "/" {
+		if strings.HasPrefix(prefix, "/") {
+			return strings.TrimRight(prefix, "/")
+		}
+		return "/" + strings.TrimRight(prefix, "/")
+	}
+	return "/" + strings.Trim(strings.TrimRight(prefix, "/")+"/"+strings.TrimLeft(path, "/"), "/")
 }
 
 func captureAt(content string, match []int, idx int) string {

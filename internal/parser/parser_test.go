@@ -169,6 +169,69 @@ func TestParse_EmptyFile(t *testing.T) {
 	}
 }
 
+func TestExtractRoutesWithFrameworkPrefixes(t *testing.T) {
+	tests := []struct {
+		name     string
+		lang     api.Language
+		content  string
+		wantPath string
+		want     string
+	}{
+		{
+			name: "nestjs controller prefix",
+			lang: api.TypeScript,
+			content: `@Controller('users')
+export class UsersController {
+  @Get(':id')
+  findOne() { return null }
+}`,
+			wantPath: "/users/:id",
+			want:     "findOne",
+		},
+		{
+			name: "fastapi router prefix",
+			lang: api.Python,
+			content: `router = APIRouter(prefix="/api/v1")
+
+@router.get("/users/{id}")
+def get_user():
+    pass`,
+			wantPath: "/api/v1/users/{id}",
+			want:     "get_user",
+		},
+		{
+			name: "flask blueprint prefix",
+			lang: api.Python,
+			content: `bp = Blueprint("users", __name__, url_prefix="/api")
+
+@bp.route("/users")
+def list_users():
+    pass`,
+			wantPath: "/api/users",
+			want:     "list_users",
+		},
+		{
+			name: "spring class request mapping prefix",
+			lang: api.Java,
+			content: `@RestController
+@RequestMapping("/api")
+public class UserController {
+  @GetMapping("/users/{id}")
+  public User getUser() { return null; }
+}`,
+			wantPath: "/api/users/{id}",
+			want:     "getUser",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			routes := extractRoutes("fixture", tt.content, tt.lang)
+			expectRoute(t, routes, tt.wantPath, tt.want)
+		})
+	}
+}
+
 func expectSymbol(t *testing.T, symbols []api.Symbol, name string, kind api.SymbolKind) {
 	t.Helper()
 	for _, s := range symbols {
@@ -177,6 +240,16 @@ func expectSymbol(t *testing.T, symbols []api.Symbol, name string, kind api.Symb
 		}
 	}
 	t.Errorf("missing symbol %q (kind %q); got: %v", name, kind, formatSymbols(symbols))
+}
+
+func expectRoute(t *testing.T, routes []api.Route, path, handler string) {
+	t.Helper()
+	for _, r := range routes {
+		if r.Path == path && r.Handler == handler {
+			return
+		}
+	}
+	t.Fatalf("missing route path=%q handler=%q; got: %+v", path, handler, routes)
 }
 
 func expectImport(t *testing.T, imports []api.ImportEdge, source string, fromFile string) {
