@@ -36,8 +36,46 @@ func (s *sqliteStore) Init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, schemaSQL)
-	return err
+	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
+		return err
+	}
+	return s.ensureDocumentLinkColumns(ctx)
+}
+
+func (s *sqliteStore) ensureDocumentLinkColumns(ctx context.Context) error {
+	columns := map[string]string{
+		"section_title": `ALTER TABLE document_links ADD COLUMN section_title TEXT NOT NULL DEFAULT ''`,
+		"section_slug":  `ALTER TABLE document_links ADD COLUMN section_slug TEXT NOT NULL DEFAULT ''`,
+		"section_line":  `ALTER TABLE document_links ADD COLUMN section_line INTEGER NOT NULL DEFAULT 0`,
+	}
+	existing := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(document_links)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for col, stmt := range columns {
+		if !existing[col] {
+			if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *sqliteStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error) {
@@ -556,14 +594,14 @@ func (s *sqliteStore) ReplaceDocumentLinks(ctx context.Context, docID int64, lin
 		return err
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO document_links (document_id, target_type, target_value, line, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO document_links (document_id, target_type, target_value, line, section_title, section_slug, section_line, evidence, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, link := range links {
-		_, err = stmt.ExecContext(ctx, docID, link.TargetType, link.TargetValue, link.Line, link.Evidence, link.Confidence)
+		_, err = stmt.ExecContext(ctx, docID, link.TargetType, link.TargetValue, link.Line, link.SectionTitle, link.SectionSlug, link.SectionLine, link.Evidence, link.Confidence)
 		if err != nil {
 			return err
 		}
@@ -573,7 +611,7 @@ func (s *sqliteStore) ReplaceDocumentLinks(ctx context.Context, docID int64, lin
 
 func (s *sqliteStore) GetDocumentLinks(ctx context.Context, docPath string) ([]api.DocumentLink, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT dl.id, dl.document_id, dl.target_type, dl.target_value, dl.line, dl.evidence, dl.confidence
+		`SELECT dl.id, dl.document_id, dl.target_type, dl.target_value, dl.line, dl.section_title, dl.section_slug, dl.section_line, dl.evidence, dl.confidence
 		 FROM document_links dl JOIN documents d ON d.id = dl.document_id
 		 WHERE d.path = ?`, docPath)
 	if err != nil {
@@ -585,7 +623,7 @@ func (s *sqliteStore) GetDocumentLinks(ctx context.Context, docPath string) ([]a
 
 func (s *sqliteStore) GetDocumentsByTarget(ctx context.Context, targetType, targetValue string) ([]api.DocumentLink, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT dl.id, dl.document_id, dl.target_type, dl.target_value, dl.line, dl.evidence, dl.confidence
+		`SELECT dl.id, dl.document_id, dl.target_type, dl.target_value, dl.line, dl.section_title, dl.section_slug, dl.section_line, dl.evidence, dl.confidence
 		 FROM document_links dl
 		 WHERE dl.target_type = ? AND dl.target_value = ?`, targetType, targetValue)
 	if err != nil {
@@ -599,7 +637,7 @@ func scanDocumentLinks(rows *sql.Rows) ([]api.DocumentLink, error) {
 	var result []api.DocumentLink
 	for rows.Next() {
 		var link api.DocumentLink
-		if err := rows.Scan(&link.ID, &link.DocumentID, &link.TargetType, &link.TargetValue, &link.Line, &link.Evidence, &link.Confidence); err != nil {
+		if err := rows.Scan(&link.ID, &link.DocumentID, &link.TargetType, &link.TargetValue, &link.Line, &link.SectionTitle, &link.SectionSlug, &link.SectionLine, &link.Evidence, &link.Confidence); err != nil {
 			return nil, err
 		}
 		result = append(result, link)

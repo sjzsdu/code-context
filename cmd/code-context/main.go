@@ -826,7 +826,11 @@ func newDocsForCmd() *cobra.Command {
 			}
 			fmt.Printf("Docs for %q:\n", refs.Query)
 			for _, link := range refs.Links {
-				fmt.Printf("  %s:%d  %s:%s  %s (%.1f)\n", link.DocumentPath, link.Line, link.TargetType, link.TargetValue, link.Evidence, link.Confidence)
+				section := ""
+				if link.SectionTitle != "" {
+					section = fmt.Sprintf(" #%s", link.SectionSlug)
+				}
+				fmt.Printf("  %s:%d%s  %s:%s  %s (%.1f)\n", link.DocumentPath, link.Line, section, link.TargetType, link.TargetValue, link.Evidence, link.Confidence)
 			}
 			fmt.Printf("\n%d document references\n", len(refs.Links))
 			return nil
@@ -850,7 +854,11 @@ func newDocDriftCmd() *cobra.Command {
 			}
 			fmt.Println(report.Summary)
 			for _, item := range report.Broken {
-				fmt.Printf("  %s:%d  %s:%s  %s\n", item.DocumentPath, item.Line, item.TargetType, item.TargetValue, item.Reason)
+				section := ""
+				if item.SectionTitle != "" {
+					section = fmt.Sprintf(" #%s", item.SectionSlug)
+				}
+				fmt.Printf("  %s:%d%s  %s:%s  %s\n", item.DocumentPath, item.Line, section, item.TargetType, item.TargetValue, item.Reason)
 			}
 			return nil
 		},

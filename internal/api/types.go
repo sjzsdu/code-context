@@ -306,6 +306,9 @@ type DocumentLink struct {
 	TargetType   string  `json:"target_type"`
 	TargetValue  string  `json:"target_value"`
 	Line         int     `json:"line"`
+	SectionTitle string  `json:"section_title,omitempty"`
+	SectionSlug  string  `json:"section_slug,omitempty"`
+	SectionLine  int     `json:"section_line,omitempty"`
 	Evidence     string  `json:"evidence,omitempty"`
 	Confidence   float64 `json:"confidence"`
 }
@@ -322,6 +325,9 @@ type DocDriftItem struct {
 	TargetType   string `json:"target_type"`
 	TargetValue  string `json:"target_value"`
 	Line         int    `json:"line"`
+	SectionTitle string `json:"section_title,omitempty"`
+	SectionSlug  string `json:"section_slug,omitempty"`
+	SectionLine  int    `json:"section_line,omitempty"`
 	Evidence     string `json:"evidence,omitempty"`
 	Reason       string `json:"reason"`
 }

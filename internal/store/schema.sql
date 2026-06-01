@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS document_links (
     target_type   TEXT NOT NULL,
     target_value  TEXT NOT NULL,
     line         INTEGER NOT NULL DEFAULT 0,
+    section_title TEXT NOT NULL DEFAULT '',
+    section_slug  TEXT NOT NULL DEFAULT '',
+    section_line  INTEGER NOT NULL DEFAULT 0,
     evidence     TEXT,
     confidence   REAL NOT NULL DEFAULT 1.0
 );

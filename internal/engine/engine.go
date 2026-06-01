@@ -181,7 +181,7 @@ func (e *Engine) DocDrift(ctx context.Context) (*api.DocDriftReport, error) {
 		for _, link := range links {
 			total++
 			if reason := e.docLinkDriftReason(ctx, link); reason != "" {
-				broken = append(broken, api.DocDriftItem{DocumentPath: doc.Path, TargetType: link.TargetType, TargetValue: link.TargetValue, Line: link.Line, Evidence: link.Evidence, Reason: reason})
+				broken = append(broken, api.DocDriftItem{DocumentPath: doc.Path, TargetType: link.TargetType, TargetValue: link.TargetValue, Line: link.Line, SectionTitle: link.SectionTitle, SectionSlug: link.SectionSlug, SectionLine: link.SectionLine, Evidence: link.Evidence, Reason: reason})
 			}
 		}
 	}

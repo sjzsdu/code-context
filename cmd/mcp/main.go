@@ -1052,7 +1052,11 @@ func formatRouteContextMarkdown(rc *engine.RouteContext) string {
 func formatDocsForMarkdown(refs *api.DocReference) string {
 	out := fmt.Sprintf("# Docs for `%s`\n\n", refs.Query)
 	for _, link := range refs.Links {
-		out += fmt.Sprintf("- `%s:%d` %s:%s `%s` (%.1f)\n", link.DocumentPath, link.Line, link.TargetType, link.TargetValue, link.Evidence, link.Confidence)
+		section := ""
+		if link.SectionTitle != "" {
+			section = "#" + link.SectionSlug
+		}
+		out += fmt.Sprintf("- `%s:%d%s` %s:%s `%s` (%.1f)\n", link.DocumentPath, link.Line, section, link.TargetType, link.TargetValue, link.Evidence, link.Confidence)
 	}
 	out += fmt.Sprintf("\n%d document references\n", len(refs.Links))
 	return out
@@ -1061,7 +1065,11 @@ func formatDocsForMarkdown(refs *api.DocReference) string {
 func formatDocDriftMarkdown(report *api.DocDriftReport) string {
 	out := "# Documentation Drift\n\n" + report.Summary + "\n"
 	for _, item := range report.Broken {
-		out += fmt.Sprintf("- `%s:%d` %s:%s - %s\n", item.DocumentPath, item.Line, item.TargetType, item.TargetValue, item.Reason)
+		section := ""
+		if item.SectionTitle != "" {
+			section = "#" + item.SectionSlug
+		}
+		out += fmt.Sprintf("- `%s:%d%s` %s:%s - %s\n", item.DocumentPath, item.Line, section, item.TargetType, item.TargetValue, item.Reason)
 	}
 	return out
 }

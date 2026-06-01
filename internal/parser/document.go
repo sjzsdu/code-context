@@ -27,6 +27,12 @@ var (
 	}
 )
 
+type docSection struct {
+	Title string
+	Slug  string
+	Line  int
+}
+
 func ExtractDocument(path, content string) (*api.Document, []api.DocumentLink) {
 	doc := &api.Document{
 		Path:     path,
@@ -114,6 +120,7 @@ func hashContent(content string) string {
 
 func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 	var links []api.DocumentLink
+	sections := documentSections(content)
 
 	contentLower := strings.ToLower(content)
 	_ = contentLower
@@ -130,12 +137,16 @@ func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 		}
 
 		line := findLineNumber(content, candidate)
+		section := sectionForLine(sections, line)
 		links = append(links, api.DocumentLink{
-			TargetType:  "file",
-			TargetValue: candidate,
-			Line:        line,
-			Evidence:    candidate,
-			Confidence:  0.9,
+			TargetType:   "file",
+			TargetValue:  candidate,
+			Line:         line,
+			SectionTitle: section.Title,
+			SectionSlug:  section.Slug,
+			SectionLine:  section.Line,
+			Evidence:     candidate,
+			Confidence:   0.9,
 		})
 	}
 
@@ -147,12 +158,16 @@ func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 
 		if isLikelySymbol(candidate) {
 			line := findLineNumber(content, m[0])
+			section := sectionForLine(sections, line)
 			links = append(links, api.DocumentLink{
-				TargetType:  "symbol",
-				TargetValue: candidate,
-				Line:        line,
-				Evidence:    m[0],
-				Confidence:  0.8,
+				TargetType:   "symbol",
+				TargetValue:  candidate,
+				Line:         line,
+				SectionTitle: section.Title,
+				SectionSlug:  section.Slug,
+				SectionLine:  section.Line,
+				Evidence:     m[0],
+				Confidence:   0.8,
 			})
 		}
 	}
@@ -167,12 +182,16 @@ func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 		}
 
 		line := findLineNumber(content, m[0])
+		section := sectionForLine(sections, line)
 		links = append(links, api.DocumentLink{
-			TargetType:  "symbol",
-			TargetValue: candidate,
-			Line:        line,
-			Evidence:    m[0],
-			Confidence:  0.6,
+			TargetType:   "symbol",
+			TargetValue:  candidate,
+			Line:         line,
+			SectionTitle: section.Title,
+			SectionSlug:  section.Slug,
+			SectionLine:  section.Line,
+			Evidence:     m[0],
+			Confidence:   0.6,
 		})
 	}
 
@@ -186,12 +205,16 @@ func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 		}
 
 		line := findLineNumber(content, m[0])
+		section := sectionForLine(sections, line)
 		links = append(links, api.DocumentLink{
-			TargetType:  "symbol",
-			TargetValue: candidate,
-			Line:        line,
-			Evidence:    m[0],
-			Confidence:  0.5,
+			TargetType:   "symbol",
+			TargetValue:  candidate,
+			Line:         line,
+			SectionTitle: section.Title,
+			SectionSlug:  section.Slug,
+			SectionLine:  section.Line,
+			Evidence:     m[0],
+			Confidence:   0.5,
 		})
 	}
 
@@ -203,17 +226,64 @@ func extractDocumentLinks(path, content, title string) []api.DocumentLink {
 		candidate := strings.Join(dirParts[:i+1], "/")
 		if knownModules[candidate] {
 			line := 1
+			section := sectionForLine(sections, line)
 			links = append(links, api.DocumentLink{
-				TargetType:  "module",
-				TargetValue: candidate,
-				Line:        line,
-				Evidence:    "directory structure",
-				Confidence:  0.7,
+				TargetType:   "module",
+				TargetValue:  candidate,
+				Line:         line,
+				SectionTitle: section.Title,
+				SectionSlug:  section.Slug,
+				SectionLine:  section.Line,
+				Evidence:     "directory structure",
+				Confidence:   0.7,
 			})
 		}
 	}
 
 	return deduplicateLinks(links)
+}
+
+func documentSections(content string) []docSection {
+	var sections []docSection
+	for i, line := range strings.Split(content, "\n") {
+		m := headingPattern.FindStringSubmatch(strings.TrimSpace(line))
+		if len(m) < 2 {
+			continue
+		}
+		title := strings.TrimSpace(m[1])
+		sections = append(sections, docSection{Title: title, Slug: markdownSlug(title), Line: i + 1})
+	}
+	return sections
+}
+
+func sectionForLine(sections []docSection, line int) docSection {
+	var current docSection
+	for _, section := range sections {
+		if section.Line > line {
+			break
+		}
+		current = section
+	}
+	return current
+}
+
+func markdownSlug(title string) string {
+	s := strings.ToLower(strings.TrimSpace(title))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		keep := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_'
+		if keep {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func isLikelySymbol(s string) bool {
@@ -255,7 +325,7 @@ func deduplicateLinks(links []api.DocumentLink) []api.DocumentLink {
 	var result []api.DocumentLink
 
 	for _, link := range links {
-		key := link.TargetType + "|" + link.TargetValue
+		key := link.TargetType + "|" + link.TargetValue + "|" + link.SectionSlug + "|" + link.Evidence
 		if !seen[key] {
 			seen[key] = true
 			result = append(result, link)
