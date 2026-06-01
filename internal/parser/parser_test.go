@@ -154,6 +154,65 @@ export class Greeter {
 	expectImport(t, result.Imports, "react", "app.ts")
 }
 
+func TestParseTypeScriptCallsSkipImportedBindings(t *testing.T) {
+	p := newTestParser()
+	code := []byte(`import React, { useState, useEffect as useFx } from 'react';
+import * as axios from 'axios';
+
+function Local() {}
+
+export function Component() {
+    useState(0);
+    useFx(() => {});
+    axios.get('/api');
+    React.createElement('div');
+    Local();
+}
+`)
+
+	result, err := p.Parse(context.Background(), "app.ts", code, api.TypeScript)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	for _, imported := range []string{"useState", "useFx", "axios.get", "React.createElement"} {
+		if hasCall(result.Calls, imported) {
+			t.Fatalf("expected imported call %q to be skipped, got %+v", imported, result.Calls)
+		}
+	}
+	if !hasCall(result.Calls, "Local") {
+		t.Fatalf("expected local call to remain, got %+v", result.Calls)
+	}
+}
+
+func TestParseJavaScriptCallsSkipRequireBindings(t *testing.T) {
+	p := newTestParser()
+	code := []byte(`const express = require('express');
+const { Router: MakeRouter, json } = require('express');
+
+function Local() {}
+
+function main() {
+    express.Router();
+    MakeRouter();
+    json();
+    Local();
+}
+`)
+
+	result, err := p.Parse(context.Background(), "app.js", code, api.JavaScript)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	for _, imported := range []string{"express.Router", "MakeRouter", "json"} {
+		if hasCall(result.Calls, imported) {
+			t.Fatalf("expected imported require call %q to be skipped, got %+v", imported, result.Calls)
+		}
+	}
+	if !hasCall(result.Calls, "Local") {
+		t.Fatalf("expected local call to remain, got %+v", result.Calls)
+	}
+}
+
 func TestParse_Python(t *testing.T) {
 	p := newTestParser()
 	code := []byte(`import os

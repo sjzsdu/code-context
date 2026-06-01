@@ -296,6 +296,8 @@ func extractCalls(file string, content string, language api.Language, symbols []
 	importAliases := map[string]bool{}
 	if language == api.Go {
 		importAliases = goImportAliases(content)
+	} else if language == api.TypeScript || language == api.JavaScript {
+		importAliases = jsImportBindings(content)
 	}
 	sorted := append([]api.Symbol(nil), symbols...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Line < sorted[j].Line })
@@ -313,6 +315,9 @@ func extractCalls(file string, content string, language api.Language, symbols []
 		if language == api.Go && isGoImportedQualifiedCall(name, importAliases) {
 			continue
 		}
+		if (language == api.TypeScript || language == api.JavaScript) && isJSImportedCall(name, importAliases) {
+			continue
+		}
 		line := offsetToLine(lineStarts, match[2])
 		from := enclosingSymbol(sorted, line)
 		if from == "" || from == name || strings.HasSuffix(name, "."+from) || strings.HasSuffix(name, "::"+from) {
@@ -326,6 +331,110 @@ func extractCalls(file string, content string, language api.Language, symbols []
 		calls = append(calls, api.CallEdge{FromFile: file, FromSymbol: from, ToName: name, Line: line, Confidence: "HEURISTIC"})
 	}
 	return calls
+}
+
+func isJSImportedCall(name string, imported map[string]bool) bool {
+	if len(imported) == 0 {
+		return false
+	}
+	base := name
+	if idx := strings.Index(base, "."); idx > 0 {
+		base = base[:idx]
+	}
+	return imported[base]
+}
+
+func jsImportBindings(content string) map[string]bool {
+	bindings := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			bindings[name] = true
+		}
+	}
+	for _, m := range regexp.MustCompile(`(?m)^\s*import\s+(.+?)\s+from\s+["'][^"']+["']`).FindAllStringSubmatch(content, -1) {
+		parseJSImportClause(m[1], add)
+	}
+	for _, m := range regexp.MustCompile(`(?m)^\s*const\s+(.+?)\s*=\s*require\s*\(`).FindAllStringSubmatch(content, -1) {
+		parseJSRequireClause(m[1], add)
+	}
+	return bindings
+}
+
+func parseJSImportClause(clause string, add func(string)) {
+	clause = strings.TrimSpace(clause)
+	if clause == "" || strings.HasPrefix(clause, "{") {
+		parseJSNamedImports(clause, add)
+		return
+	}
+	if strings.HasPrefix(clause, "*") {
+		if m := regexp.MustCompile(`^\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)`).FindStringSubmatch(clause); len(m) > 1 {
+			add(m[1])
+		}
+		return
+	}
+	parts := splitTopLevelComma(clause)
+	if len(parts) > 0 {
+		add(parts[0])
+	}
+	for _, part := range parts[1:] {
+		parseJSNamedImports(part, add)
+	}
+}
+
+func parseJSNamedImports(clause string, add func(string)) {
+	start := strings.Index(clause, "{")
+	end := strings.LastIndex(clause, "}")
+	if start < 0 || end <= start {
+		return
+	}
+	for _, item := range strings.Split(clause[start+1:end], ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.Fields(item)
+		if len(parts) >= 3 && parts[len(parts)-2] == "as" {
+			add(parts[len(parts)-1])
+		} else if strings.Contains(item, ":") {
+			aliasParts := strings.Split(item, ":")
+			add(aliasParts[len(aliasParts)-1])
+		} else if len(parts) > 0 {
+			add(parts[0])
+		}
+	}
+}
+
+func parseJSRequireClause(clause string, add func(string)) {
+	clause = strings.TrimSpace(clause)
+	if strings.HasPrefix(clause, "{") {
+		parseJSNamedImports(clause, add)
+		return
+	}
+	add(strings.TrimPrefix(clause, "..."))
+}
+
+func splitTopLevelComma(s string) []string {
+	var out []string
+	depth := 0
+	start := 0
+	for i, r := range s {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, strings.TrimSpace(s[start:]))
+	return out
 }
 
 func isGoImportedQualifiedCall(name string, importAliases map[string]bool) bool {
