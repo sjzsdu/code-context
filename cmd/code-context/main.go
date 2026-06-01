@@ -840,9 +840,10 @@ func newDocsForCmd() *cobra.Command {
 }
 
 func newDocDriftCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+	cmd := &cobra.Command{
 		Use:   "doc-drift",
-		Short: "Find stale document references to missing files, symbols, or modules",
+		Short: "Find stale document references to missing files, symbols, modules, or routes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eng, err := engine.New(root, dbPath)
 			if err != nil {
@@ -852,6 +853,11 @@ func newDocDriftCmd() *cobra.Command {
 			report, err := eng.DocDrift(context.Background())
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
 			}
 			fmt.Println(report.Summary)
 			for _, item := range report.Broken {
@@ -864,10 +870,13 @@ func newDocDriftCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	return cmd
 }
 
 func newDocCoverageCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+	cmd := &cobra.Command{
 		Use:   "doc-coverage",
 		Short: "Find indexed routes and public symbols that are not referenced by documentation",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -879,6 +888,11 @@ func newDocCoverageCmd() *cobra.Command {
 			report, err := eng.DocCoverage(context.Background())
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
 			}
 			fmt.Println(report.Summary)
 			if len(report.MissingRoutes) > 0 {
@@ -900,6 +914,8 @@ func newDocCoverageCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	return cmd
 }
 
 func newMapCmd() *cobra.Command {
