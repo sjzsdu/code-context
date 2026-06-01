@@ -293,6 +293,10 @@ func extractCalls(file string, content string, language api.Language, symbols []
 	if len(symbols) == 0 {
 		return nil
 	}
+	importAliases := map[string]bool{}
+	if language == api.Go {
+		importAliases = goImportAliases(content)
+	}
 	sorted := append([]api.Symbol(nil), symbols...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Line < sorted[j].Line })
 	lineStarts := lineStartOffsets(content)
@@ -304,6 +308,9 @@ func extractCalls(file string, content string, language api.Language, symbols []
 		}
 		name := content[match[2]:match[3]]
 		if shouldSkipCall(name, language) || isCallMatchInNonCode(content, match[2], language) {
+			continue
+		}
+		if language == api.Go && isGoImportedQualifiedCall(name, importAliases) {
 			continue
 		}
 		line := offsetToLine(lineStarts, match[2])
@@ -319,6 +326,48 @@ func extractCalls(file string, content string, language api.Language, symbols []
 		calls = append(calls, api.CallEdge{FromFile: file, FromSymbol: from, ToName: name, Line: line, Confidence: "HEURISTIC"})
 	}
 	return calls
+}
+
+func isGoImportedQualifiedCall(name string, importAliases map[string]bool) bool {
+	if len(importAliases) == 0 {
+		return false
+	}
+	idx := strings.Index(name, ".")
+	if idx <= 0 {
+		return false
+	}
+	return importAliases[name[:idx]]
+}
+
+func goImportAliases(content string) map[string]bool {
+	aliases := map[string]bool{}
+	add := func(alias, path string) {
+		if alias == "_" || alias == "." {
+			return
+		}
+		if alias == "" {
+			path = strings.Trim(path, "\"`")
+			parts := strings.Split(path, "/")
+			alias = parts[len(parts)-1]
+		}
+		if alias != "" {
+			aliases[alias] = true
+		}
+	}
+
+	blockRe := regexp.MustCompile(`(?s)import\s*\((.*?)\)`)
+	lineRe := regexp.MustCompile("(?m)^\\s*(?:(\\w+|\\.|_)\\s+)?[\"`]([^\"`]+)[\"`]")
+	for _, block := range blockRe.FindAllStringSubmatch(content, -1) {
+		for _, m := range lineRe.FindAllStringSubmatch(block[1], -1) {
+			add(m[1], m[2])
+		}
+	}
+
+	singleRe := regexp.MustCompile("(?m)^\\s*import\\s+(?:(\\w+|\\.|_)\\s+)?[\"`]([^\"`]+)[\"`]")
+	for _, m := range singleRe.FindAllStringSubmatch(content, -1) {
+		add(m[1], m[2])
+	}
+	return aliases
 }
 
 func lineStartOffsets(content string) []int {

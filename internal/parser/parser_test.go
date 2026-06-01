@@ -79,6 +79,45 @@ func main() {
 	expectImport(t, result.Imports, "fmt", "main.go")
 }
 
+func TestParseGoCallsSkipImportedQualifiedSelectors(t *testing.T) {
+	p := newTestParser()
+	code := []byte(`package main
+
+import (
+	"fmt"
+	alias "example.com/external/pkg"
+)
+
+type Worker struct{}
+
+func (w *Worker) Do() {}
+
+func Local() {}
+
+func main() {
+	fmt.Println("hello")
+	alias.Run()
+	Local()
+	w := &Worker{}
+	w.Do()
+}
+`)
+
+	result, err := p.Parse(context.Background(), "main.go", code, api.Go)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	if hasCall(result.Calls, "fmt.Println") || hasCall(result.Calls, "alias.Run") {
+		t.Fatalf("expected imported qualified calls to be skipped, got %+v", result.Calls)
+	}
+	if !hasCall(result.Calls, "Local") {
+		t.Fatalf("expected local call to remain, got %+v", result.Calls)
+	}
+	if !hasCall(result.Calls, "w.Do") {
+		t.Fatalf("expected local receiver-style call to remain, got %+v", result.Calls)
+	}
+}
+
 func TestParse_TypeScript(t *testing.T) {
 	p := newTestParser()
 	code := []byte(`import { useState } from 'react';
@@ -301,6 +340,15 @@ func countSymbol(symbols []api.Symbol, name string) int {
 		}
 	}
 	return n
+}
+
+func hasCall(calls []api.CallEdge, toName string) bool {
+	for _, call := range calls {
+		if call.ToName == toName {
+			return true
+		}
+	}
+	return false
 }
 
 func formatSymbols(symbols []api.Symbol) []string {

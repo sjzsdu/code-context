@@ -208,7 +208,7 @@ code-context callers NewEngine
 code-context callees ReviewContext
 ```
 
-Shows heuristic call graph edges extracted during indexing. Edges include source/target file and line metadata plus confidence labels. The extractor ignores matches inside comments and string literals to reduce false-positive edges, and `callers <name>` matches exact targets plus separator-qualified calls such as `pkg.Name` or `mod::Name` without matching unrelated suffixes like `MyName`.
+Shows heuristic call graph edges extracted during indexing. Edges include source/target file and line metadata plus confidence labels. The extractor ignores matches inside comments and string literals to reduce false-positive edges. For Go, imported package selector calls such as `fmt.Println` or aliased external calls are filtered out so local call graphs are less polluted by standard-library or third-party symbols. `callers <name>` matches exact targets plus separator-qualified calls such as `pkg.Name` or `mod::Name` without matching unrelated suffixes like `MyName`.
 
 ### `routes [query]` — List framework routes
 
