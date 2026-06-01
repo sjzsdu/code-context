@@ -59,6 +59,15 @@ type TestImpact struct {
 	Summary          string          `json:"summary"`
 }
 
+type GitImpact struct {
+	State          GitState        `json:"state"`
+	ChangedFiles   []string        `json:"changed_files"`
+	ChangedSymbols []ChangedSymbol `json:"changed_symbols"`
+	FileImpacts    []DiffImpact    `json:"file_impacts"`
+	SymbolImpacts  []SymbolImpact  `json:"symbol_impacts"`
+	Summary        string          `json:"summary"`
+}
+
 type ReviewContext struct {
 	State                GitState           `json:"state"`
 	ChangedFiles         []string           `json:"changed_files"`
@@ -194,6 +203,44 @@ func (e *Engine) DiffImpactGit(ctx context.Context, state GitState, depth int) (
 	}
 
 	return impacts, nil
+}
+
+func (e *Engine) ImpactGit(ctx context.Context, state GitState, depth int) (*GitImpact, error) {
+	files, err := e.GitChangedFiles(ctx, state)
+	if err != nil {
+		return nil, err
+	}
+	if depth <= 0 {
+		depth = 3
+	}
+
+	var fileImpacts []DiffImpact
+	for _, path := range files {
+		impact, err := e.DiffImpact(ctx, path, depth)
+		if err != nil {
+			continue
+		}
+		fileImpacts = append(fileImpacts, *impact)
+	}
+
+	diffs, _ := e.GitDiff(ctx, state, 0)
+	changedSymbols := e.changedSymbolsForDiffs(ctx, diffs)
+	seenSymbols := map[string]bool{}
+	var symbolImpacts []SymbolImpact
+	for _, sym := range changedSymbols {
+		key := sym.FilePath + ":" + sym.Name + fmt.Sprint(sym.Line)
+		if seenSymbols[key] {
+			continue
+		}
+		seenSymbols[key] = true
+		impact, err := e.SymbolImpact(ctx, sym.Name)
+		if err != nil {
+			continue
+		}
+		symbolImpacts = append(symbolImpacts, *impact)
+	}
+
+	return &GitImpact{State: state, ChangedFiles: files, ChangedSymbols: changedSymbols, FileImpacts: fileImpacts, SymbolImpacts: symbolImpacts, Summary: fmt.Sprintf("%d changed files, %d changed symbols, %d file impacts, %d symbol impacts", len(files), len(changedSymbols), len(fileImpacts), len(symbolImpacts))}, nil
 }
 
 func (e *Engine) TestImpact(ctx context.Context, state GitState) (*TestImpact, error) {

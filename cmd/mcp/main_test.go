@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -122,6 +123,32 @@ func TestRunImpactToolRequiresTarget(t *testing.T) {
 	}
 }
 
+func TestRunImpactGitTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+	root := eng.Root()
+	runGitCmd(t, root, "init")
+	runGitCmd(t, root, "config", "user.email", "test@example.com")
+	runGitCmd(t, root, "config", "user.name", "Test User")
+	runGitCmd(t, root, "add", "a.go", "b.go")
+	runGitCmd(t, root, "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\n\nimport \"fmt\"\n\nfunc Foo() {\n\tfmt.Println(\"foo2\")\n}\n"), 0o644); err != nil {
+		t.Fatalf("write change: %v", err)
+	}
+
+	impact, err := runImpactGitTool(context.Background(), eng, GitImpactArgs{State: "all", Depth: 2})
+	if err != nil {
+		t.Fatalf("run impact git tool: %v", err)
+	}
+	if len(impact.ChangedFiles) == 0 || impact.Summary == "" {
+		t.Fatalf("unexpected git impact: %+v", impact)
+	}
+	out := formatGitImpactMarkdown(impact)
+	if !strings.Contains(out, "# Git Impact") || !strings.Contains(out, "Changed Files") {
+		t.Fatalf("unexpected formatted git impact:\n%s", out)
+	}
+}
+
 func TestRunGraphPathToolRequiresArgs(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()
@@ -129,6 +156,15 @@ func TestRunGraphPathToolRequiresArgs(t *testing.T) {
 	_, err := runGraphPathTool(context.Background(), eng, GraphPathArgs{From: "Foo"})
 	if err == nil || !strings.Contains(err.Error(), "missing required parameters") {
 		t.Fatalf("expected missing parameter error, got: %v", err)
+	}
+}
+
+func runGitCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
 }
 

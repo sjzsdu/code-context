@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/snapshot-git", s.handleSnapshotGit)
 	mux.HandleFunc("/api/trace", s.handleTrace)
 	mux.HandleFunc("/api/impact", s.handleImpact)
+	mux.HandleFunc("/api/impact-git", s.handleImpactGit)
 	mux.HandleFunc("/api/diff-impact", s.handleDiffImpact)
 	mux.HandleFunc("/api/diff-impact-git", s.handleDiffImpactGit)
 	mux.HandleFunc("/api/review-context", s.handleReviewContext)
@@ -580,6 +581,21 @@ func (s *Server) handleImpact(w http.ResponseWriter, r *http.Request) {
 
 	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
 	result, err := s.eng.Impact(r.Context(), target, depth)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleImpactGit(w http.ResponseWriter, r *http.Request) {
+	state, err := engine.ParseGitState(r.URL.Query().Get("state"))
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+	depth, _ := strconv.Atoi(r.URL.Query().Get("depth"))
+	result, err := s.eng.ImpactGit(r.Context(), state, depth)
 	if err != nil {
 		writeError(w, err, 500)
 		return

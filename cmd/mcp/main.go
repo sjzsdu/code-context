@@ -72,6 +72,11 @@ type GitStateToolArgs struct {
 	State string `json:"state,omitempty"`
 }
 
+type GitImpactArgs struct {
+	State string `json:"state,omitempty"`
+	Depth int    `json:"depth,omitempty"`
+}
+
 type FreshnessArgs struct {
 	Limit int `json:"limit,omitempty"`
 }
@@ -315,6 +320,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, formatImpactMarkdown(impact)+recommendedCalls("code_context_graph_neighbors", "code_context_docs_for", "code_context_test_impact"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_impact_git", Description: "Unified impact analysis for files and symbols changed in local git state"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args GitImpactArgs) (*mcp.CallToolResult, any, error) {
+			impact, err := runImpactGitTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, formatGitImpactMarkdown(impact)+recommendedCalls("code_context_impact", "code_context_test_impact", "code_context_review_context"))), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_docs_for", Description: "Show documents that reference a file, symbol, module, or text query"},
@@ -822,6 +836,21 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 	})
 
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "impact_git",
+		Description: "Unified impact analysis for files and symbols changed in local git state",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GitImpactArgs) (*mcp.CallToolResult, any, error) {
+		impact, err := runImpactGitTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("impact_git failed: %w", err)
+		}
+		out, err := marshalIndentedJSON(impact)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: out}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "diff_impact",
 		Description: "Analyze change impact for a file",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args DiffImpactArgs) (*mcp.CallToolResult, any, error) {
@@ -1002,6 +1031,14 @@ func runImpactTool(ctx context.Context, eng *engine.Engine, args ImpactArgs) (*e
 		return nil, fmt.Errorf("missing required parameter: target")
 	}
 	return eng.Impact(ctx, args.Target, args.Depth)
+}
+
+func runImpactGitTool(ctx context.Context, eng *engine.Engine, args GitImpactArgs) (*engine.GitImpact, error) {
+	state, err := engine.ParseGitState(args.State)
+	if err != nil {
+		return nil, err
+	}
+	return eng.ImpactGit(ctx, state, args.Depth)
 }
 
 func marshalIndentedJSON(v any) (string, error) {
@@ -1221,6 +1258,27 @@ func formatImpactMarkdown(impact *engine.ImpactResult) string {
 	}
 	if impact.SymbolImpact != nil {
 		out += "\n" + formatSymbolImpactMarkdown(impact.SymbolImpact)
+	}
+	return out
+}
+
+func formatGitImpactMarkdown(impact *engine.GitImpact) string {
+	out := fmt.Sprintf("# Git Impact (%s)\n\n%s\n", impact.State, impact.Summary)
+	out += fmt.Sprintf("\n## Changed Files (%d)\n", len(impact.ChangedFiles))
+	for _, f := range impact.ChangedFiles {
+		out += "- `" + f + "`\n"
+	}
+	out += fmt.Sprintf("\n## Changed Symbols (%d)\n", len(impact.ChangedSymbols))
+	for _, s := range impact.ChangedSymbols {
+		out += fmt.Sprintf("- `%s:%d` %s (%s)\n", s.FilePath, s.Line, s.Name, s.Kind)
+	}
+	out += fmt.Sprintf("\n## File Impacts (%d)\n", len(impact.FileImpacts))
+	for _, f := range impact.FileImpacts {
+		out += fmt.Sprintf("- `%s`: %d deps, %d dependents, %d tests\n", f.File, len(f.AllDeps), len(f.Dependents), len(f.Recommends))
+	}
+	out += fmt.Sprintf("\n## Symbol Impacts (%d)\n", len(impact.SymbolImpacts))
+	for _, s := range impact.SymbolImpacts {
+		out += fmt.Sprintf("- `%s`: risk %s, %d callers, %d routes\n", s.Symbol.Name, s.Risk.Level, len(s.Callers), len(s.Routes))
 	}
 	return out
 }

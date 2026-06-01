@@ -1188,6 +1188,45 @@ func TestDiffImpactGitEndpoint(t *testing.T) {
 	}
 }
 
+func TestImpactGitEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/impact-git?state=all&depth=2")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["state"] != "all" || payload["summary"] == "" {
+		t.Fatalf("unexpected impact-git payload: %v", payload)
+	}
+	if _, ok := payload["file_impacts"].([]interface{}); !ok {
+		t.Fatalf("expected file_impacts array, got: %T", payload["file_impacts"])
+	}
+}
+
+func TestImpactGitInvalidState(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/impact-git?state=invalid")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 func TestNewAnalysisEndpoints(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

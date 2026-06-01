@@ -79,6 +79,7 @@ func main() {
 		newSnapshotGitCmd(),
 		newReviewContextCmd(),
 		newImpactCmd(),
+		newImpactGitCmd(),
 		newTestImpactCmd(),
 		newSymbolImpactCmd(),
 		newTraceCmd(),
@@ -1585,6 +1586,62 @@ func newImpactCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
 	cmd.Flags().IntVar(&depth, "depth", 3, "dependency depth for file impact")
 	return cmd
+}
+
+func newImpactGitCmd() *cobra.Command {
+	var jsonOut bool
+	var depth int
+	var state string
+	cmd := &cobra.Command{
+		Use:   "impact-git",
+		Short: "Analyze impact for files and symbols changed in local git state",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := engine.New(root, dbPath)
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			gitState, err := engine.ParseGitState(state)
+			if err != nil {
+				return err
+			}
+			impact, err := eng.ImpactGit(context.Background(), gitState, depth)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(impact)
+			}
+			printGitImpact(impact)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&state, "state", "unstaged", "git change state: unstaged, staged, or all")
+	cmd.Flags().IntVar(&depth, "depth", 3, "dependency depth for file impact")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	return cmd
+}
+
+func printGitImpact(impact *engine.GitImpact) {
+	fmt.Printf("Git impact (%s)\n%s\n", impact.State, impact.Summary)
+	fmt.Printf("\nChanged files (%d):\n", len(impact.ChangedFiles))
+	for _, f := range impact.ChangedFiles {
+		fmt.Printf("  %s\n", f)
+	}
+	fmt.Printf("\nChanged symbols (%d):\n", len(impact.ChangedSymbols))
+	for _, s := range impact.ChangedSymbols {
+		fmt.Printf("  %s:%d %s (%s)\n", s.FilePath, s.Line, s.Name, s.Kind)
+	}
+	fmt.Printf("\nFile impacts (%d):\n", len(impact.FileImpacts))
+	for _, f := range impact.FileImpacts {
+		fmt.Printf("  %s: %d deps, %d dependents, %d tests\n", f.File, len(f.AllDeps), len(f.Dependents), len(f.Recommends))
+	}
+	fmt.Printf("\nSymbol impacts (%d):\n", len(impact.SymbolImpacts))
+	for _, s := range impact.SymbolImpacts {
+		fmt.Printf("  %s: %s, %d callers, %d routes\n", s.Symbol.Name, s.Risk.Level, len(s.Callers), len(s.Routes))
+	}
 }
 
 func printImpact(impact *engine.ImpactResult) {

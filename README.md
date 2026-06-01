@@ -67,6 +67,7 @@ code-context snapshot "authentication"
 # Analyze change impact
 code-context impact Engine --json
 code-context impact internal/store/sqlite.go --depth 2
+code-context impact-git --state all --json
 code-context diff-impact internal/store/sqlite.go
 code-context symbol-impact Engine
 
@@ -252,9 +253,12 @@ Traces the path between two symbols through imports.
 code-context impact Engine
 code-context impact internal/store/sqlite.go --depth 2
 code-context impact Engine --json
+code-context impact-git --state all --json
 ```
 
 Automatically detects whether the target is an indexed file or a symbol. File impact reports direct/all dependencies, dependent files, and recommended tests. Symbol impact combines definition lookup, callers, callees, file-level dependents, related routes, related docs, recommended tests, and a risk score. Use `--json` for agents and CI automation.
+
+`impact-git` applies the same idea to local git changes, summarizing changed files, changed symbols, file impacts, and symbol impacts for `unstaged`, `staged`, or `all` state.
 
 ### `diff-impact <file>` — Change impact analysis
 
@@ -401,6 +405,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/snapshot` | `q`, `limit?` | Generate LLM context package with recommendations |
 | GET | `/api/trace` | `from`, `to` | Trace call chain between symbols |
 | GET | `/api/impact` | `target`, `depth?` | Unified file or symbol impact analysis with JSON output |
+| GET | `/api/impact-git` | `state?`, `depth?` | Unified impact analysis for local git changes |
 | GET | `/api/diff-impact` | `file`, `depth?` | Analyze change impact and related tests |
 | GET | `/api/git/files` | `state?` | List git changed files for `unstaged`, `staged`, or `all` |
 | GET | `/api/git/diff` | `state?`, `context?` | Return git diff hunks for changed files |
@@ -494,11 +499,13 @@ Add to your AI client config:
 | `context` | Show symbol profile with graph guidance | `symbol` |
 | `snapshot` | Generate LLM context for a query | `query`, `limit?` |
 | `impact` | Unified file or symbol impact analysis as JSON | `target`, `depth?` |
+| `impact_git` | Unified impact analysis for local git changes as JSON | `state?`, `depth?` |
 | `diff_impact` | Analyze change impact for a file | `file`, `depth?` |
 | `review_context` | Build git review context with risk, routes, docs, and tests | `state?` |
 | `test_impact` | Recommend tests for git changed files and symbols | `state?` |
 | `symbol_impact` | Return symbol-level impact, risk, docs, routes, and tests | `symbol` |
 | `code_context_impact` | Agent-friendly unified file or symbol impact report with recommendations | `target`, `depth?` |
+| `code_context_impact_git` | Agent-friendly unified impact report for local git changes | `state?`, `depth?` |
 | `trace` | Trace call chain between symbols | `from`, `to` |
 
 ### Usage Example
@@ -520,6 +527,7 @@ code-context:graph '{"focus":"internal/server/server.go"}'
 
 # Unified impact analysis for an edit target
 code-context:impact '{"target":"Engine","depth":2}'
+code-context:impact_git '{"state":"all","depth":2}'
 
 # Rich graph exports now use graph-export.v2 with module/package nodes and
 # edges such as belongs_to, declares_package, represents, and resolves_to.

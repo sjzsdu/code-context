@@ -88,6 +88,14 @@ func TestGitChangedFilesAndGitContext(t *testing.T) {
 		t.Fatalf("diff impact files: got %+v, want [b.go]", impacts)
 	}
 
+	gitImpact, err := eng.ImpactGit(ctx, GitStateAll, 2)
+	if err != nil {
+		t.Fatalf("ImpactGit failed: %v", err)
+	}
+	if len(gitImpact.ChangedFiles) != 2 || len(gitImpact.FileImpacts) == 0 || gitImpact.Summary == "" {
+		t.Fatalf("unexpected git impact: %+v", gitImpact)
+	}
+
 	diffs, err := eng.GitDiff(ctx, GitStateUnstaged, 1)
 	if err != nil {
 		t.Fatalf("GitDiff(unstaged) failed: %v", err)
