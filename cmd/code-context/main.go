@@ -88,6 +88,7 @@ func main() {
 
 	attachServeConfig(cmd)
 	attachWatchConfig(cmd)
+	attachDocsConfig(cmd)
 
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
@@ -206,6 +207,61 @@ func attachWatchConfig(rootCmd *cobra.Command) {
 			}
 		}
 		return nil
+	}
+}
+
+func attachDocsConfig(rootCmd *cobra.Command) {
+	if docDriftCmd, _, err := rootCmd.Find([]string{"doc-drift"}); err == nil && docDriftCmd != nil {
+		prev := docDriftCmd.PreRunE
+		docDriftCmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+			if prev != nil {
+				if err := prev(cmd, args); err != nil {
+					return err
+				}
+			}
+			loaded, err := config.Load(root)
+			if err != nil {
+				if err == config.ErrNotFound {
+					return nil
+				}
+				return err
+			}
+			if !cmd.Flags().Changed("fail-on-broken") && loaded.Config.Docs.FailOnBroken {
+				if flag := cmd.Flags().Lookup("fail-on-broken"); flag != nil {
+					_ = flag.Value.Set("true")
+				}
+			}
+			return nil
+		}
+	}
+
+	if docCoverageCmd, _, err := rootCmd.Find([]string{"doc-coverage"}); err == nil && docCoverageCmd != nil {
+		prev := docCoverageCmd.PreRunE
+		docCoverageCmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+			if prev != nil {
+				if err := prev(cmd, args); err != nil {
+					return err
+				}
+			}
+			loaded, err := config.Load(root)
+			if err != nil {
+				if err == config.ErrNotFound {
+					return nil
+				}
+				return err
+			}
+			if !cmd.Flags().Changed("min-route-coverage") && loaded.Config.Docs.MinRouteCoverage != nil {
+				if flag := cmd.Flags().Lookup("min-route-coverage"); flag != nil {
+					_ = flag.Value.Set(fmt.Sprintf("%g", *loaded.Config.Docs.MinRouteCoverage))
+				}
+			}
+			if !cmd.Flags().Changed("min-symbol-coverage") && loaded.Config.Docs.MinSymbolCoverage != nil {
+				if flag := cmd.Flags().Lookup("min-symbol-coverage"); flag != nil {
+					_ = flag.Value.Set(fmt.Sprintf("%g", *loaded.Config.Docs.MinSymbolCoverage))
+				}
+			}
+			return nil
+		}
 	}
 }
 

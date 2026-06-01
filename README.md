@@ -100,6 +100,9 @@ Supported options:
 | `watch.enabled` | bool | Enable watch mode / background refresh by default |
 | `watch.interval` | duration | Polling interval for incremental refresh |
 | `watch.debounce` | duration | Minimum delay between follow-up refreshes |
+| `docs.fail_on_broken` | bool | Default `doc-drift --fail-on-broken` |
+| `docs.min_route_coverage` | number | Default `doc-coverage --min-route-coverage` percentage |
+| `docs.min_symbol_coverage` | number | Default `doc-coverage --min-symbol-coverage` percentage |
 
 Example (`.code-context.yaml`):
 
@@ -112,6 +115,10 @@ watch:
   enabled: false
   interval: 2s
   debounce: 250ms
+docs:
+  fail_on_broken: true
+  min_route_coverage: 80
+  min_symbol_coverage: 60
 ```
 
 ## CLI Commands

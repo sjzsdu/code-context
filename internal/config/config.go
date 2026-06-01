@@ -25,6 +25,7 @@ type Config struct {
 	DB     string       `json:"db" yaml:"db"`
 	Server ServerConfig `json:"server" yaml:"server"`
 	Watch  WatchConfig  `json:"watch" yaml:"watch"`
+	Docs   DocsConfig   `json:"docs" yaml:"docs"`
 }
 
 type ServerConfig struct {
@@ -35,6 +36,12 @@ type WatchConfig struct {
 	Enabled  bool          `json:"enabled" yaml:"enabled"`
 	Interval time.Duration `json:"interval" yaml:"interval"`
 	Debounce time.Duration `json:"debounce" yaml:"debounce"`
+}
+
+type DocsConfig struct {
+	FailOnBroken      bool     `json:"fail_on_broken" yaml:"fail_on_broken"`
+	MinRouteCoverage  *float64 `json:"min_route_coverage" yaml:"min_route_coverage"`
+	MinSymbolCoverage *float64 `json:"min_symbol_coverage" yaml:"min_symbol_coverage"`
 }
 
 type Loaded struct {

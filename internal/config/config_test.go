@@ -16,7 +16,7 @@ func TestLoadYAMLConfigAndResolveRelativePaths(t *testing.T) {
 	}
 
 	configPath := filepath.Join(projectDir, ".code-context.yaml")
-	content := []byte("root: ./src\ndb: ./.cache/index.db\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 2s\n  debounce: 250ms\n")
+	content := []byte("root: ./src\ndb: ./.cache/index.db\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 2s\n  debounce: 250ms\ndocs:\n  fail_on_broken: true\n  min_route_coverage: 80\n  min_symbol_coverage: 60\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -51,6 +51,15 @@ func TestLoadYAMLConfigAndResolveRelativePaths(t *testing.T) {
 	}
 	if loaded.Config.Watch.Debounce != 250*time.Millisecond {
 		t.Fatalf("watch.debounce = %s", loaded.Config.Watch.Debounce)
+	}
+	if !loaded.Config.Docs.FailOnBroken {
+		t.Fatalf("docs.fail_on_broken = false")
+	}
+	if loaded.Config.Docs.MinRouteCoverage == nil || *loaded.Config.Docs.MinRouteCoverage != 80 {
+		t.Fatalf("docs.min_route_coverage = %v", loaded.Config.Docs.MinRouteCoverage)
+	}
+	if loaded.Config.Docs.MinSymbolCoverage == nil || *loaded.Config.Docs.MinSymbolCoverage != 60 {
+		t.Fatalf("docs.min_symbol_coverage = %v", loaded.Config.Docs.MinSymbolCoverage)
 	}
 }
 
