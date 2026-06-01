@@ -55,6 +55,11 @@ type SnapshotArgs struct {
 	Limit int    `json:"limit,omitempty"`
 }
 
+type ImpactArgs struct {
+	Target string `json:"target"`
+	Depth  int    `json:"depth,omitempty"`
+}
+
 type RoutesArgs struct {
 	Query string `json:"query,omitempty"`
 }
@@ -301,6 +306,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, formatRouteContextMarkdown(rc)+recommendedCalls("code_context_symbol_impact", "code_context_docs_for", "code_context_test_impact"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_impact", Description: "Unified file or symbol impact analysis using imports, calls, routes, docs, tests, and risk"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args ImpactArgs) (*mcp.CallToolResult, any, error) {
+			impact, err := runImpactTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, formatImpactMarkdown(impact)+recommendedCalls("code_context_graph_neighbors", "code_context_docs_for", "code_context_test_impact"))), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_docs_for", Description: "Show documents that reference a file, symbol, module, or text query"},
@@ -793,6 +807,21 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		Depth int    `json:"depth,omitempty"`
 	}
 	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "impact",
+		Description: "Unified impact analysis for a file or symbol",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args ImpactArgs) (*mcp.CallToolResult, any, error) {
+		impact, err := runImpactTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("impact failed: %w", err)
+		}
+		out, err := marshalIndentedJSON(impact)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: out}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "diff_impact",
 		Description: "Analyze change impact for a file",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args DiffImpactArgs) (*mcp.CallToolResult, any, error) {
@@ -966,6 +995,13 @@ func runGraphSubgraphTool(ctx context.Context, eng *engine.Engine, args GraphSub
 		return "", err
 	}
 	return marshalIndentedJSON(result)
+}
+
+func runImpactTool(ctx context.Context, eng *engine.Engine, args ImpactArgs) (*engine.ImpactResult, error) {
+	if args.Target == "" {
+		return nil, fmt.Errorf("missing required parameter: target")
+	}
+	return eng.Impact(ctx, args.Target, args.Depth)
 }
 
 func marshalIndentedJSON(v any) (string, error) {
@@ -1157,6 +1193,34 @@ func formatTestCommandsMarkdown(commands []engine.TestCommand) string {
 		} else {
 			out += fmt.Sprintf("- `%s`\n", cmd.Command)
 		}
+	}
+	return out
+}
+
+func formatImpactMarkdown(impact *engine.ImpactResult) string {
+	out := fmt.Sprintf("# Impact: `%s` (%s)\n\n%s\n", impact.Target, impact.Kind, impact.Summary)
+	if impact.FileImpact != nil {
+		d := impact.FileImpact
+		out += fmt.Sprintf("\n## File Impact: `%s`\n", d.File)
+		out += fmt.Sprintf("\n### Direct Imports (%d)\n", len(d.DirectDeps))
+		for _, dep := range d.DirectDeps {
+			out += "- `" + dep + "`\n"
+		}
+		out += fmt.Sprintf("\n### All Dependencies (%d)\n", len(d.AllDeps))
+		for _, dep := range d.AllDeps {
+			out += "- `" + dep + "`\n"
+		}
+		out += fmt.Sprintf("\n### Dependents (%d)\n", len(d.Dependents))
+		for _, dep := range d.Dependents {
+			out += "- `" + dep + "`\n"
+		}
+		out += fmt.Sprintf("\n### Recommended Tests (%d)\n", len(d.Recommends))
+		for _, test := range d.Recommends {
+			out += "- `" + test + "`\n"
+		}
+	}
+	if impact.SymbolImpact != nil {
+		out += "\n" + formatSymbolImpactMarkdown(impact.SymbolImpact)
 	}
 	return out
 }

@@ -493,10 +493,12 @@ Add to your AI client config:
 | `explain` | Show file summary with graph guidance | `file` |
 | `context` | Show symbol profile with graph guidance | `symbol` |
 | `snapshot` | Generate LLM context for a query | `query`, `limit?` |
+| `impact` | Unified file or symbol impact analysis as JSON | `target`, `depth?` |
 | `diff_impact` | Analyze change impact for a file | `file`, `depth?` |
 | `review_context` | Build git review context with risk, routes, docs, and tests | `state?` |
 | `test_impact` | Recommend tests for git changed files and symbols | `state?` |
 | `symbol_impact` | Return symbol-level impact, risk, docs, routes, and tests | `symbol` |
+| `code_context_impact` | Agent-friendly unified file or symbol impact report with recommendations | `target`, `depth?` |
 | `trace` | Trace call chain between symbols | `from`, `to` |
 
 ### Usage Example
@@ -515,6 +517,9 @@ code-context:search "Server"
 code-context:graph_neighbors '{"target":"Engine","limit":5}'
 code-context:graph_path '{"from":"Engine","to":"Server"}'
 code-context:graph '{"focus":"internal/server/server.go"}'
+
+# Unified impact analysis for an edit target
+code-context:impact '{"target":"Engine","depth":2}'
 
 # Rich graph exports now use graph-export.v2 with module/package nodes and
 # edges such as belongs_to, declares_package, represents, and resolves_to.

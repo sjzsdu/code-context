@@ -86,6 +86,42 @@ func TestRunGraphSubgraphTool(t *testing.T) {
 	}
 }
 
+func TestRunImpactToolForFileAndSymbol(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	fileImpact, err := runImpactTool(context.Background(), eng, ImpactArgs{Target: "a.go", Depth: 2})
+	if err != nil {
+		t.Fatalf("run file impact tool: %v", err)
+	}
+	if fileImpact.Kind != "file" || fileImpact.FileImpact == nil {
+		t.Fatalf("expected file impact, got: %+v", fileImpact)
+	}
+
+	symbolImpact, err := runImpactTool(context.Background(), eng, ImpactArgs{Target: "Foo"})
+	if err != nil {
+		t.Fatalf("run symbol impact tool: %v", err)
+	}
+	if symbolImpact.Kind != "symbol" || symbolImpact.SymbolImpact == nil {
+		t.Fatalf("expected symbol impact, got: %+v", symbolImpact)
+	}
+
+	out := formatImpactMarkdown(symbolImpact)
+	if !strings.Contains(out, "# Impact: `Foo` (symbol)") || !strings.Contains(out, "# Symbol Impact: `Foo`") {
+		t.Fatalf("expected formatted symbol impact, got:\n%s", out)
+	}
+}
+
+func TestRunImpactToolRequiresTarget(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runImpactTool(context.Background(), eng, ImpactArgs{})
+	if err == nil || !strings.Contains(err.Error(), "missing required parameter: target") {
+		t.Fatalf("expected missing target error, got: %v", err)
+	}
+}
+
 func TestRunGraphPathToolRequiresArgs(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()
