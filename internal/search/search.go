@@ -399,7 +399,7 @@ func (sr *Searcher) SearchText(ctx context.Context, query string, filePattern st
 		hits, err := advanced.SearchText(ctx, store.TextSearchQuery{
 			Query: query,
 			Filter: store.SearchFilter{
-				TargetKinds: []store.TargetKind{store.TargetFile, store.TargetDocument},
+				TargetKinds: []store.TargetKind{store.TargetFile, store.TargetSymbol, store.TargetDocument},
 				FilePattern: filePattern,
 			},
 			Limit: limit,
@@ -444,6 +444,7 @@ func textHitsToMatches(hits []store.SearchHit, limit int) []api.SearchMatch {
 		}
 		line := hit.Target.Line
 		content := hit.Evidence
+		kind := string(hit.Target.Kind)
 		if content == "" && len(hit.Highlights) > 0 {
 			if line == 0 {
 				line = hit.Highlights[0].Line
@@ -454,6 +455,7 @@ func textHitsToMatches(hits []store.SearchHit, limit int) []api.SearchMatch {
 			FilePath: path,
 			Line:     line,
 			Content:  strings.TrimSpace(content),
+			Kind:     kind,
 		})
 	}
 	return matches

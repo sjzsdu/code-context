@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"sort"
 	"strings"
 	"time"
@@ -83,6 +84,7 @@ func (s *helixStore) Init(ctx context.Context) error {
 		q.VarAs("document_key", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixDocumentLabel, "key")))
 		q.VarAs("document_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLabel, "project_id")))
 		q.VarAs("document_path", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLabel, "path")))
+		q.VarAs("document_text", helix.G().CreateTextIndexNodes(helixDocumentLabel, "search_text"))
 		q.VarAs("document_link_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "project_id")))
 		q.VarAs("document_link_doc", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "document_path")))
 		q.VarAs("document_link_target", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "target_key")))
@@ -316,6 +318,102 @@ func (s *helixStore) SearchSymbols(ctx context.Context, query string, kind *api.
 	return symbols, nil
 }
 
+func (s *helixStore) SearchText(ctx context.Context, query TextSearchQuery) ([]SearchHit, error) {
+	if strings.TrimSpace(query.Query) == "" {
+		return nil, nil
+	}
+	if !searchFilterAllowsProject(s.projectID, query.Filter) {
+		return nil, nil
+	}
+
+	req, includeSymbols, includeDocuments, limit := helixTextSearchRequest(s.projectID, query)
+	if !includeSymbols && !includeDocuments {
+		return nil, nil
+	}
+
+	var out struct {
+		Symbols   helixRows[helixTextSymbolRow]   `json:"symbols"`
+		Documents helixRows[helixTextDocumentRow] `json:"documents"`
+	}
+	if err := s.client.Exec(ctx, req, &out); err != nil {
+		return nil, err
+	}
+
+	hits := helixTextRowsToHits(s.projectID, out.Symbols.Properties, out.Documents.Properties, query.Filter)
+	if query.Offset > 0 {
+		if query.Offset >= len(hits) {
+			return nil, nil
+		}
+		hits = hits[query.Offset:]
+	}
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
+func helixTextSearchRequest(projectID string, query TextSearchQuery) (helix.Request, bool, bool, int) {
+	includeSymbols, includeDocuments := helixTextSearchTargets(query.Filter.TargetKinds)
+	limit := helixTextSearchLimit(query.Limit)
+
+	q := helix.ReadQuery("code_context_search_text")
+	queryParam := q.ParamString("query", strings.TrimSpace(query.Query))
+	limitParam := q.ParamI64("limit", int64(limit))
+	projectParam := q.ParamString("project_id", projectID)
+
+	returning := make([]string, 0, 2)
+	if includeSymbols {
+		q.VarAs("symbols", helix.G().
+			TextSearchNodesWith(helixSymbolLabel, "search_text", queryParam.Input(), limitParam.Bound(), nil).
+			Where(helix.PredEq("project_id", projectParam)).
+			Project(helixTextSymbolProjections()...))
+		returning = append(returning, "symbols")
+	}
+	if includeDocuments {
+		q.VarAs("documents", helix.G().
+			TextSearchNodesWith(helixDocumentLabel, "search_text", queryParam.Input(), limitParam.Bound(), nil).
+			Where(helix.PredEq("project_id", projectParam)).
+			Project(helixTextDocumentProjections()...))
+		returning = append(returning, "documents")
+	}
+
+	return q.Returning(returning...), includeSymbols, includeDocuments, limit
+}
+
+func helixTextSearchTargets(kinds []TargetKind) (includeSymbols bool, includeDocuments bool) {
+	if len(kinds) == 0 {
+		return true, true
+	}
+	for _, kind := range kinds {
+		switch kind {
+		case TargetFile, TargetSymbol, TargetText:
+			includeSymbols = true
+		case TargetDocument:
+			includeDocuments = true
+		}
+	}
+	return includeSymbols, includeDocuments
+}
+
+func helixTextSearchLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	return limit
+}
+
+func searchFilterAllowsProject(projectID string, filter SearchFilter) bool {
+	if len(filter.ProjectIDs) == 0 {
+		return true
+	}
+	for _, id := range filter.ProjectIDs {
+		if id == projectID {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *helixStore) FindDefinitions(ctx context.Context, name string) ([]api.Symbol, error) {
 	q := helix.ReadQuery("code_context_find_definitions")
 	nameParam := q.ParamString("name", name)
@@ -519,7 +617,7 @@ func (s *helixStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error
 		AppliedVersion:  HelixSchemaVersion,
 		VersionOK:       true,
 		Tables:          []string{helixFileLabel, helixSymbolLabel, helixImportLabel, helixCallLabel, helixRouteLabel, helixDocumentLabel, helixDocumentLinkLabel},
-		Indexes:         []string{"file.key", "file.project_id", "symbol.key", "symbol.project_id", "symbol.search_text", "document.key", "document.project_id", "document_link.target_key"},
+		Indexes:         []string{"file.key", "file.project_id", "symbol.key", "symbol.project_id", "symbol.search_text", "document.key", "document.project_id", "document.search_text", "document_link.target_key"},
 	}, nil
 }
 
@@ -556,6 +654,7 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 		contentHash := q.ParamString("content_hash", doc.ContentHash)
 		title := q.ParamString("title", doc.Title)
 		summary := q.ParamString("summary", doc.Summary)
+		searchText := q.ParamString("search_text", documentSearchText(doc))
 		size := q.ParamI64("size", int64(doc.Size))
 		indexedAt := q.ParamI64("indexed_at", now)
 		q.VarAs("existing", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("key", key)))
@@ -565,6 +664,7 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 			SetProperty("content_hash", contentHash).
 			SetProperty("title", title).
 			SetProperty("summary", summary).
+			SetProperty("search_text", searchText).
 			SetProperty("size", size).
 			SetProperty("indexed_at", indexedAt).
 			Project(helix.ProjectPropAs("$id", "id")))
@@ -576,6 +676,7 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 			helix.Prop("content_hash", contentHash),
 			helix.Prop("title", title),
 			helix.Prop("summary", summary),
+			helix.Prop("search_text", searchText),
 			helix.Prop("size", size),
 			helix.Prop("indexed_at", indexedAt),
 		}).Project(helix.ProjectPropAs("$id", "id")))
@@ -791,6 +892,26 @@ func (r helixFileRow) FileInfo() *api.FileInfo {
 	return &api.FileInfo{Path: r.Path, Language: api.Language(r.Language), ContentHash: r.ContentHash, Size: r.Size, IndexedAt: r.IndexedAt}
 }
 
+type helixTextSymbolRow struct {
+	Name       string  `json:"name"`
+	Kind       string  `json:"kind"`
+	FilePath   string  `json:"file"`
+	Line       int     `json:"line"`
+	EndLine    int     `json:"end_line"`
+	Signature  string  `json:"signature"`
+	Parent     string  `json:"parent"`
+	SearchText string  `json:"search_text"`
+	Score      float64 `json:"score"`
+}
+
+type helixTextDocumentRow struct {
+	Path       string  `json:"path"`
+	Title      string  `json:"title"`
+	Summary    string  `json:"summary"`
+	SearchText string  `json:"search_text"`
+	Score      float64 `json:"score"`
+}
+
 func fileTraversal() *helix.Traversal {
 	return helix.G().NWithLabel(helixFileLabel)
 }
@@ -820,6 +941,15 @@ func symbolProjections() []helix.Projection {
 		helix.ProjectPropAs("signature", "signature"),
 		helix.ProjectPropAs("parent", "parent"),
 	}
+}
+
+func helixTextSymbolProjections() []helix.Projection {
+	projections := append([]helix.Projection{}, symbolProjections()...)
+	projections = append(projections,
+		helix.ProjectPropAs("search_text", "search_text"),
+		helix.ProjectPropAs("$distance", "score"),
+	)
+	return projections
 }
 
 func importTraversal() *helix.Traversal {
@@ -878,6 +1008,16 @@ func documentProjections() []helix.Projection {
 		helix.ProjectPropAs("summary", "summary"),
 		helix.ProjectPropAs("size", "size"),
 		helix.ProjectPropAs("indexed_at", "indexed_at"),
+	}
+}
+
+func helixTextDocumentProjections() []helix.Projection {
+	return []helix.Projection{
+		helix.ProjectPropAs("path", "path"),
+		helix.ProjectPropAs("title", "title"),
+		helix.ProjectPropAs("summary", "summary"),
+		helix.ProjectPropAs("search_text", "search_text"),
+		helix.ProjectPropAs("$distance", "score"),
 	}
 }
 
@@ -988,6 +1128,116 @@ func documentLinkWriteBatch(document helix.NodeRef) *helix.WriteBatch {
 		VarAs("document_link", helix.G().N(document).AddE(helixDocumentLinkEdge, helix.NodeVar("link"), helix.Props{
 			helix.Prop("line", helix.ExprParam("line")),
 		}))
+}
+
+func helixTextRowsToHits(projectID string, symbols []helixTextSymbolRow, documents []helixTextDocumentRow, filter SearchFilter) []SearchHit {
+	hits := make([]SearchHit, 0, len(symbols)+len(documents))
+	for _, row := range symbols {
+		if !matchesSearchFilePattern(row.FilePath, filter.FilePattern) {
+			continue
+		}
+		evidence := firstNonEmpty(row.Signature, row.SearchText, row.Name)
+		hits = append(hits, SearchHit{
+			Target: TargetRef{
+				ProjectID: projectID,
+				Kind:      TargetSymbol,
+				Path:      row.FilePath,
+				Name:      row.Name,
+				Type:      row.Kind,
+				Line:      row.Line,
+				EndLine:   row.EndLine,
+			},
+			Score:    helixTextScore(row.Score),
+			Source:   SearchSourceText,
+			Evidence: evidence,
+			Highlights: []SearchHighlight{{
+				Line:    row.Line,
+				Snippet: evidence,
+			}},
+			Metadata: map[string]string{
+				"backend": "helix",
+				"kind":    row.Kind,
+			},
+		})
+	}
+	for _, row := range documents {
+		if !matchesSearchFilePattern(row.Path, filter.FilePattern) {
+			continue
+		}
+		evidence := firstNonEmpty(row.Summary, row.Title, row.SearchText, row.Path)
+		hits = append(hits, SearchHit{
+			Target: TargetRef{
+				ProjectID: projectID,
+				Kind:      TargetDocument,
+				Path:      row.Path,
+				Name:      row.Title,
+				Type:      "document",
+			},
+			Score:    helixTextScore(row.Score),
+			Source:   SearchSourceText,
+			Evidence: evidence,
+			Highlights: []SearchHighlight{{
+				Snippet: evidence,
+			}},
+			Metadata: map[string]string{
+				"backend": "helix",
+				"kind":    "document",
+			},
+		})
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		if hits[i].Target.Path != hits[j].Target.Path {
+			return hits[i].Target.Path < hits[j].Target.Path
+		}
+		if hits[i].Target.Line != hits[j].Target.Line {
+			return hits[i].Target.Line < hits[j].Target.Line
+		}
+		return hits[i].Target.Name < hits[j].Target.Name
+	})
+	return hits
+}
+
+func helixTextScore(distance float64) float64 {
+	if distance < 0 {
+		return 0
+	}
+	return 1 / (1 + distance)
+}
+
+func matchesSearchFilePattern(filePath, pattern string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return true
+	}
+	if strings.Contains(filePath, pattern) {
+		return true
+	}
+	if ok, _ := pathpkg.Match(pattern, filePath); ok {
+		return true
+	}
+	if ok, _ := pathpkg.Match(pattern, pathpkg.Base(filePath)); ok {
+		return true
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func documentSearchText(doc *api.Document) string {
+	if doc == nil {
+		return ""
+	}
+	return strings.Join([]string{doc.Title, doc.Summary, doc.Path, doc.Language}, " ")
 }
 
 func symbolParamRows(projectID, filePath string, symbols []api.Symbol) []map[string]any {

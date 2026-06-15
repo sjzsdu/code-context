@@ -119,6 +119,15 @@ func TestSearchTextUsesAdvancedCapability(t *testing.T) {
 	if m.query.Filter.FilePattern != "*.go" {
 		t.Fatalf("advanced file pattern = %q", m.query.Filter.FilePattern)
 	}
+	wantKinds := []store.TargetKind{store.TargetFile, store.TargetSymbol, store.TargetDocument}
+	if len(m.query.Filter.TargetKinds) != len(wantKinds) {
+		t.Fatalf("advanced target kinds = %#v, want %#v", m.query.Filter.TargetKinds, wantKinds)
+	}
+	for i := range wantKinds {
+		if m.query.Filter.TargetKinds[i] != wantKinds[i] {
+			t.Fatalf("advanced target kinds = %#v, want %#v", m.query.Filter.TargetKinds, wantKinds)
+		}
+	}
 }
 
 func TestGrepFile(t *testing.T) {

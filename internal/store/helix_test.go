@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	helix "github.com/helixdb/helix-db/sdks/go"
@@ -95,6 +96,83 @@ func TestHelixSearchSymbolsRequestMarshals(t *testing.T) {
 
 	if _, err := helix.MarshalRequest(q.VarAs("symbols", tr).Returning("symbols")); err != nil {
 		t.Fatalf("marshal search symbols request: %v", err)
+	}
+}
+
+func TestHelixTextSearchRequestMarshals(t *testing.T) {
+	req, includeSymbols, includeDocuments, limit := helixTextSearchRequest("project-a", TextSearchQuery{
+		Query: "Handle health",
+		Filter: SearchFilter{
+			TargetKinds: []TargetKind{TargetSymbol, TargetDocument},
+		},
+		Limit: 25,
+	})
+	if !includeSymbols || !includeDocuments {
+		t.Fatalf("targets includeSymbols=%v includeDocuments=%v, want both true", includeSymbols, includeDocuments)
+	}
+	if limit != 25 {
+		t.Fatalf("limit = %d, want 25", limit)
+	}
+	if _, err := helix.MarshalRequest(req); err != nil {
+		t.Fatalf("marshal text search request: %v", err)
+	}
+}
+
+func TestHelixTextRowsToHitsFiltersAndRanks(t *testing.T) {
+	hits := helixTextRowsToHits("project-a",
+		[]helixTextSymbolRow{{
+			Name:       "HandleHealth",
+			Kind:       string(api.Function),
+			FilePath:   "internal/health.go",
+			Line:       12,
+			EndLine:    18,
+			Signature:  "func HandleHealth()",
+			SearchText: "HandleHealth internal/health.go function",
+			Score:      0,
+		}},
+		[]helixTextDocumentRow{{
+			Path:       "README.md",
+			Title:      "Health endpoint",
+			Summary:    "Documents the health endpoint",
+			SearchText: "Health endpoint README.md",
+			Score:      5,
+		}},
+		SearchFilter{FilePattern: "*.go"},
+	)
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	if hits[0].Target.Kind != TargetSymbol || hits[0].Target.Path != "internal/health.go" || hits[0].Target.Line != 12 {
+		t.Fatalf("unexpected hit target: %+v", hits[0].Target)
+	}
+	if hits[0].Score <= 0 {
+		t.Fatalf("score = %v, want positive", hits[0].Score)
+	}
+}
+
+func TestDocumentSearchTextIncludesMetadata(t *testing.T) {
+	got := documentSearchText(&api.Document{
+		Path:     "README.md",
+		Language: "markdown",
+		Title:    "Health Checks",
+		Summary:  "How to inspect service health",
+	})
+	for _, want := range []string{"README.md", "markdown", "Health Checks", "service health"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("documentSearchText() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestSearchFilterAllowsProject(t *testing.T) {
+	if !searchFilterAllowsProject("project-a", SearchFilter{}) {
+		t.Fatal("empty project filter should allow current project")
+	}
+	if !searchFilterAllowsProject("project-a", SearchFilter{ProjectIDs: []string{"project-b", "project-a"}}) {
+		t.Fatal("filter containing current project should allow it")
+	}
+	if searchFilterAllowsProject("project-a", SearchFilter{ProjectIDs: []string{"project-b"}}) {
+		t.Fatal("filter without current project should reject it")
 	}
 }
 

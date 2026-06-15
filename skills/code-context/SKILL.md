@@ -92,6 +92,9 @@ For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
+The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` and document
+metadata/summary `search_text`; consumers should use the interface and keep fallbacks for providers
+that do not implement it.
 
 ## Recommended Dogfood Workflow
 

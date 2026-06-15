@@ -484,7 +484,9 @@ Helix-specific features are kept behind provider-neutral optional interfaces in
 `VectorSearcher`, `HybridSearcher`, `GraphTraverser`, `WorkspaceSearcher`, and `MemoryStore`
 instead of importing Helix SDK types. Backends can implement any subset of these interfaces; callers
 can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
-fallbacks where appropriate.
+fallbacks where appropriate. The Helix backend currently implements `TextSearcher` with BM25 over
+indexed symbol text and document metadata/summary text; `/api/text` and search callers use it when
+available and keep the local grep fallback for backends without the capability.
 
 ## HTTP API
 
