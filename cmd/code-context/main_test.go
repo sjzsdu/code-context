@@ -979,6 +979,31 @@ func TestOnboardCmdCreatesConfigAndRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestOnboardCmdGlobalCreatesUserConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	t.Setenv("HOME", homeDir)
+
+	cmd := newOnboardCmd()
+	cmd.SetArgs([]string{"--global"})
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute onboard --global: %v", err)
+	}
+
+	configPath := filepath.Join(homeDir, ".code-context", "config.yaml")
+	if !strings.Contains(out, configPath) {
+		t.Fatalf("expected global config path in output, got:\n%s", out)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read generated global config: %v", err)
+	}
+	if !strings.Contains(string(data), "root: .") {
+		t.Fatalf("generated global config missing root:\n%s", string(data))
+	}
+}
+
 func runGitCLI(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

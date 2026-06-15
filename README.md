@@ -184,8 +184,10 @@ Creates `.code-context/config.yaml` in the target directory. Existing config fil
 overwritten unless `--force` is provided.
 
 ```bash
+code-context onboard
 code-context onboard --dir .
 code-context onboard --dir /path/to/repo --force
+code-context onboard --global
 ```
 
 ### `index` — Index the codebase

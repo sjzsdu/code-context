@@ -292,14 +292,25 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 func newOnboardCmd() *cobra.Command {
 	dir := "."
 	force := false
+	global := false
 	cmd := &cobra.Command{
 		Use:   "onboard",
 		Short: "Generate a starter .code-context/config.yaml file",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			absDir, err := filepath.Abs(dir)
+			baseDir := dir
+			if global {
+				homeDir, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("find home directory: %w", err)
+				}
+				baseDir = homeDir
+			}
+
+			absDir, err := filepath.Abs(baseDir)
 			if err != nil {
 				return err
 			}
+
 			configDir := filepath.Join(absDir, ".code-context")
 			if err := os.MkdirAll(configDir, 0o755); err != nil {
 				return fmt.Errorf("create config directory: %w", err)
@@ -320,6 +331,7 @@ func newOnboardCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&dir, "dir", ".", "directory where .code-context/config.yaml will be created")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing config file")
+	cmd.Flags().BoolVar(&global, "global", false, "create the user-level config under ~/.code-context/config.yaml")
 	return cmd
 }
 
