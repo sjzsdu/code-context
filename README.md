@@ -169,6 +169,25 @@ docs:
 
 ## CLI Commands
 
+### `config inspect` — Show merged configuration
+
+Prints the effective merged configuration and the config files that contributed to it.
+
+```bash
+code-context config inspect
+code-context config inspect --format yaml
+```
+
+### `onboard` — Generate a starter config file
+
+Creates `.code-context/config.yaml` in the target directory. Existing config files are not
+overwritten unless `--force` is provided.
+
+```bash
+code-context onboard --dir .
+code-context onboard --dir /path/to/repo --force
+```
+
 ### `index` — Index the codebase
 
 ```bash

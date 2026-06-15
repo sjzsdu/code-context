@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -885,6 +886,96 @@ func TestGitDiffCmd(t *testing.T) {
 	}
 	if !strings.Contains(out, "@@ -") {
 		t.Fatalf("expected hunk header output, got:\n%s", out)
+	}
+}
+
+func TestConfigInspectCmdPrintsMergedConfigAndSources(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	projectDir := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".code-context"), 0o755); err != nil {
+		t.Fatalf("mkdir home config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, ".code-context"), 0o755); err != nil {
+		t.Fatalf("mkdir project config: %v", err)
+	}
+	t.Setenv("HOME", homeDir)
+
+	userConfigPath := filepath.Join(homeDir, ".code-context", "config.yaml")
+	if err := os.WriteFile(userConfigPath, []byte("store:\n  backend: helix\nserver:\n  port: 7070\n"), 0o644); err != nil {
+		t.Fatalf("write user config: %v", err)
+	}
+	projectConfigPath := filepath.Join(projectDir, ".code-context", "config.yaml")
+	if err := os.WriteFile(projectConfigPath, []byte("root: .\nserver:\n  port: 9090\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	prevRoot := root
+	root = projectDir
+	defer func() { root = prevRoot }()
+
+	cmd := newConfigInspectCmd()
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute config inspect: %v", err)
+	}
+
+	var decoded struct {
+		Sources []struct {
+			Path string `json:"path"`
+		} `json:"sources"`
+		Config struct {
+			Root   string                   `json:"root"`
+			Store  struct{ Backend string } `json:"store"`
+			Server struct{ Port int }       `json:"server"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("decode config inspect output: %v\n%s", err, out)
+	}
+	if len(decoded.Sources) != 2 {
+		t.Fatalf("sources = %d, want 2; output:\n%s", len(decoded.Sources), out)
+	}
+	if decoded.Sources[0].Path != userConfigPath || decoded.Sources[1].Path != projectConfigPath {
+		t.Fatalf("sources = %#v", decoded.Sources)
+	}
+	if decoded.Config.Root != projectDir {
+		t.Fatalf("root = %q, want %q", decoded.Config.Root, projectDir)
+	}
+	if decoded.Config.Store.Backend != "helix" {
+		t.Fatalf("store.backend = %q", decoded.Config.Store.Backend)
+	}
+	if decoded.Config.Server.Port != 9090 {
+		t.Fatalf("server.port = %d", decoded.Config.Server.Port)
+	}
+}
+
+func TestOnboardCmdCreatesConfigAndRefusesOverwrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	cmd := newOnboardCmd()
+	cmd.SetArgs([]string{"--dir", tmpDir})
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute onboard: %v", err)
+	}
+
+	configPath := filepath.Join(tmpDir, ".code-context", "config.yaml")
+	if !strings.Contains(out, configPath) {
+		t.Fatalf("expected created path in output, got:\n%s", out)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+	if !strings.Contains(string(data), "store:") || !strings.Contains(string(data), "watch:") {
+		t.Fatalf("generated config missing expected sections:\n%s", string(data))
+	}
+
+	cmd = newOnboardCmd()
+	cmd.SetArgs([]string{"--dir", tmpDir})
+	_, err = captureStdout(func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected overwrite refusal, got %v", err)
 	}
 }
 

@@ -7,11 +7,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
@@ -44,6 +46,9 @@ func main() {
 		Use:   "code-context",
 		Short: "A code memory system for intelligent codebase indexing and search",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Name() == "onboard" {
+				return nil
+			}
 			cfg, err := loadRuntimeConfig(root)
 			if err != nil {
 				return err
@@ -62,6 +67,8 @@ func main() {
 	cmd.PersistentFlags().StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
 
 	cmd.AddCommand(
+		newConfigCmd(),
+		newOnboardCmd(),
 		newIndexCmd(),
 		newSearchCmd(),
 		newFindDefCmd(),
@@ -196,6 +203,148 @@ func storeOptions() store.Options {
 			ProjectID: helixProjectID,
 		},
 	}
+}
+
+type configInspectOutput struct {
+	Precedence []string        `json:"precedence" yaml:"precedence"`
+	Sources    []config.Source `json:"sources" yaml:"sources"`
+	Config     config.Config   `json:"config" yaml:"config"`
+}
+
+func newConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Inspect code-context configuration",
+	}
+	cmd.AddCommand(newConfigInspectCmd())
+	return cmd
+}
+
+func newConfigInspectCmd() *cobra.Command {
+	format := "json"
+	cmd := &cobra.Command{
+		Use:   "inspect",
+		Short: "Print merged configuration and loaded config sources",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			loaded, err := config.Load(root)
+			if err != nil {
+				if err == config.ErrNotFound {
+					loaded = &config.Loaded{}
+				} else {
+					return err
+				}
+			}
+
+			out := configInspectOutput{
+				Precedence: []string{"cli flags", "project config", "user config", "built-in defaults"},
+				Sources:    loaded.Sources,
+				Config:     loaded.Config,
+			}
+			applyCLIOverridesToInspectConfig(&out.Config)
+
+			switch format {
+			case "json":
+				data, err := json.MarshalIndent(out, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(data))
+			case "yaml", "yml":
+				data, err := yaml.Marshal(out)
+				if err != nil {
+					return err
+				}
+				fmt.Print(string(data))
+			default:
+				return fmt.Errorf("unsupported format %q (supported: json, yaml)", format)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "json", "output format (json|yaml)")
+	return cmd
+}
+
+func applyCLIOverridesToInspectConfig(cfg *config.Config) {
+	if root != "" {
+		cfg.Root = root
+	}
+	if dbPath != "" {
+		cfg.DB = dbPath
+	}
+	if storeBackend != "" {
+		cfg.Store.Backend = storeBackend
+	}
+	if helixURL != "" {
+		cfg.Store.Helix.URL = helixURL
+	}
+	if helixAPIKey != "" {
+		cfg.Store.Helix.APIKey = helixAPIKey
+	}
+	if helixAPIKeyEnv != "" {
+		cfg.Store.Helix.APIKeyEnv = helixAPIKeyEnv
+	}
+	if helixProjectID != "" {
+		cfg.Store.Helix.ProjectID = helixProjectID
+	}
+}
+
+func newOnboardCmd() *cobra.Command {
+	dir := "."
+	force := false
+	cmd := &cobra.Command{
+		Use:   "onboard",
+		Short: "Generate a starter .code-context/config.yaml file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			absDir, err := filepath.Abs(dir)
+			if err != nil {
+				return err
+			}
+			configDir := filepath.Join(absDir, ".code-context")
+			if err := os.MkdirAll(configDir, 0o755); err != nil {
+				return fmt.Errorf("create config directory: %w", err)
+			}
+			configPath := filepath.Join(configDir, "config.yaml")
+			if _, err := os.Stat(configPath); err == nil && !force {
+				return fmt.Errorf("config already exists at %s (use --force to overwrite)", configPath)
+			} else if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+
+			if err := os.WriteFile(configPath, []byte(defaultConfigTemplate()), 0o644); err != nil {
+				return fmt.Errorf("write config: %w", err)
+			}
+			fmt.Printf("Created %s\n", configPath)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&dir, "dir", ".", "directory where .code-context/config.yaml will be created")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing config file")
+	return cmd
+}
+
+func defaultConfigTemplate() string {
+	return `root: .
+db: .code-context/index.db
+store:
+  backend: sqlite
+  sqlite:
+    db: .code-context/index.db
+  helix:
+    url: http://localhost:6969
+    api_key_env: HELIX_API_KEY
+    project_id: ""
+server:
+  port: 9090
+watch:
+  enabled: false
+  interval: 2s
+  debounce: 250ms
+docs:
+  fail_on_broken: false
+  min_route_coverage: 80
+  min_symbol_coverage: 60
+`
 }
 
 func attachServeConfig(rootCmd *cobra.Command) {
