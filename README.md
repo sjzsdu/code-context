@@ -92,7 +92,29 @@ code-context serve --port 9090
 
 ## Configuration
 
-`code-context` supports a project config file at `.code-context.yaml`.
+`code-context` supports user-level and project-level config files. Values are merged with this
+precedence, from highest to lowest:
+
+1. CLI flags
+2. Project config in the current directory tree
+3. User config under `~/.code-context/`
+4. Built-in defaults
+
+Project config files are discovered by walking from the selected root/current directory upward.
+Supported project config names, in lookup order within each directory:
+
+- `.code-context/config.yaml`
+- `.code-context/config.yml`
+- `.code-context/config.json`
+- `.code-context.yaml` (legacy)
+- `.code-context.yml` (legacy)
+- `.code-context.json` (legacy)
+
+Supported user config names:
+
+- `~/.code-context/config.yaml`
+- `~/.code-context/config.yml`
+- `~/.code-context/config.json`
 
 SQLite remains the default storage backend. `store.backend: helix` enables the HelixDB-backed
 store; if `store.helix.url` / `--helix-url` is omitted, the Helix Go SDK uses its local default
@@ -120,7 +142,7 @@ Supported options:
 | `docs.min_route_coverage` | number | Default `doc-coverage --min-route-coverage` percentage |
 | `docs.min_symbol_coverage` | number | Default `doc-coverage --min-symbol-coverage` percentage |
 
-Example (`.code-context.yaml`):
+Example (`.code-context/config.yaml`):
 
 ```yaml
 root: .
