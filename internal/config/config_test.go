@@ -93,7 +93,7 @@ func TestLoadJSONConfig(t *testing.T) {
 func TestLoadStoreConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".code-context.yaml")
-	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n")
+	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -114,6 +114,9 @@ func TestLoadStoreConfig(t *testing.T) {
 	}
 	if loaded.Config.Store.Helix.APIKeyEnv != "HELIX_API_KEY" {
 		t.Fatalf("store.helix.api_key_env = %q", loaded.Config.Store.Helix.APIKeyEnv)
+	}
+	if loaded.Config.Store.Helix.ProjectID != "custom-project" {
+		t.Fatalf("store.helix.project_id = %q", loaded.Config.Store.Helix.ProjectID)
 	}
 }
 

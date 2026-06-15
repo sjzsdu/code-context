@@ -1,5 +1,13 @@
 root: .
 db: .code-context/index.db
+store:
+  backend: sqlite
+  sqlite:
+    db: .code-context/index.db
+  helix:
+    url: http://localhost:6969
+    api_key_env: HELIX_API_KEY
+    project_id: my-repo
 server:
   port: 9090
 watch:

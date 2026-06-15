@@ -29,6 +29,7 @@ var (
 	helixURL       string
 	helixAPIKey    string
 	helixAPIKeyEnv string
+	helixProjectID string
 )
 
 type runtimeConfig struct {
@@ -58,6 +59,7 @@ func main() {
 	cmd.PersistentFlags().StringVar(&helixURL, "helix-url", "", "HelixDB endpoint URL for --store-backend=helix")
 	cmd.PersistentFlags().StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
 	cmd.PersistentFlags().StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
+	cmd.PersistentFlags().StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
 
 	cmd.AddCommand(
 		newIndexCmd(),
@@ -141,7 +143,7 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 
 	if !cmd.Flags().Changed("db") || !cmd.Flags().Changed("store-backend") ||
 		!cmd.Flags().Changed("helix-url") || !cmd.Flags().Changed("helix-api-key") ||
-		!cmd.Flags().Changed("helix-api-key-env") {
+		!cmd.Flags().Changed("helix-api-key-env") || !cmd.Flags().Changed("helix-project-id") {
 
 		if loaded == nil && loadErr != config.ErrNotFound {
 			loaded, loadErr = config.Load(root)
@@ -171,6 +173,9 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			if !cmd.Flags().Changed("helix-api-key-env") && loaded.Config.Store.Helix.APIKeyEnv != "" {
 				helixAPIKeyEnv = loaded.Config.Store.Helix.APIKeyEnv
 			}
+			if !cmd.Flags().Changed("helix-project-id") && loaded.Config.Store.Helix.ProjectID != "" {
+				helixProjectID = loaded.Config.Store.Helix.ProjectID
+			}
 		}
 	}
 	_ = cfg
@@ -188,6 +193,7 @@ func storeOptions() store.Options {
 			URL:       helixURL,
 			APIKey:    helixAPIKey,
 			APIKeyEnv: helixAPIKeyEnv,
+			ProjectID: helixProjectID,
 		},
 	}
 }

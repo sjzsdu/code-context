@@ -150,26 +150,39 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 	wg.Wait()
 
 	// Remove deleted files from store
-	existingFiles, _ := idx.store.ListFiles(ctx, nil)
+	existingFiles, err := idx.store.ListFiles(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed files: %w", err)
+	}
 	fileSet := make(map[string]bool)
 	for _, f := range files {
 		fileSet[f] = true
 	}
 	for _, f := range existingFiles {
 		if !fileSet[f.Path] {
-			idx.store.DeleteFile(ctx, f.Path)
+			if err := idx.store.DeleteFile(ctx, f.Path); err != nil {
+				return nil, fmt.Errorf("delete removed file %s: %w", f.Path, err)
+			}
 			atomic.AddInt64(&skipped, 1)
 		}
 	}
-	existingDocs, _ := idx.store.ListDocuments(ctx)
+	existingDocs, err := idx.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed documents: %w", err)
+	}
 	for _, d := range existingDocs {
 		if !fileSet[d.Path] {
-			idx.store.DeleteDocument(ctx, d.Path)
+			if err := idx.store.DeleteDocument(ctx, d.Path); err != nil {
+				return nil, fmt.Errorf("delete removed document %s: %w", d.Path, err)
+			}
 			atomic.AddInt64(&skipped, 1)
 		}
 	}
 
-	stats, _ := idx.store.Stats(ctx)
+	stats, err := idx.store.Stats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load index stats: %w", err)
+	}
 	return &api.IndexStats{
 		TotalFiles:     total,
 		IndexedFiles:   int(indexed),
@@ -246,7 +259,10 @@ func (idx *Indexer) IndexIncremental(ctx context.Context, verbose bool) (*api.In
 		fileSet[f] = true
 	}
 
-	existingFiles, _ := idx.store.ListFiles(ctx, nil)
+	existingFiles, err := idx.store.ListFiles(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed files: %w", err)
+	}
 	existingMap := make(map[string]*api.FileInfo)
 	for _, f := range existingFiles {
 		existingMap[f.Path] = f
@@ -274,14 +290,21 @@ func (idx *Indexer) IndexIncremental(ctx context.Context, verbose bool) (*api.In
 	var removed int
 	for _, ef := range existingFiles {
 		if !fileSet[ef.Path] {
-			idx.store.DeleteFile(ctx, ef.Path)
+			if err := idx.store.DeleteFile(ctx, ef.Path); err != nil {
+				return nil, fmt.Errorf("delete removed file %s: %w", ef.Path, err)
+			}
 			removed++
 		}
 	}
-	existingDocs, _ := idx.store.ListDocuments(ctx)
+	existingDocs, err := idx.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed documents: %w", err)
+	}
 	for _, d := range existingDocs {
 		if !fileSet[d.Path] {
-			idx.store.DeleteDocument(ctx, d.Path)
+			if err := idx.store.DeleteDocument(ctx, d.Path); err != nil {
+				return nil, fmt.Errorf("delete removed document %s: %w", d.Path, err)
+			}
 			removed++
 		}
 	}
@@ -313,7 +336,10 @@ func (idx *Indexer) IndexIncremental(ctx context.Context, verbose bool) (*api.In
 	}
 	wg.Wait()
 
-	stats, _ := idx.store.Stats(ctx)
+	stats, err := idx.store.Stats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load index stats: %w", err)
+	}
 	return &api.IndexStats{
 		TotalFiles:   len(files),
 		IndexedFiles: int(indexed),

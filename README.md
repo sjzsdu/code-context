@@ -97,6 +97,8 @@ code-context serve --port 9090
 SQLite remains the default storage backend. `store.backend: helix` enables the HelixDB-backed
 store; if `store.helix.url` / `--helix-url` is omitted, the Helix Go SDK uses its local default
 endpoint (`http://localhost:6969`).
+Helix data is scoped by `project_id`; if omitted, the CLI and MCP server use the absolute root path
+as the project namespace.
 
 Supported options:
 
@@ -109,6 +111,7 @@ Supported options:
 | `store.helix.url` | string | HelixDB endpoint URL |
 | `store.helix.api_key` | string | HelixDB API key |
 | `store.helix.api_key_env` | string | Environment variable containing the HelixDB API key |
+| `store.helix.project_id` | string | Helix project namespace (default: absolute root) |
 | `server.port` | int | HTTP server port |
 | `watch.enabled` | bool | Enable watch mode / background refresh by default |
 | `watch.interval` | duration | Polling interval for incremental refresh |
@@ -129,6 +132,7 @@ store:
   helix:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
+    project_id: my-repo
 server:
   port: 9090
 watch:
@@ -413,6 +417,22 @@ code-context test-impact --state unstaged
 | `--helix-url` | | | HelixDB endpoint URL |
 | `--helix-api-key` | | | HelixDB API key |
 | `--helix-api-key-env` | | | Environment variable containing the HelixDB API key |
+| `--helix-project-id` | | `<absolute root>` | Helix project namespace |
+
+### Helix Smoke Validation
+
+Use a dedicated temporary Helix instance for first-time validation:
+
+```bash
+helix init local --no-skills
+helix start dev --port 6970
+HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh
+```
+
+The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, and verifies
+`stats`, `search`, `routes`, and `docs-for` read paths. It only rebuilds the configured
+`HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
+created unscoped unique path indexes.
 
 ## HTTP API
 

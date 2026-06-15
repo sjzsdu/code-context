@@ -43,6 +43,7 @@ type HelixStoreConfig struct {
 	URL       string `json:"url" yaml:"url"`
 	APIKey    string `json:"api_key" yaml:"api_key"`
 	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`
+	ProjectID string `json:"project_id" yaml:"project_id"`
 }
 
 type ServerConfig struct {

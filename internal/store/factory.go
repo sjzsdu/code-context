@@ -20,6 +20,7 @@ type HelixOptions struct {
 	URL       string
 	APIKey    string
 	APIKeyEnv string
+	ProjectID string
 }
 
 type Options struct {

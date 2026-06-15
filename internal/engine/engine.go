@@ -66,6 +66,9 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 		}
 		storeLocation = storeOpts.SQLite.Path
 	case store.BackendHelix:
+		if strings.TrimSpace(storeOpts.Helix.ProjectID) == "" {
+			storeOpts.Helix.ProjectID = root
+		}
 		storeLocation = storeOpts.Helix.URL
 	}
 

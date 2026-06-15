@@ -26,6 +26,7 @@ var (
 	helixURL       string
 	helixAPIKey    string
 	helixAPIKeyEnv string
+	helixProjectID string
 )
 
 type GraphArgs struct {
@@ -93,6 +94,7 @@ func main() {
 	flag.StringVar(&helixURL, "helix-url", "", "HelixDB endpoint URL for --store-backend=helix")
 	flag.StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
 	flag.StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
+	flag.StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
 	flag.Parse()
 	applyConfigDefaults()
 
@@ -164,6 +166,9 @@ func applyConfigDefaults() {
 	if !visited["helix-api-key-env"] && loaded.Config.Store.Helix.APIKeyEnv != "" {
 		helixAPIKeyEnv = loaded.Config.Store.Helix.APIKeyEnv
 	}
+	if !visited["helix-project-id"] && loaded.Config.Store.Helix.ProjectID != "" {
+		helixProjectID = loaded.Config.Store.Helix.ProjectID
+	}
 }
 
 func mcpStoreOptions() store.Options {
@@ -174,6 +179,7 @@ func mcpStoreOptions() store.Options {
 			URL:       helixURL,
 			APIKey:    helixAPIKey,
 			APIKeyEnv: helixAPIKeyEnv,
+			ProjectID: helixProjectID,
 		},
 	}
 }

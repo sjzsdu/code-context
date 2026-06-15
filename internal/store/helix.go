@@ -32,7 +32,8 @@ const (
 )
 
 type helixStore struct {
-	client *helix.Client
+	client    *helix.Client
+	projectID string
 }
 
 func NewHelixStore(opts HelixOptions) (Store, error) {
@@ -48,28 +49,41 @@ func NewHelixStore(opts HelixOptions) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &helixStore{client: client}, nil
+	projectID := strings.TrimSpace(opts.ProjectID)
+	if projectID == "" {
+		projectID = "default"
+	}
+	return &helixStore{client: client, projectID: projectID}, nil
 }
 
 func (s *helixStore) Init(ctx context.Context) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_init")
-		q.VarAs("file_path", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixFileLabel, "path")))
+		q.VarAs("file_key", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixFileLabel, "key")))
+		q.VarAs("file_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixFileLabel, "project_id")))
+		q.VarAs("file_path", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixFileLabel, "path")))
 		q.VarAs("file_language", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixFileLabel, "language")))
 		q.VarAs("symbol_key", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixSymbolLabel, "key")))
+		q.VarAs("symbol_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixSymbolLabel, "project_id")))
 		q.VarAs("symbol_file", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixSymbolLabel, "file_path")))
 		q.VarAs("symbol_name", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixSymbolLabel, "name")))
 		q.VarAs("symbol_kind", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixSymbolLabel, "kind")))
 		q.VarAs("symbol_text", helix.G().CreateTextIndexNodes(helixSymbolLabel, "search_text"))
+		q.VarAs("import_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixImportLabel, "project_id")))
 		q.VarAs("import_file", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixImportLabel, "file_path")))
 		q.VarAs("import_source", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixImportLabel, "source")))
+		q.VarAs("call_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixCallLabel, "project_id")))
 		q.VarAs("call_file", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixCallLabel, "file_path")))
 		q.VarAs("call_from", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixCallLabel, "from_symbol")))
 		q.VarAs("call_to", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixCallLabel, "to_name")))
+		q.VarAs("route_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixRouteLabel, "project_id")))
 		q.VarAs("route_file", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixRouteLabel, "file_path")))
 		q.VarAs("route_path", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixRouteLabel, "path")))
 		q.VarAs("route_handler", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixRouteLabel, "handler")))
-		q.VarAs("document_path", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixDocumentLabel, "path")))
+		q.VarAs("document_key", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixDocumentLabel, "key")))
+		q.VarAs("document_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLabel, "project_id")))
+		q.VarAs("document_path", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLabel, "path")))
+		q.VarAs("document_link_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "project_id")))
 		q.VarAs("document_link_doc", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "document_path")))
 		q.VarAs("document_link_target", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "target_key")))
 		return q.Returning()
@@ -82,24 +96,29 @@ func (s *helixStore) UpsertFile(ctx context.Context, f *api.FileInfo) (int64, er
 	}
 	now := time.Now().Unix()
 	var out struct {
-		Updated []idRow `json:"updated"`
-		Created []idRow `json:"created"`
+		Updated helixRows[idRow] `json:"updated"`
+		Created helixRows[idRow] `json:"created"`
 	}
 	err := s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_upsert_file")
+		projectID := q.ParamString("project_id", s.projectID)
+		key := q.ParamString("key", helixKey(s.projectID, f.Path))
 		path := q.ParamString("path", f.Path)
 		language := q.ParamString("language", string(f.Language))
 		contentHash := q.ParamString("content_hash", f.ContentHash)
 		size := q.ParamI64("size", f.Size)
 		indexedAt := q.ParamI64("indexed_at", now)
-		q.VarAs("existing", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("path", path)))
+		q.VarAs("existing", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("key", key)))
 		q.VarAsIf("updated", helix.VarNotEmpty("existing"), helix.G().N(helix.NodeVar("existing")).
+			SetProperty("project_id", projectID).
 			SetProperty("language", language).
 			SetProperty("content_hash", contentHash).
 			SetProperty("size", size).
 			SetProperty("indexed_at", indexedAt).
 			Project(helix.ProjectPropAs("$id", "id")))
 		q.VarAsIf("created", helix.VarEmpty("existing"), helix.G().AddN(helixFileLabel, helix.Props{
+			helix.Prop("key", key),
+			helix.Prop("project_id", projectID),
 			helix.Prop("path", path),
 			helix.Prop("language", language),
 			helix.Prop("content_hash", contentHash),
@@ -111,7 +130,7 @@ func (s *helixStore) UpsertFile(ctx context.Context, f *api.FileInfo) (int64, er
 	if err != nil {
 		return 0, err
 	}
-	return firstID(out.Updated, out.Created), nil
+	return firstID(out.Updated.Properties, out.Created.Properties), nil
 }
 
 func (s *helixStore) ReplaceFileIndex(ctx context.Context, idx FileIndex) (int64, error) {
@@ -119,15 +138,17 @@ func (s *helixStore) ReplaceFileIndex(ctx context.Context, idx FileIndex) (int64
 		return 0, fmt.Errorf("file index file is required")
 	}
 	now := time.Now().Unix()
-	symbols := symbolParamRows(idx.File.Path, idx.Symbols)
-	imports := importParamRows(idx.File.Path, idx.Imports)
-	calls := callParamRows(idx.File.Path, idx.Calls)
-	routes := routeParamRows(idx.File.Path, idx.Routes)
+	symbols := symbolParamRows(s.projectID, idx.File.Path, idx.Symbols)
+	imports := importParamRows(s.projectID, idx.File.Path, idx.Imports)
+	calls := callParamRows(s.projectID, idx.File.Path, idx.Calls)
+	routes := routeParamRows(s.projectID, idx.File.Path, idx.Routes)
 	var out struct {
-		FileID []idRow `json:"file_id"`
+		FileID helixRows[idRow] `json:"file_id"`
 	}
 	err := s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_replace_file_index")
+		projectID := q.ParamString("project_id", s.projectID)
+		key := q.ParamString("key", helixKey(s.projectID, idx.File.Path))
 		path := q.ParamString("path", idx.File.Path)
 		language := q.ParamString("language", string(idx.File.Language))
 		contentHash := q.ParamString("content_hash", idx.File.ContentHash)
@@ -137,13 +158,15 @@ func (s *helixStore) ReplaceFileIndex(ctx context.Context, idx FileIndex) (int64
 		q.ParamArray("imports", imports, helix.ParamTypeObject())
 		q.ParamArray("calls", calls, helix.ParamTypeObject())
 		q.ParamArray("routes", routes, helix.ParamTypeObject())
-		q.VarAs("existing", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("path", path)))
+		q.VarAs("existing", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("key", key)))
 		q.VarAs("drop_symbols", helix.G().N(helix.NodeVar("existing")).Out(helixDefinesEdge).Drop().Count())
 		q.VarAs("drop_imports", helix.G().N(helix.NodeVar("existing")).Out(helixImportsEdge).Drop().Count())
 		q.VarAs("drop_calls", helix.G().N(helix.NodeVar("existing")).Out(helixRecordsCallEdge).Drop().Count())
 		q.VarAs("drop_routes", helix.G().N(helix.NodeVar("existing")).Out(helixDeclaresRouteEdge).Drop().Count())
 		q.VarAs("drop_file", helix.G().N(helix.NodeVar("existing")).Drop().Count())
 		q.VarAs("file", helix.G().AddN(helixFileLabel, helix.Props{
+			helix.Prop("key", key),
+			helix.Prop("project_id", projectID),
 			helix.Prop("path", path),
 			helix.Prop("language", language),
 			helix.Prop("content_hash", contentHash),
@@ -160,30 +183,30 @@ func (s *helixStore) ReplaceFileIndex(ctx context.Context, idx FileIndex) (int64
 	if err != nil {
 		return 0, err
 	}
-	return firstID(out.FileID), nil
+	return firstID(out.FileID.Properties), nil
 }
 
 func (s *helixStore) GetFile(ctx context.Context, path string) (*api.FileInfo, error) {
 	var out struct {
-		Files []helixFileRow `json:"files"`
+		Files helixRows[helixFileRow] `json:"files"`
 	}
 	q := helix.ReadQuery("code_context_get_file")
-	pathParam := q.ParamString("path", path)
-	req := q.VarAs("files", fileTraversal().Where(helix.PredEq("path", pathParam)).Limit(1).Project(fileProjections()...)).Returning("files")
+	keyParam := q.ParamString("key", helixKey(s.projectID, path))
+	req := q.VarAs("files", fileTraversal().Where(helix.PredEq("key", keyParam)).Limit(1).Project(fileProjections()...)).Returning("files")
 	if err := s.client.Exec(ctx, req, &out); err != nil {
 		return nil, err
 	}
-	if len(out.Files) == 0 {
+	if len(out.Files.Properties) == 0 {
 		return nil, nil
 	}
-	return out.Files[0].FileInfo(), nil
+	return out.Files.Properties[0].FileInfo(), nil
 }
 
 func (s *helixStore) DeleteFile(ctx context.Context, path string) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_delete_file")
-		pathParam := q.ParamString("path", path)
-		q.VarAs("file", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("path", pathParam)))
+		keyParam := q.ParamString("key", helixKey(s.projectID, path))
+		q.VarAs("file", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("key", keyParam)))
 		q.VarAs("drop_symbols", helix.G().N(helix.NodeVar("file")).Out(helixDefinesEdge).Drop().Count())
 		q.VarAs("drop_imports", helix.G().N(helix.NodeVar("file")).Out(helixImportsEdge).Drop().Count())
 		q.VarAs("drop_calls", helix.G().N(helix.NodeVar("file")).Out(helixRecordsCallEdge).Drop().Count())
@@ -195,18 +218,18 @@ func (s *helixStore) DeleteFile(ctx context.Context, path string) error {
 
 func (s *helixStore) ListFiles(ctx context.Context, lang *api.Language) ([]*api.FileInfo, error) {
 	var out struct {
-		Files []helixFileRow `json:"files"`
+		Files helixRows[helixFileRow] `json:"files"`
 	}
 	q := helix.ReadQuery("code_context_list_files")
-	tr := fileTraversal()
+	tr := fileTraversal().Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID)))
 	if lang != nil {
 		tr = tr.Where(helix.PredEq("language", q.ParamString("language", string(*lang))))
 	}
 	if err := s.client.Exec(ctx, q.VarAs("files", tr.Project(fileProjections()...)).Returning("files"), &out); err != nil {
 		return nil, err
 	}
-	result := make([]*api.FileInfo, 0, len(out.Files))
-	for _, row := range out.Files {
+	result := make([]*api.FileInfo, 0, len(out.Files.Properties))
+	for _, row := range out.Files.Properties {
 		result = append(result, row.FileInfo())
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
@@ -221,7 +244,7 @@ func (s *helixStore) ReplaceSymbols(ctx context.Context, fileID int64, symbols [
 	if file == nil {
 		return nil
 	}
-	rows := symbolParamRows(file.Path, symbols)
+	rows := symbolParamRows(s.projectID, file.Path, symbols)
 	return s.replaceChildNodes(ctx, fileID, "code_context_replace_symbols", "symbols", rows, helixDefinesEdge, symbolWriteBatch(helix.NodeVar("file")))
 }
 
@@ -233,7 +256,7 @@ func (s *helixStore) ReplaceImports(ctx context.Context, fileID int64, imports [
 	if file == nil {
 		return nil
 	}
-	rows := importParamRows(file.Path, imports)
+	rows := importParamRows(s.projectID, file.Path, imports)
 	return s.replaceChildNodes(ctx, fileID, "code_context_replace_imports", "imports", rows, helixImportsEdge, importWriteBatch(helix.NodeVar("file")))
 }
 
@@ -245,7 +268,7 @@ func (s *helixStore) ReplaceCalls(ctx context.Context, fileID int64, calls []api
 	if file == nil {
 		return nil
 	}
-	rows := callParamRows(file.Path, calls)
+	rows := callParamRows(s.projectID, file.Path, calls)
 	return s.replaceChildNodes(ctx, fileID, "code_context_replace_calls", "calls", rows, helixRecordsCallEdge, callWriteBatch(helix.NodeVar("file")))
 }
 
@@ -257,7 +280,7 @@ func (s *helixStore) ReplaceRoutes(ctx context.Context, fileID int64, routes []a
 	if file == nil {
 		return nil
 	}
-	rows := routeParamRows(file.Path, routes)
+	rows := routeParamRows(s.projectID, file.Path, routes)
 	return s.replaceChildNodes(ctx, fileID, "code_context_replace_routes", "routes", rows, helixDeclaresRouteEdge, routeWriteBatch(helix.NodeVar("file")))
 }
 
@@ -267,6 +290,7 @@ func (s *helixStore) SearchSymbols(ctx context.Context, query string, kind *api.
 	}
 	q := helix.ReadQuery("code_context_search_symbols")
 	limitParam := q.ParamI64("limit", int64(limit))
+	projectParam := q.ParamString("project_id", s.projectID)
 	searchText := strings.TrimSpace(query)
 	var tr *helix.Traversal
 	if searchText == "" {
@@ -274,116 +298,144 @@ func (s *helixStore) SearchSymbols(ctx context.Context, query string, kind *api.
 	} else {
 		tr = helix.G().TextSearchNodesWith(helixSymbolLabel, "search_text", q.ParamString("query", searchText).Input(), limitParam.Bound(), nil)
 	}
+	tr = tr.Where(helix.PredEq("project_id", projectParam))
 	if kind != nil {
 		tr = tr.Where(helix.PredEq("kind", q.ParamString("kind", string(*kind))))
 	}
 	var out struct {
-		Symbols []api.Symbol `json:"symbols"`
+		Symbols helixRows[api.Symbol] `json:"symbols"`
 	}
 	if err := s.client.Exec(ctx, q.VarAs("symbols", tr.Project(symbolProjections()...)).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
-	sortSymbols(out.Symbols)
-	if len(out.Symbols) > limit {
-		out.Symbols = out.Symbols[:limit]
+	symbols := out.Symbols.Properties
+	sortSymbols(symbols)
+	if len(symbols) > limit {
+		symbols = symbols[:limit]
 	}
-	return out.Symbols, nil
+	return symbols, nil
 }
 
 func (s *helixStore) FindDefinitions(ctx context.Context, name string) ([]api.Symbol, error) {
 	q := helix.ReadQuery("code_context_find_definitions")
 	nameParam := q.ParamString("name", name)
 	tr := symbolTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
 		Where(helix.PredEq("name", nameParam)).
 		Where(definitionKindPredicate()).
 		Project(symbolProjections()...)
 	var out struct {
-		Symbols []api.Symbol `json:"symbols"`
+		Symbols helixRows[api.Symbol] `json:"symbols"`
 	}
 	if err := s.client.Exec(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
-	sortSymbols(out.Symbols)
-	return out.Symbols, nil
+	symbols := out.Symbols.Properties
+	sortSymbols(symbols)
+	return symbols, nil
 }
 
 func (s *helixStore) FindReferences(ctx context.Context, name string) ([]api.Symbol, error) {
 	q := helix.ReadQuery("code_context_find_references")
 	nameParam := q.ParamString("name", name)
 	var out struct {
-		Symbols []api.Symbol `json:"symbols"`
+		Symbols helixRows[api.Symbol] `json:"symbols"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("symbols", symbolTraversal().Where(helix.PredEq("name", nameParam)).Project(symbolProjections()...)).Returning("symbols"), &out); err != nil {
+	tr := symbolTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("name", nameParam)).
+		Project(symbolProjections()...)
+	if err := s.client.Exec(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
-	sortSymbols(out.Symbols)
-	return out.Symbols, nil
+	symbols := out.Symbols.Properties
+	sortSymbols(symbols)
+	return symbols, nil
 }
 
 func (s *helixStore) GetFileSymbols(ctx context.Context, path string) ([]api.Symbol, error) {
 	q := helix.ReadQuery("code_context_get_file_symbols")
 	pathParam := q.ParamString("file_path", path)
 	var out struct {
-		Symbols []api.Symbol `json:"symbols"`
+		Symbols helixRows[api.Symbol] `json:"symbols"`
 	}
-	tr := symbolTraversal().Where(helix.PredEq("file_path", pathParam)).OrderBy("line", helix.OrderAsc).Project(symbolProjections()...)
+	tr := symbolTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("file_path", pathParam)).
+		OrderBy("line", helix.OrderAsc).
+		Project(symbolProjections()...)
 	if err := s.client.Exec(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
-	return out.Symbols, nil
+	return out.Symbols.Properties, nil
 }
 
 func (s *helixStore) GetImports(ctx context.Context, filePath string) ([]api.ImportEdge, error) {
 	q := helix.ReadQuery("code_context_get_imports")
 	fileParam := q.ParamString("file_path", filePath)
 	var out struct {
-		Imports []api.ImportEdge `json:"imports"`
+		Imports helixRows[api.ImportEdge] `json:"imports"`
 	}
-	tr := importTraversal().Where(helix.PredEq("file_path", fileParam)).OrderBy("line", helix.OrderAsc).Project(importProjections()...)
+	tr := importTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("file_path", fileParam)).
+		OrderBy("line", helix.OrderAsc).
+		Project(importProjections()...)
 	if err := s.client.Exec(ctx, q.VarAs("imports", tr).Returning("imports"), &out); err != nil {
 		return nil, err
 	}
-	return out.Imports, nil
+	return out.Imports.Properties, nil
 }
 
 func (s *helixStore) GetImporters(ctx context.Context, importSource string) ([]api.ImportEdge, error) {
 	q := helix.ReadQuery("code_context_get_importers")
 	sourceParam := q.ParamString("source", importSource)
 	var out struct {
-		Imports []api.ImportEdge `json:"imports"`
+		Imports helixRows[api.ImportEdge] `json:"imports"`
 	}
-	tr := importTraversal().Where(helix.PredContainsExpr("source", sourceParam.Expr())).Project(importProjections()...)
+	tr := importTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredContainsExpr("source", sourceParam.Expr())).
+		Project(importProjections()...)
 	if err := s.client.Exec(ctx, q.VarAs("imports", tr).Returning("imports"), &out); err != nil {
 		return nil, err
 	}
-	return out.Imports, nil
+	return out.Imports.Properties, nil
 }
 
 func (s *helixStore) GetCallees(ctx context.Context, fromSymbol string) ([]api.CallEdge, error) {
 	q := helix.ReadQuery("code_context_get_callees")
 	fromParam := q.ParamString("from_symbol", fromSymbol)
 	var out struct {
-		Calls []api.CallEdge `json:"calls"`
+		Calls helixRows[api.CallEdge] `json:"calls"`
 	}
-	tr := callTraversal().Where(helix.PredEq("from_symbol", fromParam)).OrderBy("line", helix.OrderAsc).Project(callProjections()...)
+	tr := callTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("from_symbol", fromParam)).
+		OrderBy("line", helix.OrderAsc).
+		Project(callProjections()...)
 	if err := s.client.Exec(ctx, q.VarAs("calls", tr).Returning("calls"), &out); err != nil {
 		return nil, err
 	}
-	return out.Calls, nil
+	return out.Calls.Properties, nil
 }
 
 func (s *helixStore) GetCallers(ctx context.Context, toName string) ([]api.CallEdge, error) {
 	q := helix.ReadQuery("code_context_get_callers")
 	toParam := q.ParamString("to_name", toName)
 	var out struct {
-		Calls []api.CallEdge `json:"calls"`
+		Calls helixRows[api.CallEdge] `json:"calls"`
 	}
-	tr := callTraversal().Where(helix.PredContainsExpr("to_name", toParam.Expr())).Project(callProjections()...)
+	tr := callTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredContainsExpr("to_name", toParam.Expr())).
+		Project(callProjections()...)
 	if err := s.client.Exec(ctx, q.VarAs("calls", tr).Returning("calls"), &out); err != nil {
 		return nil, err
 	}
-	filtered := out.Calls[:0]
-	for _, call := range out.Calls {
+	calls := out.Calls.Properties
+	filtered := calls[:0]
+	for _, call := range calls {
 		if call.ToName == toName || strings.HasSuffix(call.ToName, "."+toName) || strings.HasSuffix(call.ToName, "::"+toName) {
 			filtered = append(filtered, call)
 		}
@@ -400,7 +452,7 @@ func (s *helixStore) GetCallers(ctx context.Context, toName string) ([]api.CallE
 func (s *helixStore) ListRoutes(ctx context.Context, query string) ([]api.Route, error) {
 	q := helix.ReadQuery("code_context_list_routes")
 	query = strings.TrimSpace(query)
-	tr := routeTraversal()
+	tr := routeTraversal().Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID)))
 	if query != "" {
 		queryParam := q.ParamString("query", query)
 		tr = tr.Where(helix.PredOr(
@@ -411,32 +463,35 @@ func (s *helixStore) ListRoutes(ctx context.Context, query string) ([]api.Route,
 		))
 	}
 	var out struct {
-		Routes []api.Route `json:"routes"`
+		Routes helixRows[api.Route] `json:"routes"`
 	}
 	if err := s.client.Exec(ctx, q.VarAs("routes", tr.Project(routeProjections()...)).Returning("routes"), &out); err != nil {
 		return nil, err
 	}
-	sort.Slice(out.Routes, func(i, j int) bool {
-		if out.Routes[i].Path != out.Routes[j].Path {
-			return out.Routes[i].Path < out.Routes[j].Path
+	routes := out.Routes.Properties
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Path != routes[j].Path {
+			return routes[i].Path < routes[j].Path
 		}
-		return out.Routes[i].Method < out.Routes[j].Method
+		return routes[i].Method < routes[j].Method
 	})
-	return out.Routes, nil
+	return routes, nil
 }
 
 func (s *helixStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 	var out struct {
-		Files     int `json:"files"`
-		Symbols   int `json:"symbols"`
-		Imports   int `json:"imports"`
-		Documents int `json:"documents"`
+		Files     helixCount `json:"files"`
+		Symbols   helixCount `json:"symbols"`
+		Imports   helixCount `json:"imports"`
+		Documents helixCount `json:"documents"`
 	}
-	req := helix.ReadQuery("code_context_stats").
-		VarAs("files", helix.G().NWithLabel(helixFileLabel).Count()).
-		VarAs("symbols", helix.G().NWithLabel(helixSymbolLabel).Count()).
-		VarAs("imports", helix.G().NWithLabel(helixImportLabel).Count()).
-		VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Count()).
+	q := helix.ReadQuery("code_context_stats")
+	projectParam := q.ParamString("project_id", s.projectID)
+	req := q.
+		VarAs("files", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("project_id", projectParam)).Count()).
+		VarAs("symbols", helix.G().NWithLabel(helixSymbolLabel).Where(helix.PredEq("project_id", projectParam)).Count()).
+		VarAs("imports", helix.G().NWithLabel(helixImportLabel).Where(helix.PredEq("project_id", projectParam)).Count()).
+		VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("project_id", projectParam)).Count()).
 		Returning("files", "symbols", "imports", "documents")
 	if err := s.client.Exec(ctx, req, &out); err != nil {
 		return nil, err
@@ -451,7 +506,7 @@ func (s *helixStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 			lastIndexed = f.IndexedAt
 		}
 	}
-	stats := &api.IndexStats{TotalFiles: out.Files, TotalSymbols: out.Symbols, TotalImports: out.Imports, TotalDocuments: out.Documents, LastIndexedUnix: lastIndexed, IndexVersion: "graph-export.v2"}
+	stats := &api.IndexStats{TotalFiles: out.Files.Count, TotalSymbols: out.Symbols.Count, TotalImports: out.Imports.Count, TotalDocuments: out.Documents.Count, LastIndexedUnix: lastIndexed, IndexVersion: "graph-export.v2"}
 	if lastIndexed > 0 {
 		stats.LastIndexedAt = time.Unix(lastIndexed, 0).UTC().Format(time.RFC3339)
 	}
@@ -464,20 +519,21 @@ func (s *helixStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error
 		AppliedVersion:  HelixSchemaVersion,
 		VersionOK:       true,
 		Tables:          []string{helixFileLabel, helixSymbolLabel, helixImportLabel, helixCallLabel, helixRouteLabel, helixDocumentLabel, helixDocumentLinkLabel},
-		Indexes:         []string{"file.path", "symbol.key", "symbol.search_text", "document.path", "document_link.target_key"},
+		Indexes:         []string{"file.key", "file.project_id", "symbol.key", "symbol.project_id", "symbol.search_text", "document.key", "document.project_id", "document_link.target_key"},
 	}, nil
 }
 
 func (s *helixStore) ResetIndex(ctx context.Context) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_reset_index")
-		q.VarAs("document_links", helix.G().NWithLabel(helixDocumentLinkLabel).Drop().Count())
-		q.VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Drop().Count())
-		q.VarAs("routes", helix.G().NWithLabel(helixRouteLabel).Drop().Count())
-		q.VarAs("calls", helix.G().NWithLabel(helixCallLabel).Drop().Count())
-		q.VarAs("imports", helix.G().NWithLabel(helixImportLabel).Drop().Count())
-		q.VarAs("symbols", helix.G().NWithLabel(helixSymbolLabel).Drop().Count())
-		q.VarAs("files", helix.G().NWithLabel(helixFileLabel).Drop().Count())
+		projectParam := q.ParamString("project_id", s.projectID)
+		q.VarAs("document_links", helix.G().NWithLabel(helixDocumentLinkLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
+		q.VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
+		q.VarAs("routes", helix.G().NWithLabel(helixRouteLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
+		q.VarAs("calls", helix.G().NWithLabel(helixCallLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
+		q.VarAs("imports", helix.G().NWithLabel(helixImportLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
+		q.VarAs("symbols", helix.G().NWithLabel(helixSymbolLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
+		q.VarAs("files", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
 		return q.Returning()
 	}, nil)
 }
@@ -488,11 +544,13 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 	}
 	now := time.Now().Unix()
 	var out struct {
-		Updated []idRow `json:"updated"`
-		Created []idRow `json:"created"`
+		Updated helixRows[idRow] `json:"updated"`
+		Created helixRows[idRow] `json:"created"`
 	}
 	err := s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_upsert_document")
+		projectID := q.ParamString("project_id", s.projectID)
+		key := q.ParamString("key", helixKey(s.projectID, doc.Path))
 		path := q.ParamString("path", doc.Path)
 		language := q.ParamString("language", doc.Language)
 		contentHash := q.ParamString("content_hash", doc.ContentHash)
@@ -500,8 +558,9 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 		summary := q.ParamString("summary", doc.Summary)
 		size := q.ParamI64("size", int64(doc.Size))
 		indexedAt := q.ParamI64("indexed_at", now)
-		q.VarAs("existing", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("path", path)))
+		q.VarAs("existing", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("key", key)))
 		q.VarAsIf("updated", helix.VarNotEmpty("existing"), helix.G().N(helix.NodeVar("existing")).
+			SetProperty("project_id", projectID).
 			SetProperty("language", language).
 			SetProperty("content_hash", contentHash).
 			SetProperty("title", title).
@@ -510,6 +569,8 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 			SetProperty("indexed_at", indexedAt).
 			Project(helix.ProjectPropAs("$id", "id")))
 		q.VarAsIf("created", helix.VarEmpty("existing"), helix.G().AddN(helixDocumentLabel, helix.Props{
+			helix.Prop("key", key),
+			helix.Prop("project_id", projectID),
 			helix.Prop("path", path),
 			helix.Prop("language", language),
 			helix.Prop("content_hash", contentHash),
@@ -523,29 +584,29 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 	if err != nil {
 		return 0, err
 	}
-	return firstID(out.Updated, out.Created), nil
+	return firstID(out.Updated.Properties, out.Created.Properties), nil
 }
 
 func (s *helixStore) GetDocument(ctx context.Context, path string) (*api.Document, error) {
 	q := helix.ReadQuery("code_context_get_document")
-	pathParam := q.ParamString("path", path)
+	keyParam := q.ParamString("key", helixKey(s.projectID, path))
 	var out struct {
-		Documents []api.Document `json:"documents"`
+		Documents helixRows[api.Document] `json:"documents"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("documents", documentTraversal().Where(helix.PredEq("path", pathParam)).Limit(1).Project(documentProjections()...)).Returning("documents"), &out); err != nil {
+	if err := s.client.Exec(ctx, q.VarAs("documents", documentTraversal().Where(helix.PredEq("key", keyParam)).Limit(1).Project(documentProjections()...)).Returning("documents"), &out); err != nil {
 		return nil, err
 	}
-	if len(out.Documents) == 0 {
+	if len(out.Documents.Properties) == 0 {
 		return nil, nil
 	}
-	return &out.Documents[0], nil
+	return &out.Documents.Properties[0], nil
 }
 
 func (s *helixStore) DeleteDocument(ctx context.Context, path string) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_delete_document")
-		pathParam := q.ParamString("path", path)
-		q.VarAs("document", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("path", pathParam)))
+		keyParam := q.ParamString("key", helixKey(s.projectID, path))
+		q.VarAs("document", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("key", keyParam)))
 		q.VarAs("drop_links", helix.G().N(helix.NodeVar("document")).Out(helixDocumentLinkEdge).Drop().Count())
 		q.VarAs("drop_document", helix.G().N(helix.NodeVar("document")).Drop().Count())
 		return q.Returning()
@@ -555,14 +616,15 @@ func (s *helixStore) DeleteDocument(ctx context.Context, path string) error {
 func (s *helixStore) ListDocuments(ctx context.Context) ([]*api.Document, error) {
 	q := helix.ReadQuery("code_context_list_documents")
 	var out struct {
-		Documents []api.Document `json:"documents"`
+		Documents helixRows[api.Document] `json:"documents"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("documents", documentTraversal().Project(documentProjections()...)).Returning("documents"), &out); err != nil {
+	tr := documentTraversal().Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Project(documentProjections()...)
+	if err := s.client.Exec(ctx, q.VarAs("documents", tr).Returning("documents"), &out); err != nil {
 		return nil, err
 	}
-	result := make([]*api.Document, 0, len(out.Documents))
-	for i := range out.Documents {
-		result = append(result, &out.Documents[i])
+	result := make([]*api.Document, 0, len(out.Documents.Properties))
+	for i := range out.Documents.Properties {
+		result = append(result, &out.Documents.Properties[i])
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
 	return result, nil
@@ -576,11 +638,11 @@ func (s *helixStore) ReplaceDocumentLinks(ctx context.Context, docID int64, link
 	if doc == nil {
 		return nil
 	}
-	rows := documentLinkParamRows(doc.Path, docID, links)
+	rows := documentLinkParamRows(s.projectID, doc.Path, docID, links)
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_replace_document_links")
 		q.ParamArray("links", rows, helix.ParamTypeObject())
-		q.VarAs("document", helix.G().N(helix.NodeID(uint64(docID))))
+		q.VarAs("document", helix.G().N(helix.NodeID(uint64(docID))).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))))
 		q.VarAs("drop_links", helix.G().N(helix.NodeVar("document")).Out(helixDocumentLinkEdge).Drop().Count())
 		q.ForEachParam("links", documentLinkWriteBatch(helix.NodeVar("document")))
 		return q.Returning()
@@ -591,36 +653,45 @@ func (s *helixStore) GetDocumentLinks(ctx context.Context, docPath string) ([]ap
 	q := helix.ReadQuery("code_context_get_document_links")
 	pathParam := q.ParamString("document_path", docPath)
 	var out struct {
-		Links []api.DocumentLink `json:"links"`
+		Links helixRows[api.DocumentLink] `json:"links"`
 	}
-	tr := documentLinkTraversal().Where(helix.PredEq("document_path", pathParam)).OrderBy("line", helix.OrderAsc).Project(documentLinkProjections()...)
+	tr := documentLinkTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("document_path", pathParam)).
+		OrderBy("line", helix.OrderAsc).
+		Project(documentLinkProjections()...)
 	if err := s.client.Exec(ctx, q.VarAs("links", tr).Returning("links"), &out); err != nil {
 		return nil, err
 	}
-	return out.Links, nil
+	return out.Links.Properties, nil
 }
 
 func (s *helixStore) GetDocumentsByTarget(ctx context.Context, targetType, targetValue string) ([]api.DocumentLink, error) {
 	q := helix.ReadQuery("code_context_get_documents_by_target")
 	targetKey := q.ParamString("target_key", targetType+":"+targetValue)
 	var out struct {
-		Links []api.DocumentLink `json:"links"`
+		Links helixRows[api.DocumentLink] `json:"links"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("links", documentLinkTraversal().Where(helix.PredEq("target_key", targetKey)).Project(documentLinkProjections()...)).Returning("links"), &out); err != nil {
+	tr := documentLinkTraversal().
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("target_key", targetKey)).
+		Project(documentLinkProjections()...)
+	if err := s.client.Exec(ctx, q.VarAs("links", tr).Returning("links"), &out); err != nil {
 		return nil, err
 	}
-	return out.Links, nil
+	return out.Links.Properties, nil
 }
 
 func (s *helixStore) GetDocumentStats(ctx context.Context) (total, indexed int, err error) {
 	var out struct {
-		Documents int `json:"documents"`
+		Documents helixCount `json:"documents"`
 	}
-	req := helix.ReadQuery("code_context_document_stats").VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Count()).Returning("documents")
+	q := helix.ReadQuery("code_context_document_stats")
+	req := q.VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Count()).Returning("documents")
 	if err := s.client.Exec(ctx, req, &out); err != nil {
 		return 0, 0, err
 	}
-	return out.Documents, out.Documents, nil
+	return out.Documents.Count, out.Documents.Count, nil
 }
 
 func (s *helixStore) Close() error { return nil }
@@ -629,7 +700,7 @@ func (s *helixStore) replaceChildNodes(ctx context.Context, fileID int64, queryN
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery(queryName)
 		q.ParamArray(param, rows, helix.ParamTypeObject())
-		q.VarAs("file", helix.G().N(helix.NodeID(uint64(fileID))))
+		q.VarAs("file", helix.G().N(helix.NodeID(uint64(fileID))).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))))
 		q.VarAs("drop_existing", helix.G().N(helix.NodeVar("file")).Out(edge).Drop().Count())
 		q.ForEachParam(param, body)
 		return q.Returning()
@@ -638,34 +709,36 @@ func (s *helixStore) replaceChildNodes(ctx context.Context, fileID int64, queryN
 
 func (s *helixStore) getFileByID(ctx context.Context, id int64) (*api.FileInfo, error) {
 	var out struct {
-		Files []helixFileRow `json:"files"`
+		Files helixRows[helixFileRow] `json:"files"`
 	}
-	req := helix.ReadQuery("code_context_get_file_by_id").
-		VarAs("files", helix.G().N(helix.NodeID(uint64(id))).Project(fileProjections()...)).
+	q := helix.ReadQuery("code_context_get_file_by_id")
+	req := q.
+		VarAs("files", helix.G().N(helix.NodeID(uint64(id))).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Project(fileProjections()...)).
 		Returning("files")
 	if err := s.client.Exec(ctx, req, &out); err != nil {
 		return nil, err
 	}
-	if len(out.Files) == 0 {
+	if len(out.Files.Properties) == 0 {
 		return nil, nil
 	}
-	return out.Files[0].FileInfo(), nil
+	return out.Files.Properties[0].FileInfo(), nil
 }
 
 func (s *helixStore) getDocumentByID(ctx context.Context, id int64) (*api.Document, error) {
 	var out struct {
-		Documents []api.Document `json:"documents"`
+		Documents helixRows[api.Document] `json:"documents"`
 	}
-	req := helix.ReadQuery("code_context_get_document_by_id").
-		VarAs("documents", helix.G().N(helix.NodeID(uint64(id))).Project(documentProjections()...)).
+	q := helix.ReadQuery("code_context_get_document_by_id")
+	req := q.
+		VarAs("documents", helix.G().N(helix.NodeID(uint64(id))).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Project(documentProjections()...)).
 		Returning("documents")
 	if err := s.client.Exec(ctx, req, &out); err != nil {
 		return nil, err
 	}
-	if len(out.Documents) == 0 {
+	if len(out.Documents.Properties) == 0 {
 		return nil, nil
 	}
-	return &out.Documents[0], nil
+	return &out.Documents.Properties[0], nil
 }
 
 func (s *helixStore) execWrite(ctx context.Context, build func() helix.Request, out any) error {
@@ -686,6 +759,14 @@ func (s *helixStore) execWrite(ctx context.Context, build func() helix.Request, 
 
 type idRow struct {
 	ID int64 `json:"id"`
+}
+
+type helixRows[T any] struct {
+	Properties []T `json:"properties"`
+}
+
+type helixCount struct {
+	Count int `json:"count"`
 }
 
 func firstID(groups ...[]idRow) int64 {
@@ -824,6 +905,7 @@ func symbolWriteBatch(file helix.NodeRef) *helix.WriteBatch {
 	return helix.Write().
 		VarAs("symbol", helix.G().AddN(helixSymbolLabel, helix.Props{
 			helix.Prop("key", helix.ExprParam("key")),
+			helix.Prop("project_id", helix.ExprParam("project_id")),
 			helix.Prop("file_path", helix.ExprParam("file_path")),
 			helix.Prop("name", helix.ExprParam("name")),
 			helix.Prop("kind", helix.ExprParam("kind")),
@@ -842,6 +924,7 @@ func importWriteBatch(file helix.NodeRef) *helix.WriteBatch {
 	return helix.Write().
 		VarAs("import", helix.G().AddN(helixImportLabel, helix.Props{
 			helix.Prop("key", helix.ExprParam("key")),
+			helix.Prop("project_id", helix.ExprParam("project_id")),
 			helix.Prop("file_path", helix.ExprParam("file_path")),
 			helix.Prop("source", helix.ExprParam("source")),
 			helix.Prop("line", helix.ExprParam("line")),
@@ -855,6 +938,7 @@ func callWriteBatch(file helix.NodeRef) *helix.WriteBatch {
 	return helix.Write().
 		VarAs("call", helix.G().AddN(helixCallLabel, helix.Props{
 			helix.Prop("key", helix.ExprParam("key")),
+			helix.Prop("project_id", helix.ExprParam("project_id")),
 			helix.Prop("file_path", helix.ExprParam("file_path")),
 			helix.Prop("from_symbol", helix.ExprParam("from_symbol")),
 			helix.Prop("to_name", helix.ExprParam("to_name")),
@@ -870,6 +954,7 @@ func routeWriteBatch(file helix.NodeRef) *helix.WriteBatch {
 	return helix.Write().
 		VarAs("route", helix.G().AddN(helixRouteLabel, helix.Props{
 			helix.Prop("key", helix.ExprParam("key")),
+			helix.Prop("project_id", helix.ExprParam("project_id")),
 			helix.Prop("file_path", helix.ExprParam("file_path")),
 			helix.Prop("method", helix.ExprParam("method")),
 			helix.Prop("path", helix.ExprParam("path")),
@@ -887,6 +972,7 @@ func documentLinkWriteBatch(document helix.NodeRef) *helix.WriteBatch {
 	return helix.Write().
 		VarAs("link", helix.G().AddN(helixDocumentLinkLabel, helix.Props{
 			helix.Prop("key", helix.ExprParam("key")),
+			helix.Prop("project_id", helix.ExprParam("project_id")),
 			helix.Prop("document_id", helix.ExprParam("document_id")),
 			helix.Prop("document_path", helix.ExprParam("document_path")),
 			helix.Prop("target_key", helix.ExprParam("target_key")),
@@ -904,14 +990,15 @@ func documentLinkWriteBatch(document helix.NodeRef) *helix.WriteBatch {
 		}))
 }
 
-func symbolParamRows(filePath string, symbols []api.Symbol) []map[string]any {
+func symbolParamRows(projectID, filePath string, symbols []api.Symbol) []map[string]any {
 	rows := make([]map[string]any, 0, len(symbols))
 	for _, sym := range symbols {
 		if sym.FilePath == "" {
 			sym.FilePath = filePath
 		}
 		rows = append(rows, map[string]any{
-			"key":         symbolKeyForHelix(sym.FilePath, sym.Name, sym.Line),
+			"key":         symbolKeyForHelix(projectID, sym.FilePath, sym.Name, sym.Line),
+			"project_id":  projectID,
 			"file_path":   sym.FilePath,
 			"name":        sym.Name,
 			"kind":        string(sym.Kind),
@@ -925,23 +1012,24 @@ func symbolParamRows(filePath string, symbols []api.Symbol) []map[string]any {
 	return rows
 }
 
-func importParamRows(filePath string, imports []api.ImportEdge) []map[string]any {
+func importParamRows(projectID, filePath string, imports []api.ImportEdge) []map[string]any {
 	rows := make([]map[string]any, 0, len(imports))
 	for _, imp := range imports {
 		if imp.FromFile == "" {
 			imp.FromFile = filePath
 		}
 		rows = append(rows, map[string]any{
-			"key":       fmt.Sprintf("%s:%s:%d", imp.FromFile, imp.ToSource, imp.Line),
-			"file_path": imp.FromFile,
-			"source":    imp.ToSource,
-			"line":      int64(imp.Line),
+			"key":        helixKey(projectID, imp.FromFile, imp.ToSource, fmt.Sprint(imp.Line)),
+			"project_id": projectID,
+			"file_path":  imp.FromFile,
+			"source":     imp.ToSource,
+			"line":       int64(imp.Line),
 		})
 	}
 	return rows
 }
 
-func callParamRows(filePath string, calls []api.CallEdge) []map[string]any {
+func callParamRows(projectID, filePath string, calls []api.CallEdge) []map[string]any {
 	rows := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {
 		if call.FromFile == "" {
@@ -952,7 +1040,8 @@ func callParamRows(filePath string, calls []api.CallEdge) []map[string]any {
 			confidence = "HEURISTIC"
 		}
 		rows = append(rows, map[string]any{
-			"key":         fmt.Sprintf("%s:%s:%s:%d", call.FromFile, call.FromSymbol, call.ToName, call.Line),
+			"key":         helixKey(projectID, call.FromFile, call.FromSymbol, call.ToName, fmt.Sprint(call.Line)),
+			"project_id":  projectID,
 			"file_path":   call.FromFile,
 			"from_symbol": call.FromSymbol,
 			"to_name":     call.ToName,
@@ -963,7 +1052,7 @@ func callParamRows(filePath string, calls []api.CallEdge) []map[string]any {
 	return rows
 }
 
-func routeParamRows(filePath string, routes []api.Route) []map[string]any {
+func routeParamRows(projectID, filePath string, routes []api.Route) []map[string]any {
 	rows := make([]map[string]any, 0, len(routes))
 	for _, route := range routes {
 		if route.FilePath == "" {
@@ -974,7 +1063,8 @@ func routeParamRows(filePath string, routes []api.Route) []map[string]any {
 			confidence = "HEURISTIC"
 		}
 		rows = append(rows, map[string]any{
-			"key":        fmt.Sprintf("%s:%s:%s:%s:%d", route.FilePath, route.Method, route.Path, route.Handler, route.Line),
+			"key":        helixKey(projectID, route.FilePath, route.Method, route.Path, route.Handler, fmt.Sprint(route.Line)),
+			"project_id": projectID,
 			"file_path":  route.FilePath,
 			"method":     route.Method,
 			"path":       route.Path,
@@ -987,7 +1077,7 @@ func routeParamRows(filePath string, routes []api.Route) []map[string]any {
 	return rows
 }
 
-func documentLinkParamRows(docPath string, docID int64, links []api.DocumentLink) []map[string]any {
+func documentLinkParamRows(projectID, docPath string, docID int64, links []api.DocumentLink) []map[string]any {
 	rows := make([]map[string]any, 0, len(links))
 	for _, link := range links {
 		documentPath := link.DocumentPath
@@ -995,7 +1085,8 @@ func documentLinkParamRows(docPath string, docID int64, links []api.DocumentLink
 			documentPath = docPath
 		}
 		rows = append(rows, map[string]any{
-			"key":           fmt.Sprintf("%s:%s:%s:%d", documentPath, link.TargetType, link.TargetValue, link.Line),
+			"key":           helixKey(projectID, documentPath, link.TargetType, link.TargetValue, fmt.Sprint(link.Line)),
+			"project_id":    projectID,
 			"document_id":   docID,
 			"document_path": documentPath,
 			"target_key":    link.TargetType + ":" + link.TargetValue,
@@ -1012,8 +1103,12 @@ func documentLinkParamRows(docPath string, docID int64, links []api.DocumentLink
 	return rows
 }
 
-func symbolKeyForHelix(filePath, name string, line int) string {
-	return fmt.Sprintf("%s:%s:%d", filePath, name, line)
+func symbolKeyForHelix(projectID, filePath, name string, line int) string {
+	return helixKey(projectID, filePath, name, fmt.Sprint(line))
+}
+
+func helixKey(parts ...string) string {
+	return strings.Join(parts, "\x1f")
 }
 
 func definitionKindPredicate() helix.Predicate {

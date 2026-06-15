@@ -74,6 +74,7 @@ store:
   helix:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
+    project_id: my-repo
 server:
   port: 9090
 watch:
@@ -86,6 +87,9 @@ watch:
 
 SQLite is the default storage backend; `store.backend: helix` enables the HelixDB-backed store.
 If no Helix URL is configured, the Helix Go SDK uses its local default endpoint (`http://localhost:6969`).
+Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
+For Helix runtime validation, prefer a dedicated temporary instance and run:
+`HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
 
 ## Recommended Dogfood Workflow
 
