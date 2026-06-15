@@ -23,9 +23,26 @@ var configNames = []string{
 type Config struct {
 	Root   string       `json:"root" yaml:"root"`
 	DB     string       `json:"db" yaml:"db"`
+	Store  StoreConfig  `json:"store" yaml:"store"`
 	Server ServerConfig `json:"server" yaml:"server"`
 	Watch  WatchConfig  `json:"watch" yaml:"watch"`
 	Docs   DocsConfig   `json:"docs" yaml:"docs"`
+}
+
+type StoreConfig struct {
+	Backend string            `json:"backend" yaml:"backend"`
+	SQLite  SQLiteStoreConfig `json:"sqlite" yaml:"sqlite"`
+	Helix   HelixStoreConfig  `json:"helix" yaml:"helix"`
+}
+
+type SQLiteStoreConfig struct {
+	DB string `json:"db" yaml:"db"`
+}
+
+type HelixStoreConfig struct {
+	URL       string `json:"url" yaml:"url"`
+	APIKey    string `json:"api_key" yaml:"api_key"`
+	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`
 }
 
 type ServerConfig struct {
@@ -93,6 +110,9 @@ func Load(startDir string) (*Loaded, error) {
 	}
 	if cfg.DB != "" {
 		cfg.DB = resolvePath(baseDir, cfg.DB)
+	}
+	if cfg.Store.SQLite.DB != "" {
+		cfg.Store.SQLite.DB = resolvePath(baseDir, cfg.Store.SQLite.DB)
 	}
 
 	return &Loaded{Path: configPath, Config: cfg}, nil

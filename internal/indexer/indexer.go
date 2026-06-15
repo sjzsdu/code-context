@@ -125,42 +125,19 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			fileID, err := idx.store.UpsertFile(ctx, &api.FileInfo{
-				Path: pr.path, Language: pr.lang, ContentHash: hash, Size: int64(len(pr.content)),
+			_, err := store.ReplaceFileIndex(ctx, idx.store, store.FileIndex{
+				File: &api.FileInfo{
+					Path: pr.path, Language: pr.lang, ContentHash: hash, Size: int64(len(pr.content)),
+				},
+				Symbols: pr.result.Symbols,
+				Imports: pr.result.Imports,
+				Calls:   pr.result.Calls,
+				Routes:  pr.result.Routes,
 			})
 			if err != nil {
 				atomic.AddInt64(&failed, 1)
 				if verbose {
-					fmt.Fprintf(os.Stderr, "  fail %s: upsert file: %v\n", pr.path, err)
-				}
-				return
-			}
-
-			if err := idx.store.ReplaceSymbols(ctx, fileID, pr.result.Symbols); err != nil {
-				atomic.AddInt64(&failed, 1)
-				if verbose {
-					fmt.Fprintf(os.Stderr, "  fail %s: replace symbols: %v\n", pr.path, err)
-				}
-				return
-			}
-			if err := idx.store.ReplaceImports(ctx, fileID, pr.result.Imports); err != nil {
-				atomic.AddInt64(&failed, 1)
-				if verbose {
-					fmt.Fprintf(os.Stderr, "  fail %s: replace imports: %v\n", pr.path, err)
-				}
-				return
-			}
-			if err := idx.store.ReplaceCalls(ctx, fileID, pr.result.Calls); err != nil {
-				atomic.AddInt64(&failed, 1)
-				if verbose {
-					fmt.Fprintf(os.Stderr, "  fail %s: replace calls: %v\n", pr.path, err)
-				}
-				return
-			}
-			if err := idx.store.ReplaceRoutes(ctx, fileID, pr.result.Routes); err != nil {
-				atomic.AddInt64(&failed, 1)
-				if verbose {
-					fmt.Fprintf(os.Stderr, "  fail %s: replace routes: %v\n", pr.path, err)
+					fmt.Fprintf(os.Stderr, "  fail %s: replace file index: %v\n", pr.path, err)
 				}
 				return
 			}
@@ -384,26 +361,18 @@ func (idx *Indexer) indexOneFile(ctx context.Context, path string) (nSyms, nImps
 		return 0, 0, false, err
 	}
 
-	fileID, err := idx.store.UpsertFile(ctx, &api.FileInfo{
-		Path:        path,
-		Language:    lang,
-		ContentHash: hash,
-		Size:        int64(len(content)),
-	})
-	if err != nil {
-		return 0, 0, false, err
-	}
-
-	if err := idx.store.ReplaceSymbols(ctx, fileID, result.Symbols); err != nil {
-		return 0, 0, false, err
-	}
-	if err := idx.store.ReplaceImports(ctx, fileID, result.Imports); err != nil {
-		return 0, 0, false, err
-	}
-	if err := idx.store.ReplaceCalls(ctx, fileID, result.Calls); err != nil {
-		return 0, 0, false, err
-	}
-	if err := idx.store.ReplaceRoutes(ctx, fileID, result.Routes); err != nil {
+	if _, err := store.ReplaceFileIndex(ctx, idx.store, store.FileIndex{
+		File: &api.FileInfo{
+			Path:        path,
+			Language:    lang,
+			ContentHash: hash,
+			Size:        int64(len(content)),
+		},
+		Symbols: result.Symbols,
+		Imports: result.Imports,
+		Calls:   result.Calls,
+		Routes:  result.Routes,
+	}); err != nil {
 		return 0, 0, false, err
 	}
 

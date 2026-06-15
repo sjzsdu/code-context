@@ -14,13 +14,18 @@ import (
 	"github.com/sjzsdu/code-context/internal/config"
 	"github.com/sjzsdu/code-context/internal/engine"
 	"github.com/sjzsdu/code-context/internal/search"
+	"github.com/sjzsdu/code-context/internal/store"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var (
-	root string
-	db   string
+	root           string
+	db             string
+	storeBackend   string
+	helixURL       string
+	helixAPIKey    string
+	helixAPIKeyEnv string
 )
 
 type GraphArgs struct {
@@ -84,11 +89,15 @@ type FreshnessArgs struct {
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
+	flag.StringVar(&storeBackend, "store-backend", "", "storage backend (sqlite|helix; default: sqlite)")
+	flag.StringVar(&helixURL, "helix-url", "", "HelixDB endpoint URL for --store-backend=helix")
+	flag.StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
+	flag.StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	flag.Parse()
 	applyConfigDefaults()
 
 	// Initialize the engine
-	eng, err := engine.New(root, db)
+	eng, err := engine.NewWithStoreOptions(root, mcpStoreOptions())
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
 	}
@@ -140,6 +149,32 @@ func applyConfigDefaults() {
 	}
 	if !visited["db"] && loaded.Config.DB != "" {
 		db = loaded.Config.DB
+	} else if !visited["db"] && loaded.Config.Store.SQLite.DB != "" {
+		db = loaded.Config.Store.SQLite.DB
+	}
+	if !visited["store-backend"] && loaded.Config.Store.Backend != "" {
+		storeBackend = loaded.Config.Store.Backend
+	}
+	if !visited["helix-url"] && loaded.Config.Store.Helix.URL != "" {
+		helixURL = loaded.Config.Store.Helix.URL
+	}
+	if !visited["helix-api-key"] && loaded.Config.Store.Helix.APIKey != "" {
+		helixAPIKey = loaded.Config.Store.Helix.APIKey
+	}
+	if !visited["helix-api-key-env"] && loaded.Config.Store.Helix.APIKeyEnv != "" {
+		helixAPIKeyEnv = loaded.Config.Store.Helix.APIKeyEnv
+	}
+}
+
+func mcpStoreOptions() store.Options {
+	return store.Options{
+		Backend: store.Backend(storeBackend),
+		SQLite:  store.SQLiteOptions{Path: db},
+		Helix: store.HelixOptions{
+			URL:       helixURL,
+			APIKey:    helixAPIKey,
+			APIKeyEnv: helixAPIKeyEnv,
+		},
 	}
 }
 

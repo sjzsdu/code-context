@@ -94,12 +94,20 @@ code-context serve --port 9090
 
 `code-context` supports a project config file at `.code-context.yaml`.
 
+SQLite remains the default storage backend. The `helix` backend name and options are reserved so
+projects can opt into the same configuration shape once the Helix store implementation lands.
+
 Supported options:
 
 | Key | Type | Description |
 |---|---|---|
 | `root` | string | Codebase root directory |
-| `db` | string | SQLite database path |
+| `db` | string | SQLite database path (legacy shorthand for `store.sqlite.db`) |
+| `store.backend` | string | Storage backend: `sqlite` or `helix` |
+| `store.sqlite.db` | string | SQLite database path |
+| `store.helix.url` | string | HelixDB endpoint URL |
+| `store.helix.api_key` | string | HelixDB API key |
+| `store.helix.api_key_env` | string | Environment variable containing the HelixDB API key |
 | `server.port` | int | HTTP server port |
 | `watch.enabled` | bool | Enable watch mode / background refresh by default |
 | `watch.interval` | duration | Polling interval for incremental refresh |
@@ -113,6 +121,13 @@ Example (`.code-context.yaml`):
 ```yaml
 root: .
 db: .code-context/index.db
+store:
+  backend: sqlite
+  sqlite:
+    db: .code-context/index.db
+  helix:
+    url: http://localhost:6969
+    api_key_env: HELIX_API_KEY
 server:
   port: 9090
 watch:
@@ -393,6 +408,10 @@ code-context test-impact --state unstaged
 |---|---|---|---|
 | `--root` | `-r` | `.` | Codebase root directory |
 | `--db` | | `<root>/.code-context/index.db` | Database path |
+| `--store-backend` | | `sqlite` | Storage backend (`sqlite` or reserved `helix`) |
+| `--helix-url` | | | HelixDB endpoint URL |
+| `--helix-api-key` | | | HelixDB API key |
+| `--helix-api-key-env` | | | Environment variable containing the HelixDB API key |
 
 ## HTTP API
 

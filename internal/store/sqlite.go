@@ -216,6 +216,97 @@ func (s *sqliteStore) UpsertFile(ctx context.Context, f *api.FileInfo) (int64, e
 	return id, nil
 }
 
+func (s *sqliteStore) ReplaceFileIndex(ctx context.Context, idx FileIndex) (int64, error) {
+	if idx.File == nil {
+		return 0, fmt.Errorf("file index file is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO files (path, language, content_hash, size) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(path) DO UPDATE SET language=excluded.language, content_hash=excluded.content_hash, size=excluded.size, indexed_at=unixepoch()`,
+		idx.File.Path, string(idx.File.Language), idx.File.ContentHash, idx.File.Size); err != nil {
+		return 0, err
+	}
+
+	var fileID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM files WHERE path = ?`, idx.File.Path).Scan(&fileID); err != nil {
+		return 0, err
+	}
+
+	for _, stmt := range []string{
+		`DELETE FROM symbols WHERE file_id = ?`,
+		`DELETE FROM imports WHERE file_id = ?`,
+		`DELETE FROM calls WHERE file_id = ?`,
+		`DELETE FROM routes WHERE file_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, fileID); err != nil {
+			return 0, err
+		}
+	}
+
+	symStmt, err := tx.PrepareContext(ctx, `INSERT INTO symbols (file_id, name, kind, line, end_line, signature, parent) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer symStmt.Close()
+	for _, sym := range idx.Symbols {
+		if _, err := symStmt.ExecContext(ctx, fileID, sym.Name, string(sym.Kind), sym.Line, sym.EndLine, sym.Signature, sym.Parent); err != nil {
+			return 0, err
+		}
+	}
+
+	importStmt, err := tx.PrepareContext(ctx, `INSERT INTO imports (file_id, source, line) VALUES (?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer importStmt.Close()
+	for _, imp := range idx.Imports {
+		if _, err := importStmt.ExecContext(ctx, fileID, imp.ToSource, imp.Line); err != nil {
+			return 0, err
+		}
+	}
+
+	callStmt, err := tx.PrepareContext(ctx, `INSERT INTO calls (file_id, from_symbol, to_name, line, confidence) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer callStmt.Close()
+	for _, call := range idx.Calls {
+		confidence := call.Confidence
+		if confidence == "" {
+			confidence = "HEURISTIC"
+		}
+		if _, err := callStmt.ExecContext(ctx, fileID, call.FromSymbol, call.ToName, call.Line, confidence); err != nil {
+			return 0, err
+		}
+	}
+
+	routeStmt, err := tx.PrepareContext(ctx, `INSERT INTO routes (file_id, method, path, handler, framework, line, confidence) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer routeStmt.Close()
+	for _, route := range idx.Routes {
+		confidence := route.Confidence
+		if confidence == "" {
+			confidence = "HEURISTIC"
+		}
+		if _, err := routeStmt.ExecContext(ctx, fileID, route.Method, route.Path, route.Handler, route.Framework, route.Line, confidence); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return fileID, nil
+}
+
 func (s *sqliteStore) GetFile(ctx context.Context, path string) (*api.FileInfo, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT path, language, content_hash, size FROM files WHERE path = ?`, path)
 	var f api.FileInfo

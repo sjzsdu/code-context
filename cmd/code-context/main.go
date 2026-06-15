@@ -18,11 +18,16 @@ import (
 	"github.com/sjzsdu/code-context/internal/graphhtml"
 	"github.com/sjzsdu/code-context/internal/search"
 	"github.com/sjzsdu/code-context/internal/server"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 var (
-	root   string
-	dbPath string
+	root           string
+	dbPath         string
+	storeBackend   string
+	helixURL       string
+	helixAPIKey    string
+	helixAPIKeyEnv string
 )
 
 type runtimeConfig struct {
@@ -48,6 +53,10 @@ func main() {
 
 	cmd.PersistentFlags().StringVarP(&root, "root", "r", ".", "codebase root directory")
 	cmd.PersistentFlags().StringVar(&dbPath, "db", "", "database path (default: <root>/.code-context/index.db)")
+	cmd.PersistentFlags().StringVar(&storeBackend, "store-backend", "", "storage backend (sqlite|helix; default: sqlite)")
+	cmd.PersistentFlags().StringVar(&helixURL, "helix-url", "", "HelixDB endpoint URL for --store-backend=helix")
+	cmd.PersistentFlags().StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
+	cmd.PersistentFlags().StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 
 	cmd.AddCommand(
 		newIndexCmd(),
@@ -122,11 +131,52 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 		}
 	}
 	if !cmd.Flags().Changed("db") {
-		if loaded, err := config.Load(root); err == nil && loaded.Config.DB != "" {
-			dbPath = loaded.Config.DB
+		if loaded, err := config.Load(root); err == nil {
+			switch {
+			case loaded.Config.DB != "":
+				dbPath = loaded.Config.DB
+			case loaded.Config.Store.SQLite.DB != "":
+				dbPath = loaded.Config.Store.SQLite.DB
+			}
+		}
+	}
+	if !cmd.Flags().Changed("store-backend") {
+		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Backend != "" {
+			storeBackend = loaded.Config.Store.Backend
+		}
+	}
+	if !cmd.Flags().Changed("helix-url") {
+		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Helix.URL != "" {
+			helixURL = loaded.Config.Store.Helix.URL
+		}
+	}
+	if !cmd.Flags().Changed("helix-api-key") {
+		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Helix.APIKey != "" {
+			helixAPIKey = loaded.Config.Store.Helix.APIKey
+		}
+	}
+	if !cmd.Flags().Changed("helix-api-key-env") {
+		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Helix.APIKeyEnv != "" {
+			helixAPIKeyEnv = loaded.Config.Store.Helix.APIKeyEnv
 		}
 	}
 	_ = cfg
+}
+
+func newEngine() (*engine.Engine, error) {
+	return engine.NewWithStoreOptions(root, storeOptions())
+}
+
+func storeOptions() store.Options {
+	return store.Options{
+		Backend: store.Backend(storeBackend),
+		SQLite:  store.SQLiteOptions{Path: dbPath},
+		Helix: store.HelixOptions{
+			URL:       helixURL,
+			APIKey:    helixAPIKey,
+			APIKeyEnv: helixAPIKeyEnv,
+		},
+	}
 }
 
 func attachServeConfig(rootCmd *cobra.Command) {
@@ -275,7 +325,7 @@ func newIndexCmd() *cobra.Command {
 		Use:   "index",
 		Short: "Index the codebase",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -314,7 +364,7 @@ func newRebuildCmd() *cobra.Command {
 		Use:   "rebuild",
 		Short: "Clear the current index and rebuild it from disk",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -337,7 +387,7 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check database schema, index freshness, and service health",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -403,7 +453,7 @@ func newCICmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -477,7 +527,7 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search symbols by name",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -514,7 +564,7 @@ func newFindDefCmd() *cobra.Command {
 		Short: "Find definition of a symbol",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -537,7 +587,7 @@ func newGitFilesCmd() *cobra.Command {
 		Use:   "git-files",
 		Short: "List files changed in local git state",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -571,7 +621,7 @@ func newGitDiffCmd() *cobra.Command {
 		Use:   "git-diff",
 		Short: "Show git diff hunks with line-level changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -628,7 +678,7 @@ func newFilesCmd() *cobra.Command {
 		Use:   "files",
 		Short: "List indexed files",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -660,7 +710,7 @@ func newImportsCmd() *cobra.Command {
 		Short: "Show imports of a file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -685,7 +735,7 @@ func newImportersCmd() *cobra.Command {
 		Short: "Show files that import a given source",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -709,7 +759,7 @@ func newStatsCmd() *cobra.Command {
 		Use:   "stats",
 		Short: "Show index statistics",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -741,7 +791,7 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show workflow and service status metadata",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -813,7 +863,7 @@ func newFreshnessCmd() *cobra.Command {
 		Use:   "freshness",
 		Short: "Show indexed files/documents that differ from the filesystem",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -848,7 +898,7 @@ func newCallersCmd() *cobra.Command {
 		Short: "Show functions or methods that call a symbol name",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -869,7 +919,7 @@ func newCalleesCmd() *cobra.Command {
 		Short: "Show symbols called by a function or method",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -897,7 +947,7 @@ func newRoutesCmd() *cobra.Command {
 		Short: "List framework routes discovered in indexed code",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -933,7 +983,7 @@ func newRouteContextCmd() *cobra.Command {
 		Short: "Analyze route-level impact using handlers, calls, docs, tests, and risk",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -977,7 +1027,7 @@ func newDocsForCmd() *cobra.Command {
 		Short: "Show documents that reference a file, symbol, module, or text query",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1007,7 +1057,7 @@ func newDocDriftCmd() *cobra.Command {
 		Use:   "doc-drift",
 		Short: "Find stale document references to missing files, symbols, modules, or routes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1054,7 +1104,7 @@ func newDocCoverageCmd() *cobra.Command {
 		Use:   "doc-coverage",
 		Short: "Find indexed routes and public symbols that are not referenced by documentation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1120,7 +1170,7 @@ func newMapCmd() *cobra.Command {
 		Use:   "map",
 		Short: "Show project architecture overview",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1146,7 +1196,7 @@ func newGraphCmd() *cobra.Command {
 		Use:   "graph",
 		Short: "Export repository graph as JSON",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1173,7 +1223,7 @@ func newGraphHTMLCmd() *cobra.Command {
 		Use:   "html",
 		Short: "Render repository graph as an interactive HTML page",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1196,7 +1246,7 @@ func newGraphPathCmd() *cobra.Command {
 		Short: "Find a file-level path through the graph",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1232,7 +1282,7 @@ func newGraphNeighborsCmd() *cobra.Command {
 		Short: "Show adjacent graph context for a file or symbol",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1281,7 +1331,7 @@ func newGraphSubgraphCmd() *cobra.Command {
 		Short: "Export a local graph around a file or symbol",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1307,7 +1357,7 @@ func newExplainCmd() *cobra.Command {
 		Short: "Show file summary with symbols and dependencies",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1342,7 +1392,7 @@ func newContextCmd() *cobra.Command {
 		Short: "Show symbol profile with definition and related symbols",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1394,7 +1444,7 @@ func newSnapshotCmd() *cobra.Command {
 		Short: "Generate LLM context package for the project or an optional query",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1453,7 +1503,7 @@ func newSnapshotGitCmd() *cobra.Command {
 		Use:   "snapshot-git",
 		Short: "Generate context snapshot from git changed files",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1513,7 +1563,7 @@ func newReviewContextCmd() *cobra.Command {
 		Use:   "review-context",
 		Short: "Generate git-aware review context with risk, docs, routes, and tests",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1569,7 +1619,7 @@ func newImpactCmd() *cobra.Command {
 		Short: "Analyze impact for a file or symbol using imports, calls, routes, docs, and tests",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1600,7 +1650,7 @@ func newImpactGitCmd() *cobra.Command {
 		Use:   "impact-git",
 		Short: "Analyze impact for files and symbols changed in local git state",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1726,7 +1776,7 @@ func newTestImpactCmd() *cobra.Command {
 		Use:   "test-impact",
 		Short: "Recommend tests for git changed files and symbols",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1762,7 +1812,7 @@ func newSymbolImpactCmd() *cobra.Command {
 		Short: "Analyze symbol-level impact using callers, callees, routes, docs, and tests",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1816,7 +1866,7 @@ func newTraceCmd() *cobra.Command {
 		Short: "Trace call chain between two symbols",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1852,7 +1902,7 @@ func newDiffImpactCmd() *cobra.Command {
 		Short: "Analyze change impact for a file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -1896,7 +1946,7 @@ func newDiffImpactGitCmd() *cobra.Command {
 		Use:   "diff-impact-git",
 		Short: "Analyze impact for files changed in local git state",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -2030,7 +2080,7 @@ func newWatchCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}
@@ -2101,7 +2151,7 @@ func newServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Start HTTP server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			eng, err := engine.New(root, dbPath)
+			eng, err := newEngine()
 			if err != nil {
 				return err
 			}

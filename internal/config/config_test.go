@@ -90,6 +90,33 @@ func TestLoadJSONConfig(t *testing.T) {
 	}
 }
 
+func TestLoadStoreConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".code-context.yaml")
+	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n")
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	loaded, err := Load(tmpDir)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if loaded.Config.Store.Backend != "helix" {
+		t.Fatalf("store.backend = %q", loaded.Config.Store.Backend)
+	}
+	if loaded.Config.Store.SQLite.DB != filepath.Join(tmpDir, ".cache", "index.db") {
+		t.Fatalf("store.sqlite.db = %q", loaded.Config.Store.SQLite.DB)
+	}
+	if loaded.Config.Store.Helix.URL != "http://localhost:6969" {
+		t.Fatalf("store.helix.url = %q", loaded.Config.Store.Helix.URL)
+	}
+	if loaded.Config.Store.Helix.APIKeyEnv != "HELIX_API_KEY" {
+		t.Fatalf("store.helix.api_key_env = %q", loaded.Config.Store.Helix.APIKeyEnv)
+	}
+}
+
 func TestLoadConfigNotFound(t *testing.T) {
 	_, err := Load(t.TempDir())
 	if !errors.Is(err, ErrNotFound) {

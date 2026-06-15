@@ -67,6 +67,13 @@ Create `.code-context.yaml` in project root:
 ```yaml
 root: .
 db: .code-context/index.db
+store:
+  backend: sqlite
+  sqlite:
+    db: .code-context/index.db
+  helix:
+    url: http://localhost:6969
+    api_key_env: HELIX_API_KEY
 server:
   port: 9090
 watch:
@@ -76,6 +83,8 @@ watch:
 ```
 
 `watch.*` settings apply both to the standalone `watch` command and to `serve --watch` background refresh.
+
+SQLite is the default storage backend; `store.backend: helix` is reserved for the HelixStore implementation.
 
 ## Recommended Dogfood Workflow
 

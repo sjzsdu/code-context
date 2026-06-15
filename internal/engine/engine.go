@@ -39,6 +39,13 @@ const (
 )
 
 func New(root string, dbPath string) (*Engine, error) {
+	return NewWithStoreOptions(root, store.Options{
+		Backend: store.BackendSQLite,
+		SQLite:  store.SQLiteOptions{Path: dbPath},
+	})
+}
+
+func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) {
 	if root == "" {
 		var err error
 		root, err = os.Getwd()
@@ -48,14 +55,23 @@ func New(root string, dbPath string) (*Engine, error) {
 	}
 	root, _ = filepath.Abs(root)
 
-	if dbPath == "" {
-		dbPath = filepath.Join(root, ".code-context", "index.db")
-		os.MkdirAll(filepath.Dir(dbPath), 0o755)
+	storeLocation := ""
+	switch storeOpts.BackendOrDefault() {
+	case store.BackendSQLite:
+		if storeOpts.SQLite.Path == "" {
+			storeOpts.SQLite.Path = filepath.Join(root, ".code-context", "index.db")
+		}
+		if err := os.MkdirAll(filepath.Dir(storeOpts.SQLite.Path), 0o755); err != nil {
+			return nil, fmt.Errorf("create sqlite store directory: %w", err)
+		}
+		storeLocation = storeOpts.SQLite.Path
+	case store.BackendHelix:
+		storeLocation = storeOpts.Helix.URL
 	}
 
 	reg := lang.NewRegistry()
 	p := parser.NewTreeSitterParser(reg)
-	s, err := store.NewSQLiteStore(dbPath)
+	s, err := store.New(storeOpts)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -70,7 +86,7 @@ func New(root string, dbPath string) (*Engine, error) {
 
 	return &Engine{
 		root:    root,
-		dbPath:  dbPath,
+		dbPath:  storeLocation,
 		store:   s,
 		parser:  p,
 		indexer: idx,
