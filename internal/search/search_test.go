@@ -93,6 +93,34 @@ func TestSearchTextWithPattern(t *testing.T) {
 	}
 }
 
+func TestSearchTextUsesAdvancedCapability(t *testing.T) {
+	m := &textCapabilityStore{
+		hits: []store.SearchHit{{
+			Target:   store.TargetRef{Kind: store.TargetFile, Path: "advanced.go", Line: 7},
+			Source:   store.SearchSourceText,
+			Evidence: "advanced backend hit",
+		}},
+	}
+	sr := New(m, "")
+
+	matches, err := sr.SearchText(context.Background(), "advanced", "*.go", 10)
+	if err != nil {
+		t.Fatalf("SearchText error: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 advanced match, got %d", len(matches))
+	}
+	if matches[0].FilePath != "advanced.go" || matches[0].Line != 7 || matches[0].Content != "advanced backend hit" {
+		t.Fatalf("unexpected advanced match: %+v", matches[0])
+	}
+	if m.query.Query != "advanced" {
+		t.Fatalf("advanced query = %q", m.query.Query)
+	}
+	if m.query.Filter.FilePattern != "*.go" {
+		t.Fatalf("advanced file pattern = %q", m.query.Filter.FilePattern)
+	}
+}
+
 func TestGrepFile(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "g.go")
@@ -107,6 +135,17 @@ func TestGrepFile(t *testing.T) {
 	if ms[0].Line != 2 || ms[0].FilePath != "g.go" {
 		t.Fatalf("grepFile returned unexpected match: %+v", ms[0])
 	}
+}
+
+type textCapabilityStore struct {
+	searchMockStore
+	hits  []store.SearchHit
+	query store.TextSearchQuery
+}
+
+func (m *textCapabilityStore) SearchText(ctx context.Context, query store.TextSearchQuery) ([]store.SearchHit, error) {
+	m.query = query
+	return m.hits, nil
 }
 
 func TestFormatSymbols(t *testing.T) {

@@ -395,6 +395,21 @@ func (sr *Searcher) SearchText(ctx context.Context, query string, filePattern st
 		limit = 50
 	}
 
+	if advanced, ok := sr.store.(store.TextSearcher); ok {
+		hits, err := advanced.SearchText(ctx, store.TextSearchQuery{
+			Query: query,
+			Filter: store.SearchFilter{
+				TargetKinds: []store.TargetKind{store.TargetFile, store.TargetDocument},
+				FilePattern: filePattern,
+			},
+			Limit: limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return textHitsToMatches(hits, limit), nil
+	}
+
 	files, err := sr.store.ListFiles(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -412,6 +427,43 @@ func (sr *Searcher) SearchText(ctx context.Context, query string, filePattern st
 		matches = append(matches, ms...)
 	}
 	return matches, nil
+}
+
+func textHitsToMatches(hits []store.SearchHit, limit int) []api.SearchMatch {
+	if limit <= 0 {
+		limit = len(hits)
+	}
+	matches := make([]api.SearchMatch, 0, minInt(len(hits), limit))
+	for _, hit := range hits {
+		if len(matches) >= limit {
+			break
+		}
+		path := hit.Target.Path
+		if path == "" {
+			path = hit.Target.Value
+		}
+		line := hit.Target.Line
+		content := hit.Evidence
+		if content == "" && len(hit.Highlights) > 0 {
+			if line == 0 {
+				line = hit.Highlights[0].Line
+			}
+			content = hit.Highlights[0].Snippet
+		}
+		matches = append(matches, api.SearchMatch{
+			FilePath: path,
+			Line:     line,
+			Content:  strings.TrimSpace(content),
+		})
+	}
+	return matches
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func grepFile(root, path, pattern string, max int) []api.SearchMatch {

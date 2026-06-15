@@ -477,6 +477,15 @@ The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, 
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.
 
+### Advanced Capability Interfaces
+
+Helix-specific features are kept behind provider-neutral optional interfaces in
+`internal/store/capabilities.go`. Callers should depend on capabilities such as `TextSearcher`,
+`VectorSearcher`, `HybridSearcher`, `GraphTraverser`, `WorkspaceSearcher`, and `MemoryStore`
+instead of importing Helix SDK types. Backends can implement any subset of these interfaces; callers
+can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
+fallbacks where appropriate.
+
 ## HTTP API
 
 Start the server with `code-context serve`, then:
