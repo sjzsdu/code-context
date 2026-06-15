@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -125,39 +126,51 @@ func loadRuntimeConfig(startDir string) (*runtimeConfig, error) {
 }
 
 func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
+	var loaded *config.Loaded
+	var loadErr error
+
 	if !cmd.Flags().Changed("root") {
-		if loaded, err := config.Load(root); err == nil && loaded.Config.Root != "" {
+		loaded, loadErr = config.Load(root)
+		if loadErr != nil && loadErr != config.ErrNotFound {
+			log.Printf("Warning: failed to load config: %v", loadErr)
+		}
+		if loaded != nil && loaded.Config.Root != "" {
 			root = loaded.Config.Root
 		}
 	}
-	if !cmd.Flags().Changed("db") {
-		if loaded, err := config.Load(root); err == nil {
-			switch {
-			case loaded.Config.DB != "":
-				dbPath = loaded.Config.DB
-			case loaded.Config.Store.SQLite.DB != "":
-				dbPath = loaded.Config.Store.SQLite.DB
+
+	if !cmd.Flags().Changed("db") || !cmd.Flags().Changed("store-backend") ||
+		!cmd.Flags().Changed("helix-url") || !cmd.Flags().Changed("helix-api-key") ||
+		!cmd.Flags().Changed("helix-api-key-env") {
+
+		if loaded == nil && loadErr != config.ErrNotFound {
+			loaded, loadErr = config.Load(root)
+			if loadErr != nil && loadErr != config.ErrNotFound {
+				log.Printf("Warning: failed to load config: %v", loadErr)
 			}
 		}
-	}
-	if !cmd.Flags().Changed("store-backend") {
-		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Backend != "" {
-			storeBackend = loaded.Config.Store.Backend
-		}
-	}
-	if !cmd.Flags().Changed("helix-url") {
-		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Helix.URL != "" {
-			helixURL = loaded.Config.Store.Helix.URL
-		}
-	}
-	if !cmd.Flags().Changed("helix-api-key") {
-		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Helix.APIKey != "" {
-			helixAPIKey = loaded.Config.Store.Helix.APIKey
-		}
-	}
-	if !cmd.Flags().Changed("helix-api-key-env") {
-		if loaded, err := config.Load(root); err == nil && loaded.Config.Store.Helix.APIKeyEnv != "" {
-			helixAPIKeyEnv = loaded.Config.Store.Helix.APIKeyEnv
+
+		if loaded != nil {
+			if !cmd.Flags().Changed("db") {
+				switch {
+				case loaded.Config.DB != "":
+					dbPath = loaded.Config.DB
+				case loaded.Config.Store.SQLite.DB != "":
+					dbPath = loaded.Config.Store.SQLite.DB
+				}
+			}
+			if !cmd.Flags().Changed("store-backend") && loaded.Config.Store.Backend != "" {
+				storeBackend = loaded.Config.Store.Backend
+			}
+			if !cmd.Flags().Changed("helix-url") && loaded.Config.Store.Helix.URL != "" {
+				helixURL = loaded.Config.Store.Helix.URL
+			}
+			if !cmd.Flags().Changed("helix-api-key") && loaded.Config.Store.Helix.APIKey != "" {
+				helixAPIKey = loaded.Config.Store.Helix.APIKey
+			}
+			if !cmd.Flags().Changed("helix-api-key-env") && loaded.Config.Store.Helix.APIKeyEnv != "" {
+				helixAPIKeyEnv = loaded.Config.Store.Helix.APIKeyEnv
+			}
 		}
 	}
 	_ = cfg

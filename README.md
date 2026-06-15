@@ -94,8 +94,9 @@ code-context serve --port 9090
 
 `code-context` supports a project config file at `.code-context.yaml`.
 
-SQLite remains the default storage backend. The `helix` backend name and options are reserved so
-projects can opt into the same configuration shape once the Helix store implementation lands.
+SQLite remains the default storage backend. `store.backend: helix` enables the HelixDB-backed
+store; if `store.helix.url` / `--helix-url` is omitted, the Helix Go SDK uses its local default
+endpoint (`http://localhost:6969`).
 
 Supported options:
 
@@ -408,7 +409,7 @@ code-context test-impact --state unstaged
 |---|---|---|---|
 | `--root` | `-r` | `.` | Codebase root directory |
 | `--db` | | `<root>/.code-context/index.db` | Database path |
-| `--store-backend` | | `sqlite` | Storage backend (`sqlite` or reserved `helix`) |
+| `--store-backend` | | `sqlite` | Storage backend (`sqlite` or `helix`) |
 | `--helix-url` | | | HelixDB endpoint URL |
 | `--helix-api-key` | | | HelixDB API key |
 | `--helix-api-key-env` | | | Environment variable containing the HelixDB API key |

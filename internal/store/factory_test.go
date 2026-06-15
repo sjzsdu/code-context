@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -22,12 +21,21 @@ func TestNewRejectsUnsupportedBackend(t *testing.T) {
 	}
 }
 
-func TestNewHelixStoreIsExplicitlyReserved(t *testing.T) {
-	_, err := New(Options{
+func TestNewHelixStoreCanBeConstructed(t *testing.T) {
+	st, err := New(Options{
 		Backend: BackendHelix,
 		Helix:   HelixOptions{URL: "http://localhost:6969"},
 	})
-	if !errors.Is(err, ErrHelixStoreNotImplemented) {
-		t.Fatalf("expected ErrHelixStoreNotImplemented, got %v", err)
+	if err != nil {
+		t.Fatalf("New helix store: %v", err)
 	}
+	defer st.Close()
+}
+
+func TestNewHelixStoreUsesSDKDefaultURL(t *testing.T) {
+	st, err := New(Options{Backend: BackendHelix})
+	if err != nil {
+		t.Fatalf("New helix store with default URL: %v", err)
+	}
+	defer st.Close()
 }

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -28,8 +27,6 @@ type Options struct {
 	SQLite  SQLiteOptions
 	Helix   HelixOptions
 }
-
-var ErrHelixStoreNotImplemented = errors.New("helix store backend is not implemented")
 
 func (o Options) BackendOrDefault() Backend {
 	backend := Backend(strings.TrimSpace(string(o.Backend)))

@@ -84,7 +84,8 @@ watch:
 
 `watch.*` settings apply both to the standalone `watch` command and to `serve --watch` background refresh.
 
-SQLite is the default storage backend; `store.backend: helix` is reserved for the HelixStore implementation.
+SQLite is the default storage backend; `store.backend: helix` enables the HelixDB-backed store.
+If no Helix URL is configured, the Helix Go SDK uses its local default endpoint (`http://localhost:6969`).
 
 ## Recommended Dogfood Workflow
 
