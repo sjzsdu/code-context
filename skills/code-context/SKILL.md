@@ -225,6 +225,9 @@ Provider-backed traversal accepts target strings (`docs/health.md`, `symbol:Name
 `text:query`), edge groups (`code`, `docs`, `symbols`, `entrypoints`), filters
 (`--target-kind`, `--file-pattern`, `--metadata key=value`), and `--include-paths` for shortest
 paths from the start target.
+When the active backend supports `GraphTraverser`, higher-level outputs such as `explain`,
+`context`, `impact`, `route-context`, `snapshot`, and matching MCP tools include best-effort
+provider graph traversal summaries; SQLite/local fallback output simply omits those optional fields.
 
 Graph exports are versioned as `graph-export.v2` and include a richer repository graph with:
 

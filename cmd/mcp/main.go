@@ -1196,6 +1196,7 @@ func formatRouteContextMarkdown(rc *engine.RouteContext) string {
 	for _, reason := range rc.Risk.Reasons {
 		out += "- " + reason + "\n"
 	}
+	out += formatGraphTraversalMarkdown(rc.GraphTraversal)
 	out += fmt.Sprintf("\n## Routes (%d)\n", len(rc.Routes))
 	for _, r := range rc.Routes {
 		out += fmt.Sprintf("- `%s %s` -> `%s` in `%s:%d` [%s]\n", r.Method, r.Path, r.Handler, r.FilePath, r.Line, r.Framework)
@@ -1328,6 +1329,7 @@ func formatTestCommandsMarkdown(commands []engine.TestCommand) string {
 
 func formatImpactMarkdown(impact *engine.ImpactResult) string {
 	out := fmt.Sprintf("# Impact: `%s` (%s)\n\n%s\n", impact.Target, impact.Kind, impact.Summary)
+	out += formatGraphTraversalMarkdown(impact.GraphTraversal)
 	if impact.FileImpact != nil {
 		d := impact.FileImpact
 		out += fmt.Sprintf("\n## File Impact: `%s`\n", d.File)
@@ -1389,6 +1391,7 @@ func formatSymbolImpactMarkdown(impact *engine.SymbolImpact) string {
 	for _, reason := range impact.Risk.Reasons {
 		out += "- " + reason + "\n"
 	}
+	out += formatGraphTraversalMarkdown(impact.GraphTraversal)
 	out += fmt.Sprintf("\n## Callers (%d)\n", len(impact.Callers))
 	for _, c := range impact.Callers {
 		out += fmt.Sprintf("- `%s:%d` `%s` -> `%s`\n", c.FromFile, c.Line, c.FromSymbol, c.ToName)
@@ -1409,5 +1412,26 @@ func formatSymbolImpactMarkdown(impact *engine.SymbolImpact) string {
 	for _, t := range impact.RecommendedTests {
 		out += "- `" + t + "`\n"
 	}
+	return out
+}
+
+func formatGraphTraversalMarkdown(traversal *store.GraphTraversalResult) string {
+	if traversal == nil {
+		return ""
+	}
+	summary := strings.TrimSpace(traversal.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("%d nodes, %d edges", len(traversal.Nodes), len(traversal.Edges))
+	}
+	out := "\n## Provider Graph Traversal\n"
+	out += summary + "\n"
+	if len(traversal.EdgeKinds) > 0 {
+		kinds := make([]string, 0, len(traversal.EdgeKinds))
+		for _, kind := range traversal.EdgeKinds {
+			kinds = append(kinds, string(kind))
+		}
+		out += fmt.Sprintf("- Edges: `%s`\n", strings.Join(kinds, "`, `"))
+	}
+	out += fmt.Sprintf("- Nodes: %d, edges: %d\n", len(traversal.Nodes), len(traversal.Edges))
 	return out
 }

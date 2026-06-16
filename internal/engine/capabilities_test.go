@@ -47,3 +47,25 @@ func TestTraverseGraphUnsupportedCapability(t *testing.T) {
 		t.Fatalf("TraverseGraph error = %v, want ErrCapabilityUnsupported", err)
 	}
 }
+
+func TestBestEffortGraphTraversalIgnoresUnsupportedCapability(t *testing.T) {
+	root := t.TempDir()
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer eng.Close()
+
+	if got := eng.graphTraversalForFile(context.Background(), "a.go", 2); got != nil {
+		t.Fatalf("graphTraversalForFile on sqlite = %+v, want nil", got)
+	}
+}
+
+func TestGraphTraversalDepthBounds(t *testing.T) {
+	if got := graphTraversalDepth(0); got != 2 {
+		t.Fatalf("graphTraversalDepth(0) = %d, want 2", got)
+	}
+	if got := graphTraversalDepth(9); got != 3 {
+		t.Fatalf("graphTraversalDepth(9) = %d, want 3", got)
+	}
+}

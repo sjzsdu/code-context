@@ -547,6 +547,86 @@ func (e *Engine) TraverseGraph(ctx context.Context, query store.GraphTraversalQu
 	return traverser.TraverseGraph(ctx, query)
 }
 
+func (e *Engine) bestEffortGraphTraversal(ctx context.Context, query store.GraphTraversalQuery) *store.GraphTraversalResult {
+	result, err := e.TraverseGraph(ctx, query)
+	if err != nil {
+		return nil
+	}
+	if result == nil || len(result.Edges) == 0 {
+		return nil
+	}
+	return result
+}
+
+func (e *Engine) graphTraversalForFile(ctx context.Context, filePath string, depth int) *store.GraphTraversalResult {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return nil
+	}
+	return e.bestEffortGraphTraversal(ctx, store.GraphTraversalQuery{
+		Start:        store.TargetRef{Kind: store.TargetFile, Path: filePath},
+		EdgeKinds:    []store.GraphEdgeKind{store.GraphEdgeKind("code"), store.GraphEdgeKind("docs")},
+		Direction:    store.GraphBoth,
+		MaxDepth:     graphTraversalDepth(depth),
+		Limit:        50,
+		IncludePaths: true,
+	})
+}
+
+func (e *Engine) graphTraversalForSymbol(ctx context.Context, sym api.Symbol, depth int) *store.GraphTraversalResult {
+	name := strings.TrimSpace(sym.Name)
+	if name == "" {
+		return nil
+	}
+	return e.bestEffortGraphTraversal(ctx, store.GraphTraversalQuery{
+		Start: store.TargetRef{
+			Kind:    store.TargetSymbol,
+			Path:    sym.FilePath,
+			Name:    name,
+			Type:    string(sym.Kind),
+			Line:    sym.Line,
+			EndLine: sym.EndLine,
+		},
+		EdgeKinds:    []store.GraphEdgeKind{store.GraphEdgeCalls, store.GraphEdgeRoutes, store.GraphEdgeDocuments, store.GraphEdgeReferences},
+		Direction:    store.GraphBoth,
+		MaxDepth:     graphTraversalDepth(depth),
+		Limit:        50,
+		IncludePaths: true,
+	})
+}
+
+func (e *Engine) graphTraversalForRoute(ctx context.Context, route api.Route, depth int) *store.GraphTraversalResult {
+	if strings.TrimSpace(route.Path) == "" && strings.TrimSpace(route.Handler) == "" {
+		return nil
+	}
+	return e.bestEffortGraphTraversal(ctx, store.GraphTraversalQuery{
+		Start: store.TargetRef{
+			Kind:      store.TargetRoute,
+			Path:      route.FilePath,
+			Name:      route.Handler,
+			Type:      route.Framework,
+			Line:      route.Line,
+			Method:    route.Method,
+			RoutePath: route.Path,
+		},
+		EdgeKinds:    []store.GraphEdgeKind{store.GraphEdgeKind("entrypoints"), store.GraphEdgeKind("docs")},
+		Direction:    store.GraphBoth,
+		MaxDepth:     graphTraversalDepth(depth),
+		Limit:        50,
+		IncludePaths: true,
+	})
+}
+
+func graphTraversalDepth(depth int) int {
+	if depth <= 0 {
+		return 2
+	}
+	if depth > 3 {
+		return 3
+	}
+	return depth
+}
+
 func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focusSet map[string]bool) (*api.GraphExport, error) {
 	files, err := e.store.ListFiles(ctx, nil)
 	if err != nil {
@@ -2271,15 +2351,16 @@ func (e *Engine) Root() string {
 }
 
 type FileSummary struct {
-	Path             string             `json:"path"`
-	Language         string             `json:"language"`
-	Symbols          []api.Symbol       `json:"symbols"`
-	Imports          []api.ImportEdge   `json:"imports"`
-	Importers        []api.ImportEdge   `json:"importers,omitempty"`
-	RelatedFiles     []string           `json:"related_files,omitempty"`
-	RecommendedFiles []string           `json:"recommended_files,omitempty"`
-	GraphSummary     string             `json:"graph_summary,omitempty"`
-	Analysis         *api.GraphAnalysis `json:"analysis,omitempty"`
+	Path             string                      `json:"path"`
+	Language         string                      `json:"language"`
+	Symbols          []api.Symbol                `json:"symbols"`
+	Imports          []api.ImportEdge            `json:"imports"`
+	Importers        []api.ImportEdge            `json:"importers,omitempty"`
+	RelatedFiles     []string                    `json:"related_files,omitempty"`
+	RecommendedFiles []string                    `json:"recommended_files,omitempty"`
+	GraphSummary     string                      `json:"graph_summary,omitempty"`
+	GraphTraversal   *store.GraphTraversalResult `json:"graph_traversal,omitempty"`
+	Analysis         *api.GraphAnalysis          `json:"analysis,omitempty"`
 }
 
 func (e *Engine) Explain(ctx context.Context, filePath string) (*FileSummary, error) {
@@ -2316,6 +2397,7 @@ func (e *Engine) Explain(ctx context.Context, filePath string) (*FileSummary, er
 	}
 
 	analysis, relatedFiles, recommendedFiles, graphSummary := e.graphInsightsForFile(ctx, filePath, 3)
+	traversal := e.graphTraversalForFile(ctx, filePath, 2)
 	return &FileSummary{
 		Path:             filePath,
 		Language:         string(fi.Language),
@@ -2325,18 +2407,20 @@ func (e *Engine) Explain(ctx context.Context, filePath string) (*FileSummary, er
 		RelatedFiles:     relatedFiles,
 		RecommendedFiles: recommendedFiles,
 		GraphSummary:     graphSummary,
+		GraphTraversal:   traversal,
 		Analysis:         analysis,
 	}, nil
 }
 
 type SymbolContext struct {
-	Definition       api.Symbol         `json:"definition"`
-	Methods          []api.Symbol       `json:"methods,omitempty"`
-	Related          []api.Symbol       `json:"related"`
-	RelatedFiles     []string           `json:"related_files,omitempty"`
-	RecommendedFiles []string           `json:"recommended_files,omitempty"`
-	GraphSummary     string             `json:"graph_summary,omitempty"`
-	Analysis         *api.GraphAnalysis `json:"analysis,omitempty"`
+	Definition       api.Symbol                  `json:"definition"`
+	Methods          []api.Symbol                `json:"methods,omitempty"`
+	Related          []api.Symbol                `json:"related"`
+	RelatedFiles     []string                    `json:"related_files,omitempty"`
+	RecommendedFiles []string                    `json:"recommended_files,omitempty"`
+	GraphSummary     string                      `json:"graph_summary,omitempty"`
+	GraphTraversal   *store.GraphTraversalResult `json:"graph_traversal,omitempty"`
+	Analysis         *api.GraphAnalysis          `json:"analysis,omitempty"`
 }
 
 type Snapshot struct {
@@ -2494,6 +2578,7 @@ func (e *Engine) Context(ctx context.Context, name string) (*SymbolContext, erro
 	result.RelatedFiles = relatedFiles
 	result.RecommendedFiles = recommendedFiles
 	result.GraphSummary = fmt.Sprintf("%s. Definition file: %s", graphSummary, def.FilePath)
+	result.GraphTraversal = e.graphTraversalForSymbol(ctx, def, 2)
 	result.Analysis = analysis
 	return result, nil
 }
@@ -2515,36 +2600,39 @@ type DiffImpact struct {
 }
 
 type SymbolImpact struct {
-	Symbol           api.Symbol         `json:"symbol"`
-	DirectDeps       []string           `json:"direct_deps,omitempty"`
-	Dependents       []string           `json:"dependents,omitempty"`
-	Callers          []api.CallEdge     `json:"callers"`
-	Callees          []api.CallEdge     `json:"callees"`
-	Routes           []api.Route        `json:"routes,omitempty"`
-	RelatedDocs      []api.DocumentLink `json:"related_docs,omitempty"`
-	RecommendedTests []string           `json:"recommended_tests,omitempty"`
-	Risk             RiskScore          `json:"risk"`
-	Summary          string             `json:"summary"`
+	Symbol           api.Symbol                  `json:"symbol"`
+	DirectDeps       []string                    `json:"direct_deps,omitempty"`
+	Dependents       []string                    `json:"dependents,omitempty"`
+	Callers          []api.CallEdge              `json:"callers"`
+	Callees          []api.CallEdge              `json:"callees"`
+	Routes           []api.Route                 `json:"routes,omitempty"`
+	RelatedDocs      []api.DocumentLink          `json:"related_docs,omitempty"`
+	RecommendedTests []string                    `json:"recommended_tests,omitempty"`
+	GraphTraversal   *store.GraphTraversalResult `json:"graph_traversal,omitempty"`
+	Risk             RiskScore                   `json:"risk"`
+	Summary          string                      `json:"summary"`
 }
 
 type ImpactResult struct {
-	Target       string        `json:"target"`
-	Kind         string        `json:"kind"`
-	SymbolImpact *SymbolImpact `json:"symbol_impact,omitempty"`
-	FileImpact   *DiffImpact   `json:"file_impact,omitempty"`
-	Summary      string        `json:"summary"`
+	Target         string                      `json:"target"`
+	Kind           string                      `json:"kind"`
+	SymbolImpact   *SymbolImpact               `json:"symbol_impact,omitempty"`
+	FileImpact     *DiffImpact                 `json:"file_impact,omitempty"`
+	GraphTraversal *store.GraphTraversalResult `json:"graph_traversal,omitempty"`
+	Summary        string                      `json:"summary"`
 }
 
 type RouteContext struct {
-	Query            string             `json:"query"`
-	Routes           []api.Route        `json:"routes"`
-	Handlers         []api.Symbol       `json:"handlers,omitempty"`
-	Callers          []api.CallEdge     `json:"callers,omitempty"`
-	Callees          []api.CallEdge     `json:"callees,omitempty"`
-	RelatedDocs      []api.DocumentLink `json:"related_docs,omitempty"`
-	RecommendedTests []string           `json:"recommended_tests,omitempty"`
-	Risk             RiskScore          `json:"risk"`
-	Summary          string             `json:"summary"`
+	Query            string                      `json:"query"`
+	Routes           []api.Route                 `json:"routes"`
+	Handlers         []api.Symbol                `json:"handlers,omitempty"`
+	Callers          []api.CallEdge              `json:"callers,omitempty"`
+	Callees          []api.CallEdge              `json:"callees,omitempty"`
+	RelatedDocs      []api.DocumentLink          `json:"related_docs,omitempty"`
+	RecommendedTests []string                    `json:"recommended_tests,omitempty"`
+	GraphTraversal   *store.GraphTraversalResult `json:"graph_traversal,omitempty"`
+	Risk             RiskScore                   `json:"risk"`
+	Summary          string                      `json:"summary"`
 }
 
 func (e *Engine) RouteContext(ctx context.Context, query string) (*RouteContext, error) {
@@ -2585,7 +2673,8 @@ func (e *Engine) RouteContext(ctx context.Context, query string) (*RouteContext,
 	docs := e.docsForFilesAndSymbols(ctx, files, changed)
 	tests := e.recommendedTestsForFilesAndSymbols(ctx, files, changed)
 	risk := routeContextRisk(routes, handlers, callers, tests)
-	return &RouteContext{Query: query, Routes: routes, Handlers: handlers, Callers: callers, Callees: callees, RelatedDocs: docs, RecommendedTests: tests, Risk: risk, Summary: fmt.Sprintf("%d routes, %d handlers, %d callers, %d tests", len(routes), len(handlers), len(callers), len(tests))}, nil
+	traversal := e.graphTraversalForRoute(ctx, routes[0], 2)
+	return &RouteContext{Query: query, Routes: routes, Handlers: handlers, Callers: callers, Callees: callees, RelatedDocs: docs, RecommendedTests: tests, GraphTraversal: traversal, Risk: risk, Summary: fmt.Sprintf("%d routes, %d handlers, %d callers, %d tests", len(routes), len(handlers), len(callers), len(tests))}, nil
 }
 
 func (e *Engine) resolveRouteHandler(ctx context.Context, route api.Route) []api.Symbol {
@@ -2655,7 +2744,8 @@ func (e *Engine) SymbolImpact(ctx context.Context, name string) (*SymbolImpact, 
 	}
 	tests := e.recommendedTestsForFilesAndSymbols(ctx, []string{def.FilePath}, []ChangedSymbol{{Name: def.Name, Kind: string(def.Kind), FilePath: def.FilePath, Line: def.Line}})
 	risk := symbolImpactRisk(def, callers, symbolRoutes, tests, dependents)
-	return &SymbolImpact{Symbol: def, DirectDeps: directDeps, Dependents: dependents, Callers: callers, Callees: callees, Routes: symbolRoutes, RelatedDocs: relatedDocs, RecommendedTests: tests, Risk: risk, Summary: fmt.Sprintf("%s has %d callers, %d callees, %d dependents, %d routes, %d docs", def.Name, len(callers), len(callees), len(dependents), len(symbolRoutes), len(relatedDocs))}, nil
+	traversal := e.graphTraversalForSymbol(ctx, def, 2)
+	return &SymbolImpact{Symbol: def, DirectDeps: directDeps, Dependents: dependents, Callers: callers, Callees: callees, Routes: symbolRoutes, RelatedDocs: relatedDocs, RecommendedTests: tests, GraphTraversal: traversal, Risk: risk, Summary: fmt.Sprintf("%s has %d callers, %d callees, %d dependents, %d routes, %d docs", def.Name, len(callers), len(callees), len(dependents), len(symbolRoutes), len(relatedDocs))}, nil
 }
 
 func (e *Engine) Impact(ctx context.Context, target string, depth int) (*ImpactResult, error) {
@@ -2670,7 +2760,8 @@ func (e *Engine) Impact(ctx context.Context, target string, depth int) (*ImpactR
 		if err != nil {
 			return nil, err
 		}
-		return &ImpactResult{Target: target, Kind: "file", FileImpact: impact, Summary: fmt.Sprintf("file %s has %d dependencies and %d dependents", target, len(impact.AllDeps), len(impact.Dependents))}, nil
+		traversal := e.graphTraversalForFile(ctx, target, depth)
+		return &ImpactResult{Target: target, Kind: "file", FileImpact: impact, GraphTraversal: traversal, Summary: fmt.Sprintf("file %s has %d dependencies and %d dependents", target, len(impact.AllDeps), len(impact.Dependents))}, nil
 	}
 	symbolImpact, err := e.SymbolImpact(ctx, target)
 	if err != nil {

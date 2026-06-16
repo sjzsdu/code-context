@@ -500,8 +500,11 @@ fallbacks where appropriate. The Helix backend currently implements `TextSearche
 indexed symbol text and document metadata/summary text, and `GraphTraverser` over the indexed
 file/symbol/import/call/route/document-link graph. Graph traversal supports target-string parsing,
 semantic edge groups, target/file/metadata filters, depth/path metadata, text-query expansion through
-`similar` edges, and handler-to-route relationships. `/api/text` and search callers use text search
-when available and keep the local grep fallback for backends without the capability.
+`similar` edges, and handler-to-route relationships. Higher-level outputs such as `explain`,
+`context`, `impact`, `route-context`, `snapshot`, and their MCP equivalents include best-effort
+provider graph traversal summaries when the backend supports `GraphTraverser`; SQLite/local
+fallbacks simply omit those optional fields. `/api/text` and search callers use text search when
+available and keep the local grep fallback for backends without the capability.
 
 ## HTTP API
 

@@ -144,6 +144,11 @@ printf '%s\n' "$traverse_text_cli"
 grep -q '"kind": "similar"' <<<"$traverse_text_cli"
 grep -q "HealthMessage" <<<"$traverse_text_cli"
 
+impact_json="$(run_code_context impact HealthMessage --json)"
+printf '%s\n' "$impact_json"
+grep -q '"graph_traversal"' <<<"$impact_json"
+grep -q "Graph traversal" <<<"$impact_json"
+
 SERVER_LOG="$SMOKE_DIR/code-context-server.log"
 run_code_context serve --port "$HTTP_PORT" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!

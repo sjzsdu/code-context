@@ -1183,6 +1183,7 @@ func newRouteContextCmd() *cobra.Command {
 			for _, reason := range ctx.Risk.Reasons {
 				fmt.Printf("  - %s\n", reason)
 			}
+			printGraphTraversalSummary("Provider graph", ctx.GraphTraversal)
 			fmt.Printf("\nRoutes (%d):\n", len(ctx.Routes))
 			printRoutes(ctx.Routes)
 			fmt.Printf("Handlers (%d):\n", len(ctx.Handlers))
@@ -1663,6 +1664,10 @@ func newExplainCmd() *cobra.Command {
 			for _, imp := range s.Importers {
 				fmt.Printf("  %s (line %d)\n", imp.FromFile, imp.Line)
 			}
+			if s.GraphSummary != "" {
+				fmt.Printf("\nGraph: %s\n", s.GraphSummary)
+			}
+			printGraphTraversalSummary("Provider graph", s.GraphTraversal)
 			return nil
 		},
 	}
@@ -1705,6 +1710,7 @@ func newContextCmd() *cobra.Command {
 			if c.GraphSummary != "" {
 				fmt.Printf("\nGraph: %s\n", c.GraphSummary)
 			}
+			printGraphTraversalSummary("Provider graph", c.GraphTraversal)
 			if len(c.RelatedFiles) > 0 {
 				fmt.Printf("Related files: %s\n", strings.Join(c.RelatedFiles, ", "))
 			}
@@ -1756,6 +1762,7 @@ func newSnapshotCmd() *cobra.Command {
 				if f.GraphSummary != "" {
 					fmt.Printf("Graph: %s\n", f.GraphSummary)
 				}
+				printGraphTraversalSummary("Provider graph", f.GraphTraversal)
 				if len(f.RecommendedFiles) > 0 {
 					fmt.Printf("Recommended: %s\n", strings.Join(f.RecommendedFiles, ", "))
 				}
@@ -1816,6 +1823,7 @@ func newSnapshotGitCmd() *cobra.Command {
 				if f.GraphSummary != "" {
 					fmt.Printf("Graph: %s\n", f.GraphSummary)
 				}
+				printGraphTraversalSummary("Provider graph", f.GraphTraversal)
 				if len(f.RecommendedFiles) > 0 {
 					fmt.Printf("Recommended: %s\n", strings.Join(f.RecommendedFiles, ", "))
 				}
@@ -1993,6 +2001,7 @@ func printGitImpact(impact *engine.GitImpact) {
 func printImpact(impact *engine.ImpactResult) {
 	fmt.Printf("Impact: %s (%s)\n", impact.Target, impact.Kind)
 	fmt.Printf("Summary: %s\n", impact.Summary)
+	printGraphTraversalSummary("Provider graph", impact.GraphTraversal)
 	if impact.FileImpact != nil {
 		printFileImpact(impact.FileImpact)
 	}
@@ -2029,6 +2038,7 @@ func printSymbolImpact(impact *engine.SymbolImpact) {
 	for _, reason := range impact.Risk.Reasons {
 		fmt.Printf("  - %s\n", reason)
 	}
+	printGraphTraversalSummary("Provider graph", impact.GraphTraversal)
 	fmt.Printf("Direct imports (%d):\n", len(impact.DirectDeps))
 	for _, dep := range impact.DirectDeps {
 		fmt.Printf("  %s\n", dep)
@@ -2051,6 +2061,17 @@ func printSymbolImpact(impact *engine.SymbolImpact) {
 	for _, t := range impact.RecommendedTests {
 		fmt.Printf("  %s\n", t)
 	}
+}
+
+func printGraphTraversalSummary(label string, traversal *store.GraphTraversalResult) {
+	if traversal == nil {
+		return
+	}
+	summary := strings.TrimSpace(traversal.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("%d nodes, %d edges", len(traversal.Nodes), len(traversal.Edges))
+	}
+	fmt.Printf("\n%s: %s\n", label, summary)
 }
 
 func newTestImpactCmd() *cobra.Command {
