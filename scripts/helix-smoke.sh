@@ -133,6 +133,11 @@ docs="$(run_code_context docs-for HealthHandler)"
 printf '%s\n' "$docs"
 grep -q "docs/health.md" <<<"$docs"
 
+traverse_cli="$(run_code_context graph traverse --kind document --path docs/health.md --edge references --limit 10)"
+printf '%s\n' "$traverse_cli"
+grep -q '"kind": "references"' <<<"$traverse_cli"
+grep -q "HealthHandler" <<<"$traverse_cli"
+
 SERVER_LOG="$SMOKE_DIR/code-context-server.log"
 run_code_context serve --port "$HTTP_PORT" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!

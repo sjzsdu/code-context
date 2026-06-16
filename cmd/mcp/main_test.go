@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/sjzsdu/code-context/internal/engine"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 func TestRunGraphTool(t *testing.T) {
@@ -84,6 +85,29 @@ func TestRunGraphSubgraphTool(t *testing.T) {
 	}
 	if !strings.Contains(out, "\"graph\"") {
 		t.Fatalf("expected graph payload in output, got:\n%s", out)
+	}
+}
+
+func TestRunGraphTraverseToolRequiresStart(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runGraphTraverseTool(context.Background(), eng, GraphTraverseArgs{})
+	if err == nil || !strings.Contains(err.Error(), "start") {
+		t.Fatalf("expected missing start error, got %v", err)
+	}
+}
+
+func TestRunGraphTraverseToolUnsupported(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runGraphTraverseTool(context.Background(), eng, GraphTraverseArgs{
+		Start: store.TargetRef{Kind: store.TargetFile, Path: "a.go"},
+		Limit: 5,
+	})
+	if err == nil || !strings.Contains(err.Error(), "capability unsupported") {
+		t.Fatalf("expected unsupported capability error, got %v", err)
 	}
 }
 

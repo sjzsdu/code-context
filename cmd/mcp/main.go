@@ -48,6 +48,14 @@ type GraphSubgraphArgs struct {
 	Depth  int    `json:"depth,omitempty"`
 }
 
+type GraphTraverseArgs struct {
+	Start     store.TargetRef       `json:"start"`
+	EdgeKinds []store.GraphEdgeKind `json:"edge_kinds,omitempty"`
+	Direction store.GraphDirection  `json:"direction,omitempty"`
+	MaxDepth  int                   `json:"max_depth,omitempty"`
+	Limit     int                   `json:"limit,omitempty"`
+}
+
 type SearchArgs struct {
 	Query string `json:"query"`
 }
@@ -331,6 +339,14 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_explore", "code_context_snapshot"))), nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_graph_traverse", Description: "Run provider-backed graph traversal with a GraphTraversalQuery"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args GraphTraverseArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runGraphTraverseTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_graph_neighbors", "code_context_docs_for"))), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_routes", Description: "List framework routes and their handlers discovered in indexed code"},
@@ -707,6 +723,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
 
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "graph_traverse",
+		Description: "Run provider-backed graph traversal with a GraphTraversalQuery",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args GraphTraverseArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runGraphTraverseTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("graph_traverse failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
 	// Explain tool
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "explain",
@@ -1061,6 +1088,23 @@ func runGraphSubgraphTool(ctx context.Context, eng *engine.Engine, args GraphSub
 		return "", fmt.Errorf("missing required parameter: target")
 	}
 	result, err := eng.GraphSubgraph(ctx, args.Target, args.Depth)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func runGraphTraverseTool(ctx context.Context, eng *engine.Engine, args GraphTraverseArgs) (string, error) {
+	if args.Start.Kind == "" && args.Start.Path == "" && args.Start.Name == "" && args.Start.Value == "" && args.Start.RoutePath == "" {
+		return "", fmt.Errorf("missing required parameter: start")
+	}
+	result, err := eng.TraverseGraph(ctx, store.GraphTraversalQuery{
+		Start:     args.Start,
+		EdgeKinds: args.EdgeKinds,
+		Direction: args.Direction,
+		MaxDepth:  args.MaxDepth,
+		Limit:     args.Limit,
+	})
 	if err != nil {
 		return "", err
 	}

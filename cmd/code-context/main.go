@@ -1398,7 +1398,7 @@ func newGraphCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&focus, "focus", "", "limit graph export to a file path or symbol name")
-	cmd.AddCommand(newGraphHTMLCmd(), newGraphPathCmd(), newGraphNeighborsCmd(), newGraphSubgraphCmd())
+	cmd.AddCommand(newGraphHTMLCmd(), newGraphPathCmd(), newGraphNeighborsCmd(), newGraphSubgraphCmd(), newGraphTraverseCmd())
 	return cmd
 }
 
@@ -1533,6 +1533,66 @@ func newGraphSubgraphCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&depth, "depth", 1, "graph neighborhood depth to include")
+	return cmd
+}
+
+func newGraphTraverseCmd() *cobra.Command {
+	var kind, path, name, typ, value, method, routePath, direction string
+	var edges []string
+	var depth int
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "traverse",
+		Short: "Run provider-backed graph traversal",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			query := store.GraphTraversalQuery{
+				Start: store.TargetRef{
+					Kind:      store.TargetKind(kind),
+					Path:      path,
+					Name:      name,
+					Type:      typ,
+					Value:     value,
+					Method:    method,
+					RoutePath: routePath,
+				},
+				Direction: store.GraphDirection(direction),
+				MaxDepth:  depth,
+				Limit:     limit,
+			}
+			for _, edge := range edges {
+				edge = strings.TrimSpace(edge)
+				if edge != "" {
+					query.EdgeKinds = append(query.EdgeKinds, store.GraphEdgeKind(edge))
+				}
+			}
+			result, err := eng.TraverseGraph(context.Background(), query)
+			if err != nil {
+				return err
+			}
+
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(result)
+		},
+	}
+	cmd.Flags().StringVar(&kind, "kind", "", "start target kind: file, symbol, route, document, or text")
+	cmd.Flags().StringVar(&path, "path", "", "start target file/document path")
+	cmd.Flags().StringVar(&name, "name", "", "start target symbol or route handler name")
+	cmd.Flags().StringVar(&typ, "type", "", "start target type metadata")
+	cmd.Flags().StringVar(&value, "value", "", "start target value")
+	cmd.Flags().StringVar(&method, "method", "", "start route method")
+	cmd.Flags().StringVar(&routePath, "route", "", "start route path")
+	cmd.Flags().StringVar(&direction, "direction", "outbound", "traversal direction: outbound, inbound, or both")
+	cmd.Flags().StringSliceVar(&edges, "edge", nil, "edge kind filter; repeat or comma-separate (defines,imports,calls,routes,documents,references)")
+	cmd.Flags().IntVar(&depth, "depth", 1, "max traversal depth")
+	cmd.Flags().IntVar(&limit, "limit", 50, "max traversal edges")
 	return cmd
 }
 

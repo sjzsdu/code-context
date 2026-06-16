@@ -60,6 +60,7 @@ code-context search "Server"
 # Inspect graph relationships around a symbol or file
 code-context graph neighbors Engine
 code-context graph path internal/engine/engine.go internal/server/server.go
+code-context graph traverse --kind document --path docs/health.md --edge references
 
 # Generate LLM context with graph recommendations
 code-context snapshot
@@ -272,10 +273,12 @@ code-context graph --focus Engine
 code-context graph path Engine Server
 code-context graph neighbors internal/engine/engine.go --limit 5
 code-context graph subgraph Engine --depth 2
+code-context graph traverse --kind document --path docs/health.md --edge references --limit 10
 code-context graph html --focus internal/server/server.go > graph.html
 ```
 
-Exports graph JSON, finds file-level paths, shows neighboring files/symbols, and returns local subgraphs for focused analysis.
+Exports graph JSON, finds file-level paths, shows neighboring files/symbols, runs provider-backed
+traversals when supported, and returns local subgraphs for focused analysis.
 
 Graph exports are versioned as `graph-export.v2` and now include richer code-knowledge graph structure:
 - node types: `file`, `symbol`, `import`, `module`, `package`
@@ -640,6 +643,7 @@ code-context:search "Server"
 # Inspect graph navigation via MCP
 code-context:graph_neighbors '{"target":"Engine","limit":5}'
 code-context:graph_path '{"from":"Engine","to":"Server"}'
+code-context:graph_traverse '{"start":{"kind":"document","path":"docs/health.md"},"edge_kinds":["references"],"limit":10}'
 code-context:graph '{"focus":"internal/server/server.go"}'
 
 # Unified impact analysis for an edit target

@@ -175,6 +175,28 @@ func TestGraphCmd(t *testing.T) {
 	}
 }
 
+func TestGraphTraverseCmdReportsUnsupportedBackend(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-graph-traverse-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	prevRoot, prevDB := root, dbPath
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	defer func() {
+		root, dbPath = prevRoot, prevDB
+	}()
+
+	cmd := newGraphCmd()
+	cmd.SetArgs([]string{"traverse", "--kind", "file", "--path", "a.go"})
+	_, err = captureStdout(func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "capability unsupported") {
+		t.Fatalf("expected unsupported capability error, got %v", err)
+	}
+}
+
 func TestGraphPathCmd(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-graph-path-test-*")
 	if err != nil {
