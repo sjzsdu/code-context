@@ -474,7 +474,8 @@ HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/heli
 ```
 
 The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, starts the HTTP
-server, and verifies `stats`, `status` capabilities, `search`, `routes`, `docs-for`, and `/api/text` read paths. It only rebuilds the configured
+server, and verifies `stats`, `status` capabilities, `search`, `routes`, `docs-for`, `/api/text`,
+and `/api/graph/traverse` read paths. It only rebuilds the configured
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.
 
@@ -486,8 +487,9 @@ Helix-specific features are kept behind provider-neutral optional interfaces in
 instead of importing Helix SDK types. Backends can implement any subset of these interfaces; callers
 can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
 fallbacks where appropriate. The Helix backend currently implements `TextSearcher` with BM25 over
-indexed symbol text and document metadata/summary text; `/api/text` and search callers use it when
-available and keep the local grep fallback for backends without the capability.
+indexed symbol text and document metadata/summary text, and `GraphTraverser` over the indexed
+file/symbol/import/call/route/document-link graph. `/api/text` and search callers use text search
+when available and keep the local grep fallback for backends without the capability.
 
 ## HTTP API
 
@@ -513,6 +515,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/graph/path` | `from`, `to` | Find a file-level path through the graph |
 | GET | `/api/graph/neighbors` | `target`, `limit?` | Show adjacent graph context for a file or symbol |
 | GET | `/api/graph/subgraph` | `target`, `depth?` | Export a local graph around a file or symbol |
+| POST | `/api/graph/traverse` | JSON `GraphTraversalQuery` | Provider-backed graph traversal when supported |
 | GET | `/api/graph/html` | `focus?` | Render an interactive HTML graph view |
 | GET | `/api/explain` | `file` | File summary with symbols, imports, and graph guidance |
 | GET | `/api/context` | `name` | Symbol profile with related context and graph guidance |

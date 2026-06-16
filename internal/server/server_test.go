@@ -1002,6 +1002,47 @@ func TestIndexEndpointWrongMethod(t *testing.T) {
 	}
 }
 
+func TestGraphTraverseEndpointUnsupported(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	body := strings.NewReader(`{"start":{"kind":"file","path":"a.go"},"limit":5}`)
+	resp, err := http.Post(ts.URL+"/api/graph/traverse", "application/json", body)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 501, got %d: %s", resp.StatusCode, string(payload))
+	}
+}
+
+func TestGraphTraverseEndpointWrongMethod(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Get(ts.URL + "/api/graph/traverse")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", resp.StatusCode)
+	}
+}
+
+func TestGraphTraverseEndpointDecodeError(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Post(ts.URL+"/api/graph/traverse", "application/json", strings.NewReader(`{`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
 func TestRebuildEndpoint(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

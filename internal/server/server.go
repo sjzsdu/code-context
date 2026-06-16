@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/engine"
 	"github.com/sjzsdu/code-context/internal/graphhtml"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 type Server struct {
@@ -49,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/doc-coverage", s.handleDocCoverage)
 	mux.HandleFunc("/api/map", s.handleMap)
 	mux.HandleFunc("/api/graph", s.handleGraph)
+	mux.HandleFunc("/api/graph/traverse", s.handleGraphTraverse)
 	mux.HandleFunc("/api/graph/html", s.handleGraphHTML)
 	mux.HandleFunc("/api/graph/path", s.handleGraphPath)
 	mux.HandleFunc("/api/graph/neighbors", s.handleGraphNeighbors)
@@ -368,6 +371,28 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	result, err := s.eng.ExportGraph(r.Context(), focus)
 	if err != nil {
 		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGraphTraverse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("POST only"), http.StatusMethodNotAllowed)
+		return
+	}
+	var query store.GraphTraversalQuery
+	if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
+		writeError(w, fmt.Errorf("decode graph traversal query: %w", err), http.StatusBadRequest)
+		return
+	}
+	result, err := s.eng.TraverseGraph(r.Context(), query)
+	if err != nil {
+		if errors.Is(err, engine.ErrCapabilityUnsupported) {
+			writeError(w, err, http.StatusNotImplemented)
+			return
+		}
+		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, result)

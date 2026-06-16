@@ -90,13 +90,14 @@ If no Helix URL is configured, the Helix Go SDK uses its local default endpoint 
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
-The smoke also verifies `status` capabilities and `/api/text` through `serve`, so keep
-`CODE_CONTEXT_HELIX_SMOKE_PORT` free or set it to an available port.
+The smoke also verifies `status` capabilities, `/api/text`, and `/api/graph/traverse` through
+`serve`, so keep `CODE_CONTEXT_HELIX_SMOKE_PORT` free or set it to an available port.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
 The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` and document
-metadata/summary `search_text`; consumers should use the interface and keep fallbacks for providers
-that do not implement it.
+metadata/summary `search_text`, plus `GraphTraverser` over the indexed file/symbol/import/call/
+route/document-link graph; consumers should use the interfaces and keep fallbacks for providers
+that do not implement them.
 
 ## Recommended Dogfood Workflow
 
@@ -425,6 +426,7 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/graph/path` | `from`, `to` | Find file-level path through graph |
 | GET | `/api/graph/neighbors` | `target`, `limit?` | Adjacent graph context |
 | GET | `/api/graph/subgraph` | `target`, `depth?` | Local graph around a file or symbol |
+| POST | `/api/graph/traverse` | JSON `GraphTraversalQuery` | Provider-backed graph traversal |
 
 ### Git-aware Endpoints
 
@@ -455,8 +457,9 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 - `GET /api/graph/path?from=...&to=...` — graph path lookup
 - `GET /api/graph/neighbors?target=...` — neighboring graph context
 - `GET /api/graph/subgraph?target=...&depth=...` — focused local graph
+- `POST /api/graph/traverse` — provider-backed graph traversal with `GraphTraversalQuery`
 - `GET /api/stats` — index stats with version metadata
-- `GET /api/status` — workflow/service status with watch metadata
+- `GET /api/status` — workflow/service status with provider capabilities and watch metadata
 - `POST /api/index?incremental=true` — trigger refresh
 
 ### MCP Server

@@ -118,6 +118,7 @@ grep -q "Documents:[[:space:]]*1" <<<"$stats"
 status="$(run_code_context status)"
 printf '%s\n' "$status"
 grep -q "Capabilities:.*text_search" <<<"$status"
+grep -q "Capabilities:.*graph_traversal" <<<"$status"
 
 search="$(run_code_context search Health)"
 printf '%s\n' "$search"
@@ -143,5 +144,10 @@ grep -q '"kind":"symbol"' <<<"$text_api"
 grep -q '"kind":"document"' <<<"$text_api"
 grep -q "HealthHandler" <<<"$text_api"
 grep -q "docs/health.md" <<<"$text_api"
+
+traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"start":{"kind":"document","path":"docs/health.md"},"edge_kinds":["references"],"direction":"outbound","limit":10}')"
+printf '%s\n' "$traverse_api"
+grep -q '"kind":"references"' <<<"$traverse_api"
+grep -q "HealthHandler" <<<"$traverse_api"
 
 echo "Helix smoke passed."

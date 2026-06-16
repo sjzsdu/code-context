@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -173,6 +174,54 @@ func TestSearchFilterAllowsProject(t *testing.T) {
 	}
 	if searchFilterAllowsProject("project-a", SearchFilter{ProjectIDs: []string{"project-b"}}) {
 		t.Fatal("filter without current project should reject it")
+	}
+}
+
+func TestHelixStoreDetectsAdvancedCapabilities(t *testing.T) {
+	got := DetectCapabilities(&helixStore{})
+	want := []Capability{CapabilityGraphTraversal, CapabilityTextSearch}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectCapabilities(helixStore) = %#v, want %#v", got, want)
+	}
+}
+
+func TestGraphTraversalBuilderDeduplicatesNodesAndEdges(t *testing.T) {
+	builder := newGraphTraversalBuilder()
+	from := TargetRef{Kind: TargetFile, Path: "internal/health.go"}
+	to := TargetRef{Kind: TargetSymbol, Path: "internal/health.go", Name: "HealthMessage", Type: "function", Line: 3}
+
+	builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", "3"))
+	builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", "3"))
+
+	result := builder.result()
+	if len(result.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2: %+v", len(result.Nodes), result.Nodes)
+	}
+	if len(result.Edges) != 1 {
+		t.Fatalf("edges = %d, want 1: %+v", len(result.Edges), result.Edges)
+	}
+	if result.Edges[0].Kind != GraphEdgeDefines {
+		t.Fatalf("edge kind = %q, want %q", result.Edges[0].Kind, GraphEdgeDefines)
+	}
+}
+
+func TestGraphDocumentLinkTargetRoute(t *testing.T) {
+	target := graphDocumentLinkTarget(api.DocumentLink{TargetType: "route", TargetValue: "GET /health"})
+	if target.Kind != TargetRoute || target.Method != "GET" || target.RoutePath != "/health" {
+		t.Fatalf("unexpected route target: %+v", target)
+	}
+}
+
+func TestGraphEdgeAllowed(t *testing.T) {
+	allowed := graphEdgeKindSet([]GraphEdgeKind{GraphEdgeCalls})
+	if !graphEdgeAllowed(allowed, GraphEdgeCalls) {
+		t.Fatal("expected calls edge to be allowed")
+	}
+	if graphEdgeAllowed(allowed, GraphEdgeImports) {
+		t.Fatal("expected imports edge to be rejected")
+	}
+	if !graphEdgeAllowed(nil, GraphEdgeImports) {
+		t.Fatal("empty edge filter should allow imports")
 	}
 }
 

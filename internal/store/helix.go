@@ -414,6 +414,249 @@ func searchFilterAllowsProject(projectID string, filter SearchFilter) bool {
 	return false
 }
 
+func (s *helixStore) TraverseGraph(ctx context.Context, query GraphTraversalQuery) (*GraphTraversalResult, error) {
+	start := normalizeGraphStart(query.Start)
+	if start.Kind == "" {
+		return &GraphTraversalResult{}, nil
+	}
+
+	maxDepth := query.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 1
+	}
+	if maxDepth > 3 {
+		maxDepth = 3
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	direction := query.Direction
+	if direction == "" {
+		direction = GraphOutbound
+	}
+	allowed := graphEdgeKindSet(query.EdgeKinds)
+
+	builder := newGraphTraversalBuilder()
+	builder.addNode(start, nil)
+	queue := []graphFrontier{{target: start, depth: 0}}
+	seenDepth := map[string]int{graphTargetKey(start): 0}
+
+	for len(queue) > 0 && builder.edgeCount() < limit {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth >= maxDepth {
+			continue
+		}
+
+		var adjacent []TargetRef
+		if direction == GraphOutbound || direction == GraphBoth {
+			next, err := s.expandGraphOutbound(ctx, builder, current.target, allowed)
+			if err != nil {
+				return nil, err
+			}
+			adjacent = append(adjacent, next...)
+		}
+		if direction == GraphInbound || direction == GraphBoth {
+			next, err := s.expandGraphInbound(ctx, builder, current.target, allowed)
+			if err != nil {
+				return nil, err
+			}
+			adjacent = append(adjacent, next...)
+		}
+
+		for _, target := range adjacent {
+			key := graphTargetKey(target)
+			nextDepth := current.depth + 1
+			if prev, ok := seenDepth[key]; ok && prev <= nextDepth {
+				continue
+			}
+			seenDepth[key] = nextDepth
+			queue = append(queue, graphFrontier{target: target, depth: nextDepth})
+		}
+	}
+
+	result := builder.result()
+	if len(result.Edges) > limit {
+		result.Edges = result.Edges[:limit]
+	}
+	if len(result.Nodes) > limit+1 {
+		result.Nodes = result.Nodes[:limit+1]
+	}
+	return result, nil
+}
+
+type graphFrontier struct {
+	target TargetRef
+	depth  int
+}
+
+func (s *helixStore) expandGraphOutbound(ctx context.Context, builder *graphTraversalBuilder, from TargetRef, allowed map[GraphEdgeKind]struct{}) ([]TargetRef, error) {
+	var adjacent []TargetRef
+	switch from.Kind {
+	case TargetFile:
+		if graphEdgeAllowed(allowed, GraphEdgeDefines) && from.Path != "" {
+			symbols, err := s.GetFileSymbols(ctx, from.Path)
+			if err != nil {
+				return nil, err
+			}
+			for _, sym := range symbols {
+				to := graphSymbolTarget(sym)
+				builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", fmt.Sprint(sym.Line), "kind", string(sym.Kind)))
+				adjacent = append(adjacent, to)
+			}
+		}
+		if graphEdgeAllowed(allowed, GraphEdgeImports) && from.Path != "" {
+			imports, err := s.GetImports(ctx, from.Path)
+			if err != nil {
+				return nil, err
+			}
+			for _, imp := range imports {
+				to := TargetRef{Kind: TargetText, Type: "import", Value: imp.ToSource}
+				builder.addEdge(from, to, GraphEdgeImports, graphProperties("line", fmt.Sprint(imp.Line), "source", imp.ToSource))
+				adjacent = append(adjacent, to)
+			}
+		}
+		if graphEdgeAllowed(allowed, GraphEdgeRoutes) && from.Path != "" {
+			routes, err := s.ListRoutes(ctx, "")
+			if err != nil {
+				return nil, err
+			}
+			for _, route := range routes {
+				if route.FilePath != from.Path {
+					continue
+				}
+				to := graphRouteTarget(route)
+				builder.addEdge(from, to, GraphEdgeRoutes, graphProperties("line", fmt.Sprint(route.Line), "framework", route.Framework))
+				adjacent = append(adjacent, to)
+			}
+		}
+		if graphEdgeAllowed(allowed, GraphEdgeDocuments) && from.Path != "" {
+			docs, err := s.GetDocumentsByTarget(ctx, "file", from.Path)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range docs {
+				to := graphDocumentTarget(link.DocumentPath)
+				builder.addEdge(from, to, GraphEdgeDocuments, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, to)
+			}
+		}
+	case TargetSymbol:
+		name := graphSymbolName(from)
+		if graphEdgeAllowed(allowed, GraphEdgeCalls) && name != "" {
+			calls, err := s.GetCallees(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			for _, call := range calls {
+				to := TargetRef{Kind: TargetSymbol, Name: call.ToName}
+				builder.addEdge(from, to, GraphEdgeCalls, graphProperties("line", fmt.Sprint(call.Line), "from_file", call.FromFile, "confidence", call.Confidence))
+				adjacent = append(adjacent, to)
+			}
+		}
+		if graphEdgeAllowed(allowed, GraphEdgeDocuments) && name != "" {
+			docs, err := s.GetDocumentsByTarget(ctx, "symbol", name)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range docs {
+				to := graphDocumentTarget(link.DocumentPath)
+				builder.addEdge(from, to, GraphEdgeDocuments, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, to)
+			}
+		}
+	case TargetDocument:
+		if graphEdgeAllowed(allowed, GraphEdgeReferences) && from.Path != "" {
+			links, err := s.GetDocumentLinks(ctx, from.Path)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range links {
+				to := graphDocumentLinkTarget(link)
+				builder.addEdge(from, to, GraphEdgeReferences, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, to)
+			}
+		}
+	case TargetRoute:
+		if graphEdgeAllowed(allowed, GraphEdgeDocuments) {
+			targetValue := graphRouteValue(from)
+			if targetValue == "" {
+				break
+			}
+			docs, err := s.GetDocumentsByTarget(ctx, "route", targetValue)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range docs {
+				to := graphDocumentTarget(link.DocumentPath)
+				builder.addEdge(from, to, GraphEdgeDocuments, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, to)
+			}
+		}
+	}
+	return adjacent, nil
+}
+
+func (s *helixStore) expandGraphInbound(ctx context.Context, builder *graphTraversalBuilder, to TargetRef, allowed map[GraphEdgeKind]struct{}) ([]TargetRef, error) {
+	var adjacent []TargetRef
+	switch to.Kind {
+	case TargetFile:
+		if graphEdgeAllowed(allowed, GraphEdgeReferences) && to.Path != "" {
+			docs, err := s.GetDocumentsByTarget(ctx, "file", to.Path)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range docs {
+				from := graphDocumentTarget(link.DocumentPath)
+				builder.addEdge(from, to, GraphEdgeReferences, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, from)
+			}
+		}
+	case TargetSymbol:
+		name := graphSymbolName(to)
+		if graphEdgeAllowed(allowed, GraphEdgeCalls) && name != "" {
+			calls, err := s.GetCallers(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			for _, call := range calls {
+				from := TargetRef{Kind: TargetSymbol, Path: call.FromFile, Name: call.FromSymbol, Line: call.Line}
+				builder.addEdge(from, to, GraphEdgeCalls, graphProperties("line", fmt.Sprint(call.Line), "from_file", call.FromFile, "confidence", call.Confidence))
+				adjacent = append(adjacent, from)
+			}
+		}
+		if graphEdgeAllowed(allowed, GraphEdgeReferences) && name != "" {
+			docs, err := s.GetDocumentsByTarget(ctx, "symbol", name)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range docs {
+				from := graphDocumentTarget(link.DocumentPath)
+				builder.addEdge(from, to, GraphEdgeReferences, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, from)
+			}
+		}
+	case TargetRoute:
+		if graphEdgeAllowed(allowed, GraphEdgeReferences) {
+			targetValue := graphRouteValue(to)
+			if targetValue == "" {
+				break
+			}
+			docs, err := s.GetDocumentsByTarget(ctx, "route", targetValue)
+			if err != nil {
+				return nil, err
+			}
+			for _, link := range docs {
+				from := graphDocumentTarget(link.DocumentPath)
+				builder.addEdge(from, to, GraphEdgeReferences, graphDocumentLinkProperties(link))
+				adjacent = append(adjacent, from)
+			}
+		}
+	}
+	return adjacent, nil
+}
+
 func (s *helixStore) FindDefinitions(ctx context.Context, name string) ([]api.Symbol, error) {
 	q := helix.ReadQuery("code_context_find_definitions")
 	nameParam := q.ParamString("name", name)
@@ -1238,6 +1481,239 @@ func documentSearchText(doc *api.Document) string {
 		return ""
 	}
 	return strings.Join([]string{doc.Title, doc.Summary, doc.Path, doc.Language}, " ")
+}
+
+type graphTraversalBuilder struct {
+	nodes     map[string]GraphNode
+	nodeOrder []string
+	edges     map[string]GraphEdge
+	edgeOrder []string
+}
+
+func newGraphTraversalBuilder() *graphTraversalBuilder {
+	return &graphTraversalBuilder{
+		nodes: map[string]GraphNode{},
+		edges: map[string]GraphEdge{},
+	}
+}
+
+func (b *graphTraversalBuilder) addNode(target TargetRef, properties map[string]string) {
+	target = normalizeGraphStart(target)
+	key := graphTargetKey(target)
+	if key == "" {
+		return
+	}
+	if existing, ok := b.nodes[key]; ok {
+		if len(properties) > 0 {
+			if existing.Properties == nil {
+				existing.Properties = map[string]string{}
+			}
+			for k, v := range properties {
+				if v != "" {
+					existing.Properties[k] = v
+				}
+			}
+			b.nodes[key] = existing
+		}
+		return
+	}
+	b.nodes[key] = GraphNode{Target: target, Properties: properties}
+	b.nodeOrder = append(b.nodeOrder, key)
+}
+
+func (b *graphTraversalBuilder) addEdge(from, to TargetRef, kind GraphEdgeKind, properties map[string]string) {
+	from = normalizeGraphStart(from)
+	to = normalizeGraphStart(to)
+	fromKey := graphTargetKey(from)
+	toKey := graphTargetKey(to)
+	if fromKey == "" || toKey == "" || kind == "" {
+		return
+	}
+	b.addNode(from, nil)
+	b.addNode(to, nil)
+	key := fromKey + "->" + toKey + "#" + string(kind)
+	if _, ok := b.edges[key]; ok {
+		return
+	}
+	b.edges[key] = GraphEdge{From: from, To: to, Kind: kind, Properties: properties}
+	b.edgeOrder = append(b.edgeOrder, key)
+}
+
+func (b *graphTraversalBuilder) edgeCount() int {
+	return len(b.edges)
+}
+
+func (b *graphTraversalBuilder) result() *GraphTraversalResult {
+	nodes := make([]GraphNode, 0, len(b.nodeOrder))
+	for _, key := range b.nodeOrder {
+		nodes = append(nodes, b.nodes[key])
+	}
+	edges := make([]GraphEdge, 0, len(b.edgeOrder))
+	for _, key := range b.edgeOrder {
+		edges = append(edges, b.edges[key])
+	}
+	return &GraphTraversalResult{Nodes: nodes, Edges: edges}
+}
+
+func graphEdgeKindSet(kinds []GraphEdgeKind) map[GraphEdgeKind]struct{} {
+	if len(kinds) == 0 {
+		return nil
+	}
+	allowed := make(map[GraphEdgeKind]struct{}, len(kinds))
+	for _, kind := range kinds {
+		if kind != "" {
+			allowed[kind] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func graphEdgeAllowed(allowed map[GraphEdgeKind]struct{}, kind GraphEdgeKind) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	_, ok := allowed[kind]
+	return ok
+}
+
+func normalizeGraphStart(target TargetRef) TargetRef {
+	if target.Kind == "" {
+		switch {
+		case target.Path != "":
+			target.Kind = TargetFile
+		case target.RoutePath != "" || target.Method != "":
+			target.Kind = TargetRoute
+		case target.Name != "":
+			target.Kind = TargetSymbol
+		case target.Value != "":
+			target.Kind = TargetText
+		}
+	}
+	if target.Kind == TargetRoute && target.Value == "" {
+		target.Value = graphRouteValue(target)
+	}
+	return target
+}
+
+func graphTargetKey(target TargetRef) string {
+	target = normalizeGraphStart(target)
+	switch target.Kind {
+	case TargetFile:
+		return "file:" + target.Path
+	case TargetSymbol:
+		if target.Path != "" {
+			return "symbol:" + target.Path + ":" + target.Name
+		}
+		return "symbol:" + target.Name
+	case TargetRoute:
+		return "route:" + graphRouteValue(target)
+	case TargetDocument:
+		return "document:" + target.Path
+	case TargetText:
+		return "text:" + target.Type + ":" + target.Value
+	default:
+		return string(target.Kind) + ":" + target.Value
+	}
+}
+
+func graphSymbolTarget(sym api.Symbol) TargetRef {
+	return TargetRef{
+		Kind:    TargetSymbol,
+		Path:    sym.FilePath,
+		Name:    sym.Name,
+		Type:    string(sym.Kind),
+		Line:    sym.Line,
+		EndLine: sym.EndLine,
+	}
+}
+
+func graphSymbolName(target TargetRef) string {
+	if target.Name != "" {
+		return target.Name
+	}
+	return target.Value
+}
+
+func graphRouteTarget(route api.Route) TargetRef {
+	return TargetRef{
+		Kind:      TargetRoute,
+		Path:      route.FilePath,
+		Name:      route.Handler,
+		Type:      route.Framework,
+		Line:      route.Line,
+		Method:    route.Method,
+		RoutePath: route.Path,
+		Value:     strings.TrimSpace(route.Method + " " + route.Path),
+	}
+}
+
+func graphRouteValue(target TargetRef) string {
+	if target.Value != "" {
+		return target.Value
+	}
+	if target.Method != "" && target.RoutePath != "" {
+		return strings.TrimSpace(strings.ToUpper(target.Method) + " " + target.RoutePath)
+	}
+	if target.RoutePath != "" {
+		return target.RoutePath
+	}
+	return strings.TrimSpace(target.Method)
+}
+
+func graphDocumentTarget(path string) TargetRef {
+	return TargetRef{Kind: TargetDocument, Path: path}
+}
+
+func graphDocumentLinkTarget(link api.DocumentLink) TargetRef {
+	switch link.TargetType {
+	case "file":
+		return TargetRef{Kind: TargetFile, Path: link.TargetValue}
+	case "symbol":
+		return TargetRef{Kind: TargetSymbol, Name: link.TargetValue}
+	case "route":
+		method, routePath := parseRouteTargetValue(link.TargetValue)
+		return TargetRef{Kind: TargetRoute, Method: method, RoutePath: routePath, Value: link.TargetValue}
+	default:
+		return TargetRef{Kind: TargetText, Type: link.TargetType, Value: link.TargetValue}
+	}
+}
+
+func parseRouteTargetValue(value string) (method string, routePath string) {
+	parts := strings.Fields(value)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return "", parts[0]
+	}
+	return strings.ToUpper(parts[0]), strings.Join(parts[1:], " ")
+}
+
+func graphDocumentLinkProperties(link api.DocumentLink) map[string]string {
+	return graphProperties(
+		"document_path", link.DocumentPath,
+		"target_type", link.TargetType,
+		"target_value", link.TargetValue,
+		"line", fmt.Sprint(link.Line),
+		"section", link.SectionTitle,
+		"evidence", link.Evidence,
+		"confidence", fmt.Sprintf("%.2f", link.Confidence),
+	)
+}
+
+func graphProperties(values ...string) map[string]string {
+	props := map[string]string{}
+	for i := 0; i+1 < len(values); i += 2 {
+		key := values[i]
+		value := strings.TrimSpace(values[i+1])
+		if key != "" && value != "" {
+			props[key] = value
+		}
+	}
+	if len(props) == 0 {
+		return nil
+	}
+	return props
 }
 
 func symbolParamRows(projectID, filePath string, symbols []api.Symbol) []map[string]any {

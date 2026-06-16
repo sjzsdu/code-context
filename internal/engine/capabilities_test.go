@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"context"
+	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -26,5 +29,21 @@ func TestCapabilityNamesEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("capabilityNames(nil) = %#v, want empty", got)
+	}
+}
+
+func TestTraverseGraphUnsupportedCapability(t *testing.T) {
+	root := t.TempDir()
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer eng.Close()
+
+	_, err = eng.TraverseGraph(context.Background(), store.GraphTraversalQuery{
+		Start: store.TargetRef{Kind: store.TargetFile, Path: "a.go"},
+	})
+	if !errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("TraverseGraph error = %v, want ErrCapabilityUnsupported", err)
 	}
 }

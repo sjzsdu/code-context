@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +38,8 @@ type Engine struct {
 const (
 	graphExportVersion = "graph-export.v2"
 )
+
+var ErrCapabilityUnsupported = errors.New("capability unsupported")
 
 func New(root string, dbPath string) (*Engine, error) {
 	return NewWithStoreOptions(root, store.Options{
@@ -534,6 +537,14 @@ func (e *Engine) GraphSubgraph(ctx context.Context, target string, depth int) (*
 		Files:        files,
 		Summary:      fmt.Sprintf("Exported subgraph for %s across %d files at depth %d", resolvedFile, len(files), depth),
 	}, nil
+}
+
+func (e *Engine) TraverseGraph(ctx context.Context, query store.GraphTraversalQuery) (*store.GraphTraversalResult, error) {
+	traverser, ok := e.store.(store.GraphTraverser)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityGraphTraversal)
+	}
+	return traverser.TraverseGraph(ctx, query)
 }
 
 func (e *Engine) exportGraphWithFocusSet(ctx context.Context, focus string, focusSet map[string]bool) (*api.GraphExport, error) {
