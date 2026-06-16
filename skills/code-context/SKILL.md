@@ -75,6 +75,14 @@ store:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
     project_id: my-repo
+embedding:
+  provider: none
+  # provider: openai-compatible
+  # base_url: http://localhost:11434/v1
+  # model: nomic-embed-text
+  api_key_env: EMBEDDING_API_KEY
+  timeout: 30s
+  batch_size: 64
 server:
   port: 9090
 watch:
@@ -98,6 +106,11 @@ The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` 
 metadata/summary `search_text`, plus `GraphTraverser` over the indexed file/symbol/import/call/
 route/document-link graph; consumers should use the interfaces and keep fallbacks for providers
 that do not implement them.
+Embedding support is optional and disabled by default. Configure `embedding.provider:
+openai-compatible` with a local or hosted `/embeddings` API when semantic/vector phases are needed;
+the project should keep embedding, vector search, hybrid search, and future RAG behavior behind
+provider-neutral interfaces. SQLite implements the provider-neutral embedding cache, so enabled
+embedding runs can cache symbol/document chunk vectors without changing search behavior yet.
 
 ## Recommended Dogfood Workflow
 

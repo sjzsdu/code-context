@@ -24,12 +24,13 @@ var configNames = []string{
 }
 
 type Config struct {
-	Root   string       `json:"root" yaml:"root"`
-	DB     string       `json:"db" yaml:"db"`
-	Store  StoreConfig  `json:"store" yaml:"store"`
-	Server ServerConfig `json:"server" yaml:"server"`
-	Watch  WatchConfig  `json:"watch" yaml:"watch"`
-	Docs   DocsConfig   `json:"docs" yaml:"docs"`
+	Root      string          `json:"root" yaml:"root"`
+	DB        string          `json:"db" yaml:"db"`
+	Store     StoreConfig     `json:"store" yaml:"store"`
+	Embedding EmbeddingConfig `json:"embedding" yaml:"embedding"`
+	Server    ServerConfig    `json:"server" yaml:"server"`
+	Watch     WatchConfig     `json:"watch" yaml:"watch"`
+	Docs      DocsConfig      `json:"docs" yaml:"docs"`
 }
 
 type StoreConfig struct {
@@ -47,6 +48,17 @@ type HelixStoreConfig struct {
 	APIKey    string `json:"api_key" yaml:"api_key"`
 	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`
 	ProjectID string `json:"project_id" yaml:"project_id"`
+}
+
+type EmbeddingConfig struct {
+	Provider   string        `json:"provider" yaml:"provider"`
+	BaseURL    string        `json:"base_url" yaml:"base_url"`
+	APIKey     string        `json:"api_key" yaml:"api_key"`
+	APIKeyEnv  string        `json:"api_key_env" yaml:"api_key_env"`
+	Model      string        `json:"model" yaml:"model"`
+	Dimensions int           `json:"dimensions" yaml:"dimensions"`
+	Timeout    time.Duration `json:"timeout" yaml:"timeout"`
+	BatchSize  int           `json:"batch_size" yaml:"batch_size"`
 }
 
 type ServerConfig struct {
@@ -88,6 +100,14 @@ type configFields struct {
 	StoreHelixAPIKey      bool
 	StoreHelixAPIKeyEnv   bool
 	StoreHelixProjectID   bool
+	EmbeddingProvider     bool
+	EmbeddingBaseURL      bool
+	EmbeddingAPIKey       bool
+	EmbeddingAPIKeyEnv    bool
+	EmbeddingModel        bool
+	EmbeddingDimensions   bool
+	EmbeddingTimeout      bool
+	EmbeddingBatchSize    bool
 	ServerPort            bool
 	WatchEnabled          bool
 	WatchInterval         bool
@@ -304,6 +324,16 @@ func fieldsFromMap(raw map[string]any) configFields {
 			f.StoreHelixProjectID = has(helix, "project_id")
 		}
 	}
+	if embedding := nested(raw, "embedding"); embedding != nil {
+		f.EmbeddingProvider = has(embedding, "provider")
+		f.EmbeddingBaseURL = has(embedding, "base_url")
+		f.EmbeddingAPIKey = has(embedding, "api_key")
+		f.EmbeddingAPIKeyEnv = has(embedding, "api_key_env")
+		f.EmbeddingModel = has(embedding, "model")
+		f.EmbeddingDimensions = has(embedding, "dimensions")
+		f.EmbeddingTimeout = has(embedding, "timeout")
+		f.EmbeddingBatchSize = has(embedding, "batch_size")
+	}
 	if server := nested(raw, "server"); server != nil {
 		f.ServerPort = has(server, "port")
 	}
@@ -366,6 +396,38 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 	if srcFields.StoreHelixProjectID {
 		dst.Store.Helix.ProjectID = src.Store.Helix.ProjectID
 		dstFields.StoreHelixProjectID = true
+	}
+	if srcFields.EmbeddingProvider {
+		dst.Embedding.Provider = src.Embedding.Provider
+		dstFields.EmbeddingProvider = true
+	}
+	if srcFields.EmbeddingBaseURL {
+		dst.Embedding.BaseURL = src.Embedding.BaseURL
+		dstFields.EmbeddingBaseURL = true
+	}
+	if srcFields.EmbeddingAPIKey {
+		dst.Embedding.APIKey = src.Embedding.APIKey
+		dstFields.EmbeddingAPIKey = true
+	}
+	if srcFields.EmbeddingAPIKeyEnv {
+		dst.Embedding.APIKeyEnv = src.Embedding.APIKeyEnv
+		dstFields.EmbeddingAPIKeyEnv = true
+	}
+	if srcFields.EmbeddingModel {
+		dst.Embedding.Model = src.Embedding.Model
+		dstFields.EmbeddingModel = true
+	}
+	if srcFields.EmbeddingDimensions {
+		dst.Embedding.Dimensions = src.Embedding.Dimensions
+		dstFields.EmbeddingDimensions = true
+	}
+	if srcFields.EmbeddingTimeout {
+		dst.Embedding.Timeout = src.Embedding.Timeout
+		dstFields.EmbeddingTimeout = true
+	}
+	if srcFields.EmbeddingBatchSize {
+		dst.Embedding.BatchSize = src.Embedding.BatchSize
+		dstFields.EmbeddingBatchSize = true
 	}
 	if srcFields.ServerPort {
 		dst.Server.Port = src.Server.Port

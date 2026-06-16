@@ -136,6 +136,14 @@ Supported options:
 | `store.helix.api_key` | string | HelixDB API key |
 | `store.helix.api_key_env` | string | Environment variable containing the HelixDB API key |
 | `store.helix.project_id` | string | Helix project namespace (default: absolute root) |
+| `embedding.provider` | string | Embedding provider: `none`, `openai`, or `openai-compatible` |
+| `embedding.base_url` | string | Embedding API base URL (`/embeddings` is appended for OpenAI-compatible providers) |
+| `embedding.api_key` | string | Embedding API key |
+| `embedding.api_key_env` | string | Environment variable containing the embedding API key |
+| `embedding.model` | string | Embedding model name |
+| `embedding.dimensions` | int | Optional requested embedding dimensions |
+| `embedding.timeout` | duration | Embedding request timeout |
+| `embedding.batch_size` | int | Maximum embedding batch size |
 | `server.port` | int | HTTP server port |
 | `watch.enabled` | bool | Enable watch mode / background refresh by default |
 | `watch.interval` | duration | Polling interval for incremental refresh |
@@ -157,6 +165,16 @@ store:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
     project_id: my-repo
+embedding:
+  provider: none
+  # OpenAI-compatible local examples:
+  # provider: openai-compatible
+  # base_url: http://localhost:11434/v1
+  # model: nomic-embed-text
+  api_key_env: EMBEDDING_API_KEY
+  dimensions: 0
+  timeout: 30s
+  batch_size: 64
 server:
   port: 9090
 watch:
@@ -472,6 +490,14 @@ code-context test-impact --state unstaged
 | `--helix-api-key` | | | HelixDB API key |
 | `--helix-api-key-env` | | | Environment variable containing the HelixDB API key |
 | `--helix-project-id` | | `<absolute root>` | Helix project namespace |
+| `--embedding-provider` | | `none` | Embedding provider (`none`, `openai`, `openai-compatible`) |
+| `--embedding-base-url` | | | Embedding API base URL |
+| `--embedding-api-key` | | | Embedding API key |
+| `--embedding-api-key-env` | | | Environment variable containing the embedding API key |
+| `--embedding-model` | | | Embedding model name |
+| `--embedding-dimensions` | | `0` | Optional requested embedding dimensions |
+| `--embedding-timeout` | | `30s` | Embedding request timeout when provider is enabled |
+| `--embedding-batch-size` | | `64` | Maximum embedding batch size |
 
 ### Helix Smoke Validation
 
@@ -493,7 +519,8 @@ created unscoped unique path indexes.
 
 Helix-specific features are kept behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`. Callers should depend on capabilities such as `TextSearcher`,
-`VectorSearcher`, `HybridSearcher`, `GraphTraverser`, `WorkspaceSearcher`, and `MemoryStore`
+`VectorSearcher`, `HybridSearcher`, `GraphTraverser`, `WorkspaceSearcher`, `MemoryStore`,
+`Embedder`, and `EmbeddingCache`
 instead of importing Helix SDK types. Backends can implement any subset of these interfaces; callers
 can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
 fallbacks where appropriate. The Helix backend currently implements `TextSearcher` with BM25 over
@@ -505,6 +532,14 @@ semantic edge groups, target/file/metadata filters, depth/path metadata, text-qu
 provider graph traversal summaries when the backend supports `GraphTraverser`; SQLite/local
 fallbacks simply omit those optional fields. `/api/text` and search callers use text search when
 available and keep the local grep fallback for backends without the capability.
+
+Embedding support starts as provider-neutral plumbing rather than a full RAG framework dependency.
+The built-in `openai-compatible` adapter posts batches to `{base_url}/embeddings`, preserves source
+target metadata, records model/dimension metadata, and keeps the provider disabled by default. This
+lets local runtimes such as Ollama/LocalAI/TEI or hosted OpenAI-compatible APIs supply vectors while
+code-context owns only the chunking, caching, storage, and retrieval glue. When a backend implements
+`EmbeddingCache` (SQLite does), indexing builds symbol/document chunks and stores generated vectors
+by model + dimensions + chunk hash for reuse by later vector-search providers.
 
 ## HTTP API
 

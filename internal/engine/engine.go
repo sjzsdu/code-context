@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sjzsdu/code-context/internal/api"
+	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
 	"github.com/sjzsdu/code-context/internal/graph"
 	"github.com/sjzsdu/code-context/internal/indexer"
 	"github.com/sjzsdu/code-context/internal/lang"
@@ -26,6 +27,7 @@ type Engine struct {
 	root        string
 	dbPath      string
 	store       store.Store
+	embedder    store.Embedder
 	parser      parser.Parser
 	indexer     *indexer.Indexer
 	search      *search.Searcher
@@ -49,6 +51,15 @@ func New(root string, dbPath string) (*Engine, error) {
 }
 
 func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) {
+	return NewWithOptions(root, Options{Store: storeOpts})
+}
+
+type Options struct {
+	Store     store.Options
+	Embedding embeddingpkg.Options
+}
+
+func NewWithOptions(root string, opts Options) (*Engine, error) {
 	if root == "" {
 		var err error
 		root, err = os.Getwd()
@@ -59,27 +70,32 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 	root, _ = filepath.Abs(root)
 
 	storeLocation := ""
-	switch storeOpts.BackendOrDefault() {
+	switch opts.Store.BackendOrDefault() {
 	case store.BackendSQLite:
-		if storeOpts.SQLite.Path == "" {
-			storeOpts.SQLite.Path = filepath.Join(root, ".code-context", "index.db")
+		if opts.Store.SQLite.Path == "" {
+			opts.Store.SQLite.Path = filepath.Join(root, ".code-context", "index.db")
 		}
-		if err := os.MkdirAll(filepath.Dir(storeOpts.SQLite.Path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(opts.Store.SQLite.Path), 0o755); err != nil {
 			return nil, fmt.Errorf("create sqlite store directory: %w", err)
 		}
-		storeLocation = storeOpts.SQLite.Path
+		storeLocation = opts.Store.SQLite.Path
 	case store.BackendHelix:
-		if strings.TrimSpace(storeOpts.Helix.ProjectID) == "" {
-			storeOpts.Helix.ProjectID = root
+		if strings.TrimSpace(opts.Store.Helix.ProjectID) == "" {
+			opts.Store.Helix.ProjectID = root
 		}
-		storeLocation = storeOpts.Helix.URL
+		storeLocation = opts.Store.Helix.URL
 	}
 
 	reg := lang.NewRegistry()
 	p := parser.NewTreeSitterParser(reg)
-	s, err := store.New(storeOpts)
+	s, err := store.New(opts.Store)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
+	}
+	embedder, err := embeddingpkg.New(opts.Embedding)
+	if err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("configure embedding provider: %w", err)
 	}
 
 	if err := s.Init(context.Background()); err != nil {
@@ -87,17 +103,19 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 	}
 
 	idx := indexer.New(p, s, root)
+	idx.SetEmbedder(embedder)
 	sr := search.New(s, root)
 	g := graph.New(s)
 
 	return &Engine{
-		root:    root,
-		dbPath:  storeLocation,
-		store:   s,
-		parser:  p,
-		indexer: idx,
-		search:  sr,
-		graph:   g,
+		root:     root,
+		dbPath:   storeLocation,
+		store:    s,
+		embedder: embedder,
+		parser:   p,
+		indexer:  idx,
+		search:   sr,
+		graph:    g,
 	}, nil
 }
 
@@ -545,6 +563,13 @@ func (e *Engine) TraverseGraph(ctx context.Context, query store.GraphTraversalQu
 		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityGraphTraversal)
 	}
 	return traverser.TraverseGraph(ctx, query)
+}
+
+func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]store.EmbeddingVector, error) {
+	if e.embedder == nil {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityEmbedding)
+	}
+	return e.embedder.Embed(ctx, inputs)
 }
 
 func (e *Engine) bestEffortGraphTraversal(ctx context.Context, query store.GraphTraversalQuery) *store.GraphTraversalResult {
@@ -1913,10 +1938,43 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 		Root:         e.root,
 		DatabasePath: e.dbPath,
 		GraphVersion: graphExportVersion,
-		Capabilities: capabilityNames(store.DetectCapabilities(e.store)),
+		Capabilities: e.capabilityNames(),
+		Embedding:    e.embeddingStatus(),
 		Index:        stats,
 		Watch:        &watch,
 	}, nil
+}
+
+func (e *Engine) capabilityNames() []string {
+	seen := map[string]struct{}{}
+	for _, provider := range []any{e.store, e.embedder} {
+		for _, cap := range store.DetectCapabilities(provider) {
+			if cap != "" {
+				seen[string(cap)] = struct{}{}
+			}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (e *Engine) embeddingStatus() *api.EmbeddingStatus {
+	if e.embedder == nil {
+		return &api.EmbeddingStatus{Enabled: false}
+	}
+	info := e.embedder.EmbeddingModel()
+	return &api.EmbeddingStatus{
+		Enabled:    true,
+		Provider:   info.Provider,
+		Model:      info.Model,
+		Dimensions: info.Dimensions,
+		BaseURL:    info.BaseURL,
+		BatchSize:  info.BatchSize,
+	}
 }
 
 func capabilityNames(caps []store.Capability) []string {

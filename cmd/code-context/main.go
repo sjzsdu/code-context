@@ -17,6 +17,7 @@ import (
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
+	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
 	"github.com/sjzsdu/code-context/internal/engine"
 	"github.com/sjzsdu/code-context/internal/graphhtml"
 	"github.com/sjzsdu/code-context/internal/search"
@@ -25,13 +26,21 @@ import (
 )
 
 var (
-	root           string
-	dbPath         string
-	storeBackend   string
-	helixURL       string
-	helixAPIKey    string
-	helixAPIKeyEnv string
-	helixProjectID string
+	root                string
+	dbPath              string
+	storeBackend        string
+	helixURL            string
+	helixAPIKey         string
+	helixAPIKeyEnv      string
+	helixProjectID      string
+	embeddingProvider   string
+	embeddingBaseURL    string
+	embeddingAPIKey     string
+	embeddingAPIKeyEnv  string
+	embeddingModel      string
+	embeddingDimensions int
+	embeddingTimeout    time.Duration
+	embeddingBatchSize  int
 )
 
 type runtimeConfig struct {
@@ -65,6 +74,14 @@ func main() {
 	cmd.PersistentFlags().StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
 	cmd.PersistentFlags().StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	cmd.PersistentFlags().StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
+	cmd.PersistentFlags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider (none|openai|openai-compatible; default: none)")
+	cmd.PersistentFlags().StringVar(&embeddingBaseURL, "embedding-base-url", "", "embedding API base URL (for openai-compatible, e.g. http://localhost:11434/v1)")
+	cmd.PersistentFlags().StringVar(&embeddingAPIKey, "embedding-api-key", "", "embedding API key")
+	cmd.PersistentFlags().StringVar(&embeddingAPIKeyEnv, "embedding-api-key-env", "", "environment variable containing the embedding API key")
+	cmd.PersistentFlags().StringVar(&embeddingModel, "embedding-model", "", "embedding model name")
+	cmd.PersistentFlags().IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding vector dimensions (optional provider parameter)")
+	cmd.PersistentFlags().DurationVar(&embeddingTimeout, "embedding-timeout", 0, "embedding request timeout")
+	cmd.PersistentFlags().IntVar(&embeddingBatchSize, "embedding-batch-size", 0, "embedding batch size")
 
 	cmd.AddCommand(
 		newConfigCmd(),
@@ -150,7 +167,11 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 
 	if !cmd.Flags().Changed("db") || !cmd.Flags().Changed("store-backend") ||
 		!cmd.Flags().Changed("helix-url") || !cmd.Flags().Changed("helix-api-key") ||
-		!cmd.Flags().Changed("helix-api-key-env") || !cmd.Flags().Changed("helix-project-id") {
+		!cmd.Flags().Changed("helix-api-key-env") || !cmd.Flags().Changed("helix-project-id") ||
+		!cmd.Flags().Changed("embedding-provider") || !cmd.Flags().Changed("embedding-base-url") ||
+		!cmd.Flags().Changed("embedding-api-key") || !cmd.Flags().Changed("embedding-api-key-env") ||
+		!cmd.Flags().Changed("embedding-model") || !cmd.Flags().Changed("embedding-dimensions") ||
+		!cmd.Flags().Changed("embedding-timeout") || !cmd.Flags().Changed("embedding-batch-size") {
 
 		if loaded == nil && loadErr != config.ErrNotFound {
 			loaded, loadErr = config.Load(root)
@@ -183,13 +204,40 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			if !cmd.Flags().Changed("helix-project-id") && loaded.Config.Store.Helix.ProjectID != "" {
 				helixProjectID = loaded.Config.Store.Helix.ProjectID
 			}
+			if !cmd.Flags().Changed("embedding-provider") && loaded.Config.Embedding.Provider != "" {
+				embeddingProvider = loaded.Config.Embedding.Provider
+			}
+			if !cmd.Flags().Changed("embedding-base-url") && loaded.Config.Embedding.BaseURL != "" {
+				embeddingBaseURL = loaded.Config.Embedding.BaseURL
+			}
+			if !cmd.Flags().Changed("embedding-api-key") && loaded.Config.Embedding.APIKey != "" {
+				embeddingAPIKey = loaded.Config.Embedding.APIKey
+			}
+			if !cmd.Flags().Changed("embedding-api-key-env") && loaded.Config.Embedding.APIKeyEnv != "" {
+				embeddingAPIKeyEnv = loaded.Config.Embedding.APIKeyEnv
+			}
+			if !cmd.Flags().Changed("embedding-model") && loaded.Config.Embedding.Model != "" {
+				embeddingModel = loaded.Config.Embedding.Model
+			}
+			if !cmd.Flags().Changed("embedding-dimensions") && loaded.Config.Embedding.Dimensions > 0 {
+				embeddingDimensions = loaded.Config.Embedding.Dimensions
+			}
+			if !cmd.Flags().Changed("embedding-timeout") && loaded.Config.Embedding.Timeout > 0 {
+				embeddingTimeout = loaded.Config.Embedding.Timeout
+			}
+			if !cmd.Flags().Changed("embedding-batch-size") && loaded.Config.Embedding.BatchSize > 0 {
+				embeddingBatchSize = loaded.Config.Embedding.BatchSize
+			}
 		}
 	}
 	_ = cfg
 }
 
 func newEngine() (*engine.Engine, error) {
-	return engine.NewWithStoreOptions(root, storeOptions())
+	return engine.NewWithOptions(root, engine.Options{
+		Store:     storeOptions(),
+		Embedding: embeddingOptions(),
+	})
 }
 
 func storeOptions() store.Options {
@@ -202,6 +250,19 @@ func storeOptions() store.Options {
 			APIKeyEnv: helixAPIKeyEnv,
 			ProjectID: helixProjectID,
 		},
+	}
+}
+
+func embeddingOptions() embeddingpkg.Options {
+	return embeddingpkg.Options{
+		Provider:   embeddingProvider,
+		BaseURL:    embeddingBaseURL,
+		APIKey:     embeddingAPIKey,
+		APIKeyEnv:  embeddingAPIKeyEnv,
+		Model:      embeddingModel,
+		Dimensions: embeddingDimensions,
+		Timeout:    embeddingTimeout,
+		BatchSize:  embeddingBatchSize,
 	}
 }
 
@@ -287,6 +348,30 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 	if helixProjectID != "" {
 		cfg.Store.Helix.ProjectID = helixProjectID
 	}
+	if embeddingProvider != "" {
+		cfg.Embedding.Provider = embeddingProvider
+	}
+	if embeddingBaseURL != "" {
+		cfg.Embedding.BaseURL = embeddingBaseURL
+	}
+	if embeddingAPIKey != "" {
+		cfg.Embedding.APIKey = embeddingAPIKey
+	}
+	if embeddingAPIKeyEnv != "" {
+		cfg.Embedding.APIKeyEnv = embeddingAPIKeyEnv
+	}
+	if embeddingModel != "" {
+		cfg.Embedding.Model = embeddingModel
+	}
+	if embeddingDimensions > 0 {
+		cfg.Embedding.Dimensions = embeddingDimensions
+	}
+	if embeddingTimeout > 0 {
+		cfg.Embedding.Timeout = embeddingTimeout
+	}
+	if embeddingBatchSize > 0 {
+		cfg.Embedding.BatchSize = embeddingBatchSize
+	}
 }
 
 func newOnboardCmd() *cobra.Command {
@@ -346,6 +431,14 @@ store:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
     project_id: ""
+embedding:
+  provider: none
+  base_url: ""
+  api_key_env: EMBEDDING_API_KEY
+  model: ""
+  dimensions: 0
+  timeout: 30s
+  batch_size: 64
 server:
   port: 9090
 watch:
@@ -989,6 +1082,21 @@ func newStatusCmd() *cobra.Command {
 				capabilities = strings.Join(status.Capabilities, ", ")
 			}
 			fmt.Printf("Capabilities:  %s\n", capabilities)
+			if status.Embedding != nil && status.Embedding.Enabled {
+				fmt.Printf("Embedding:     %s model=%s", status.Embedding.Provider, status.Embedding.Model)
+				if status.Embedding.Dimensions > 0 {
+					fmt.Printf(" dimensions=%d", status.Embedding.Dimensions)
+				}
+				if status.Embedding.BatchSize > 0 {
+					fmt.Printf(" batch=%d", status.Embedding.BatchSize)
+				}
+				if status.Embedding.BaseURL != "" {
+					fmt.Printf(" base_url=%s", status.Embedding.BaseURL)
+				}
+				fmt.Println()
+			} else {
+				fmt.Println("Embedding:     disabled")
+			}
 			if status.Index != nil {
 				fmt.Printf("Index version: %s\n", status.Index.IndexVersion)
 				fmt.Printf("Files:         %d\n", status.Index.TotalFiles)

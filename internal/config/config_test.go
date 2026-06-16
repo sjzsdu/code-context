@@ -96,7 +96,7 @@ func TestLoadStoreConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
 	configPath := filepath.Join(tmpDir, ".code-context.yaml")
-	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\n")
+	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\nembedding:\n  provider: openai-compatible\n  base_url: http://localhost:8080/v1\n  api_key_env: EMBEDDING_API_KEY\n  model: text-embedding-test\n  dimensions: 384\n  timeout: 10s\n  batch_size: 32\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -120,6 +120,27 @@ func TestLoadStoreConfig(t *testing.T) {
 	}
 	if loaded.Config.Store.Helix.ProjectID != "custom-project" {
 		t.Fatalf("store.helix.project_id = %q", loaded.Config.Store.Helix.ProjectID)
+	}
+	if loaded.Config.Embedding.Provider != "openai-compatible" {
+		t.Fatalf("embedding.provider = %q", loaded.Config.Embedding.Provider)
+	}
+	if loaded.Config.Embedding.BaseURL != "http://localhost:8080/v1" {
+		t.Fatalf("embedding.base_url = %q", loaded.Config.Embedding.BaseURL)
+	}
+	if loaded.Config.Embedding.APIKeyEnv != "EMBEDDING_API_KEY" {
+		t.Fatalf("embedding.api_key_env = %q", loaded.Config.Embedding.APIKeyEnv)
+	}
+	if loaded.Config.Embedding.Model != "text-embedding-test" {
+		t.Fatalf("embedding.model = %q", loaded.Config.Embedding.Model)
+	}
+	if loaded.Config.Embedding.Dimensions != 384 {
+		t.Fatalf("embedding.dimensions = %d", loaded.Config.Embedding.Dimensions)
+	}
+	if loaded.Config.Embedding.Timeout != 10*time.Second {
+		t.Fatalf("embedding.timeout = %s", loaded.Config.Embedding.Timeout)
+	}
+	if loaded.Config.Embedding.BatchSize != 32 {
+		t.Fatalf("embedding.batch_size = %d", loaded.Config.Embedding.BatchSize)
 	}
 }
 
@@ -145,13 +166,13 @@ func TestLoadMergesUserAndProjectConfig(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	userConfigPath := filepath.Join(homeDir, ".code-context", "config.yaml")
-	userConfig := []byte("store:\n  backend: helix\n  helix:\n    url: http://user-helix:6969\n    api_key_env: USER_HELIX_KEY\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 5s\ndocs:\n  fail_on_broken: true\n")
+	userConfig := []byte("store:\n  backend: helix\n  helix:\n    url: http://user-helix:6969\n    api_key_env: USER_HELIX_KEY\nembedding:\n  provider: openai-compatible\n  base_url: http://user-embedding/v1\n  model: user-model\n  batch_size: 16\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 5s\ndocs:\n  fail_on_broken: true\n")
 	if err := os.WriteFile(userConfigPath, userConfig, 0o644); err != nil {
 		t.Fatalf("write user config: %v", err)
 	}
 
 	projectConfigPath := filepath.Join(projectDir, ".code-context", "config.yaml")
-	projectConfig := []byte("root: .\ndb: .code-context/index.db\nstore:\n  helix:\n    project_id: project-a\nserver:\n  port: 9090\nwatch:\n  enabled: false\ndocs:\n  fail_on_broken: false\n")
+	projectConfig := []byte("root: .\ndb: .code-context/index.db\nstore:\n  helix:\n    project_id: project-a\nembedding:\n  model: project-model\nserver:\n  port: 9090\nwatch:\n  enabled: false\ndocs:\n  fail_on_broken: false\n")
 	if err := os.WriteFile(projectConfigPath, projectConfig, 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
@@ -187,6 +208,18 @@ func TestLoadMergesUserAndProjectConfig(t *testing.T) {
 	}
 	if loaded.Config.Store.Helix.ProjectID != "project-a" {
 		t.Fatalf("helix.project_id = %q", loaded.Config.Store.Helix.ProjectID)
+	}
+	if loaded.Config.Embedding.Provider != "openai-compatible" {
+		t.Fatalf("embedding.provider = %q", loaded.Config.Embedding.Provider)
+	}
+	if loaded.Config.Embedding.BaseURL != "http://user-embedding/v1" {
+		t.Fatalf("embedding.base_url = %q", loaded.Config.Embedding.BaseURL)
+	}
+	if loaded.Config.Embedding.Model != "project-model" {
+		t.Fatalf("embedding.model = %q", loaded.Config.Embedding.Model)
+	}
+	if loaded.Config.Embedding.BatchSize != 16 {
+		t.Fatalf("embedding.batch_size = %d", loaded.Config.Embedding.BatchSize)
 	}
 	if loaded.Config.Server.Port != 9090 {
 		t.Fatalf("server.port = %d", loaded.Config.Server.Port)

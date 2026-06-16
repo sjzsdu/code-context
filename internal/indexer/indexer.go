@@ -15,15 +15,17 @@ import (
 	"time"
 
 	"github.com/sjzsdu/code-context/internal/api"
+	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
 	"github.com/sjzsdu/code-context/internal/parser"
 	"github.com/sjzsdu/code-context/internal/store"
 )
 
 type Indexer struct {
-	parser  parser.Parser
-	store   store.Store
-	root    string
-	workers int
+	parser   parser.Parser
+	store    store.Store
+	embedder store.Embedder
+	root     string
+	workers  int
 }
 
 func New(p parser.Parser, s store.Store, root string) *Indexer {
@@ -32,6 +34,10 @@ func New(p parser.Parser, s store.Store, root string) *Indexer {
 		w = 16
 	}
 	return &Indexer{parser: p, store: s, root: root, workers: w}
+}
+
+func (idx *Indexer) SetEmbedder(embedder store.Embedder) {
+	idx.embedder = embedder
 }
 
 type parseResult struct {
@@ -102,6 +108,13 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 					}
 					return
 				}
+				if err := idx.cacheEmbeddingChunks(ctx, embeddingpkg.BuildDocumentChunks("", doc, pr.content)); err != nil {
+					atomic.AddInt64(&failed, 1)
+					if verbose {
+						fmt.Fprintf(os.Stderr, "  fail %s: cache document embeddings: %v\n", pr.path, err)
+					}
+					return
+				}
 				atomic.AddInt64(&indexed, 1)
 				atomic.AddInt64(&docs, 1)
 			}(pr)
@@ -115,6 +128,13 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 
 		existing, err := idx.store.GetFile(ctx, pr.path)
 		if err == nil && existing != nil && existing.ContentHash == hash {
+			if err := idx.cacheEmbeddingChunks(ctx, embeddingpkg.BuildSymbolChunks("", pr.path, pr.content, pr.result.Symbols)); err != nil {
+				atomic.AddInt64(&failed, 1)
+				if verbose {
+					fmt.Fprintf(os.Stderr, "  fail %s: cache symbol embeddings: %v\n", pr.path, err)
+				}
+				continue
+			}
 			atomic.AddInt64(&skipped, 1)
 			continue
 		}
@@ -138,6 +158,13 @@ func (idx *Indexer) IndexAll(ctx context.Context, verbose bool) (*api.IndexStats
 				atomic.AddInt64(&failed, 1)
 				if verbose {
 					fmt.Fprintf(os.Stderr, "  fail %s: replace file index: %v\n", pr.path, err)
+				}
+				return
+			}
+			if err := idx.cacheEmbeddingChunks(ctx, embeddingpkg.BuildSymbolChunks("", pr.path, pr.content, pr.result.Symbols)); err != nil {
+				atomic.AddInt64(&failed, 1)
+				if verbose {
+					fmt.Fprintf(os.Stderr, "  fail %s: cache symbol embeddings: %v\n", pr.path, err)
 				}
 				return
 			}
@@ -379,6 +406,9 @@ func (idx *Indexer) indexOneFile(ctx context.Context, path string) (nSyms, nImps
 		if err := idx.store.ReplaceDocumentLinks(ctx, docID, links); err != nil {
 			return 0, 0, false, err
 		}
+		if err := idx.cacheEmbeddingChunks(ctx, embeddingpkg.BuildDocumentChunks("", doc, content)); err != nil {
+			return 0, 0, false, err
+		}
 		return 0, 0, false, nil
 	}
 
@@ -401,8 +431,77 @@ func (idx *Indexer) indexOneFile(ctx context.Context, path string) (nSyms, nImps
 	}); err != nil {
 		return 0, 0, false, err
 	}
+	if err := idx.cacheEmbeddingChunks(ctx, embeddingpkg.BuildSymbolChunks("", path, content, result.Symbols)); err != nil {
+		return 0, 0, false, err
+	}
 
 	return len(result.Symbols), len(result.Imports), false, nil
+}
+
+func (idx *Indexer) cacheEmbeddingChunks(ctx context.Context, chunks []embeddingpkg.Chunk) error {
+	if idx.embedder == nil || len(chunks) == 0 {
+		return nil
+	}
+	cache, ok := idx.store.(store.EmbeddingCache)
+	if !ok {
+		return nil
+	}
+	info := idx.embedder.EmbeddingModel()
+	model := strings.TrimSpace(info.Model)
+	if model == "" {
+		return fmt.Errorf("embedding model is required")
+	}
+	dimensions := info.Dimensions
+	inputs := make([]store.EmbeddingInput, 0, len(chunks))
+	missing := make([]embeddingpkg.Chunk, 0, len(chunks))
+	keys := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		if strings.TrimSpace(chunk.Text) == "" {
+			continue
+		}
+		key := embeddingpkg.CacheKey(model, dimensions, chunk.Text)
+		existing, err := cache.GetEmbedding(ctx, key)
+		if err != nil {
+			return err
+		}
+		if existing != nil && len(existing.Values) > 0 {
+			continue
+		}
+		keys = append(keys, key)
+		missing = append(missing, chunk)
+		inputs = append(inputs, chunk.Input())
+	}
+	if len(inputs) == 0 {
+		return nil
+	}
+	vectors, err := idx.embedder.Embed(ctx, inputs)
+	if err != nil {
+		return err
+	}
+	if len(vectors) != len(missing) {
+		return fmt.Errorf("embedding result count = %d, want %d", len(vectors), len(missing))
+	}
+	for i, vector := range vectors {
+		chunk := missing[i]
+		vectorModel := firstNonEmpty(vector.Model, model)
+		vectorDimensions := vector.Dimensions
+		if vectorDimensions <= 0 {
+			vectorDimensions = len(vector.Values)
+		}
+		if err := cache.UpsertEmbedding(ctx, store.EmbeddingCacheEntry{
+			Key:         keys[i],
+			Model:       vectorModel,
+			Dimensions:  vectorDimensions,
+			ContentHash: chunk.ContentHash,
+			InputKind:   chunk.Kind,
+			Target:      chunk.Target,
+			Values:      vector.Values,
+			Metadata:    mergeStringMaps(chunk.Metadata, vector.Metadata),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (idx *Indexer) walk() ([]string, error) {
@@ -472,4 +571,29 @@ func isTestFile(path string) bool {
 	default:
 		return false
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func mergeStringMaps(base map[string]string, overlays ...map[string]string) map[string]string {
+	if len(base) == 0 && len(overlays) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for _, overlay := range overlays {
+		for k, v := range overlay {
+			out[k] = v
+		}
+	}
+	return out
 }

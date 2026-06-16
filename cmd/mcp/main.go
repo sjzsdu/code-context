@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
+	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
 	"github.com/sjzsdu/code-context/internal/engine"
 	"github.com/sjzsdu/code-context/internal/search"
 	"github.com/sjzsdu/code-context/internal/store"
@@ -20,13 +22,21 @@ import (
 )
 
 var (
-	root           string
-	db             string
-	storeBackend   string
-	helixURL       string
-	helixAPIKey    string
-	helixAPIKeyEnv string
-	helixProjectID string
+	root                string
+	db                  string
+	storeBackend        string
+	helixURL            string
+	helixAPIKey         string
+	helixAPIKeyEnv      string
+	helixProjectID      string
+	embeddingProvider   string
+	embeddingBaseURL    string
+	embeddingAPIKey     string
+	embeddingAPIKeyEnv  string
+	embeddingModel      string
+	embeddingDimensions int
+	embeddingTimeout    time.Duration
+	embeddingBatchSize  int
 )
 
 type GraphArgs struct {
@@ -107,11 +117,22 @@ func main() {
 	flag.StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
 	flag.StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	flag.StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
+	flag.StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider (none|openai|openai-compatible; default: none)")
+	flag.StringVar(&embeddingBaseURL, "embedding-base-url", "", "embedding API base URL")
+	flag.StringVar(&embeddingAPIKey, "embedding-api-key", "", "embedding API key")
+	flag.StringVar(&embeddingAPIKeyEnv, "embedding-api-key-env", "", "environment variable containing the embedding API key")
+	flag.StringVar(&embeddingModel, "embedding-model", "", "embedding model name")
+	flag.IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding vector dimensions")
+	flag.DurationVar(&embeddingTimeout, "embedding-timeout", 0, "embedding request timeout")
+	flag.IntVar(&embeddingBatchSize, "embedding-batch-size", 0, "embedding batch size")
 	flag.Parse()
 	applyConfigDefaults()
 
 	// Initialize the engine
-	eng, err := engine.NewWithStoreOptions(root, mcpStoreOptions())
+	eng, err := engine.NewWithOptions(root, engine.Options{
+		Store:     mcpStoreOptions(),
+		Embedding: mcpEmbeddingOptions(),
+	})
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
 	}
@@ -181,6 +202,30 @@ func applyConfigDefaults() {
 	if !visited["helix-project-id"] && loaded.Config.Store.Helix.ProjectID != "" {
 		helixProjectID = loaded.Config.Store.Helix.ProjectID
 	}
+	if !visited["embedding-provider"] && loaded.Config.Embedding.Provider != "" {
+		embeddingProvider = loaded.Config.Embedding.Provider
+	}
+	if !visited["embedding-base-url"] && loaded.Config.Embedding.BaseURL != "" {
+		embeddingBaseURL = loaded.Config.Embedding.BaseURL
+	}
+	if !visited["embedding-api-key"] && loaded.Config.Embedding.APIKey != "" {
+		embeddingAPIKey = loaded.Config.Embedding.APIKey
+	}
+	if !visited["embedding-api-key-env"] && loaded.Config.Embedding.APIKeyEnv != "" {
+		embeddingAPIKeyEnv = loaded.Config.Embedding.APIKeyEnv
+	}
+	if !visited["embedding-model"] && loaded.Config.Embedding.Model != "" {
+		embeddingModel = loaded.Config.Embedding.Model
+	}
+	if !visited["embedding-dimensions"] && loaded.Config.Embedding.Dimensions > 0 {
+		embeddingDimensions = loaded.Config.Embedding.Dimensions
+	}
+	if !visited["embedding-timeout"] && loaded.Config.Embedding.Timeout > 0 {
+		embeddingTimeout = loaded.Config.Embedding.Timeout
+	}
+	if !visited["embedding-batch-size"] && loaded.Config.Embedding.BatchSize > 0 {
+		embeddingBatchSize = loaded.Config.Embedding.BatchSize
+	}
 }
 
 func mcpStoreOptions() store.Options {
@@ -193,6 +238,19 @@ func mcpStoreOptions() store.Options {
 			APIKeyEnv: helixAPIKeyEnv,
 			ProjectID: helixProjectID,
 		},
+	}
+}
+
+func mcpEmbeddingOptions() embeddingpkg.Options {
+	return embeddingpkg.Options{
+		Provider:   embeddingProvider,
+		BaseURL:    embeddingBaseURL,
+		APIKey:     embeddingAPIKey,
+		APIKeyEnv:  embeddingAPIKeyEnv,
+		Model:      embeddingModel,
+		Dimensions: embeddingDimensions,
+		Timeout:    embeddingTimeout,
+		BatchSize:  embeddingBatchSize,
 	}
 }
 

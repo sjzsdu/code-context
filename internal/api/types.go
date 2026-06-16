@@ -251,12 +251,22 @@ type FreshnessReport struct {
 
 // ServiceStatus reports workflow and indexing metadata for the running service.
 type ServiceStatus struct {
-	Root         string       `json:"root"`
-	DatabasePath string       `json:"database_path"`
-	GraphVersion string       `json:"graph_version"`
-	Capabilities []string     `json:"capabilities"`
-	Index        *IndexStats  `json:"index,omitempty"`
-	Watch        *WatchStatus `json:"watch,omitempty"`
+	Root         string           `json:"root"`
+	DatabasePath string           `json:"database_path"`
+	GraphVersion string           `json:"graph_version"`
+	Capabilities []string         `json:"capabilities"`
+	Embedding    *EmbeddingStatus `json:"embedding,omitempty"`
+	Index        *IndexStats      `json:"index,omitempty"`
+	Watch        *WatchStatus     `json:"watch,omitempty"`
+}
+
+type EmbeddingStatus struct {
+	Enabled    bool   `json:"enabled"`
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Dimensions int    `json:"dimensions,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	BatchSize  int    `json:"batch_size,omitempty"`
 }
 
 // DoctorCheck reports one health check result.

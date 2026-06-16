@@ -113,3 +113,25 @@ CREATE TABLE IF NOT EXISTS document_links (
 
 CREATE INDEX IF NOT EXISTS idx_document_links_doc ON document_links(document_id);
 CREATE INDEX IF NOT EXISTS idx_document_links_target ON document_links(target_type, target_value);
+
+-- Embedding cache stores provider-generated vectors by model + dimensions + chunk hash.
+-- It is intentionally separate from vector-search indexes so multiple backends can reuse
+-- the same cached embedding results.
+CREATE TABLE IF NOT EXISTS embedding_cache (
+    key          TEXT PRIMARY KEY,
+    model        TEXT NOT NULL,
+    dimensions   INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    input_kind   TEXT NOT NULL DEFAULT '',
+    target_kind  TEXT NOT NULL DEFAULT '',
+    target_path  TEXT NOT NULL DEFAULT '',
+    target_name  TEXT NOT NULL DEFAULT '',
+    target_json  TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    vector_json  TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_model_hash ON embedding_cache(model, dimensions, content_hash);
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_target ON embedding_cache(target_kind, target_path, target_name);

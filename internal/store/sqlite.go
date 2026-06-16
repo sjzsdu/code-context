@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-const SchemaVersion = "schema.v2.code-context"
+const SchemaVersion = "schema.v3.code-context"
 
 type schemaMigration struct {
 	version string
@@ -26,7 +27,28 @@ type schemaMigration struct {
 var schemaMigrations = []schemaMigration{
 	{version: "schema.v1.code-context", apply: func(context.Context, *sqliteStore) error { return nil }},
 	{version: "schema.v2.code-context", apply: migrateDocumentLinkSections},
+	{version: "schema.v3.code-context", apply: migrateEmbeddingCache},
 }
+
+const embeddingCacheSchemaSQL = `
+CREATE TABLE IF NOT EXISTS embedding_cache (
+    key          TEXT PRIMARY KEY,
+    model        TEXT NOT NULL,
+    dimensions   INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    input_kind   TEXT NOT NULL DEFAULT '',
+    target_kind  TEXT NOT NULL DEFAULT '',
+    target_path  TEXT NOT NULL DEFAULT '',
+    target_name  TEXT NOT NULL DEFAULT '',
+    target_json  TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    vector_json  TEXT NOT NULL,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_model_hash ON embedding_cache(model, dimensions, content_hash);
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_target ON embedding_cache(target_kind, target_path, target_name);
+`
 
 type sqliteStore struct {
 	db *sql.DB
@@ -127,9 +149,14 @@ func migrateDocumentLinkSections(ctx context.Context, s *sqliteStore) error {
 	return nil
 }
 
+func migrateEmbeddingCache(ctx context.Context, s *sqliteStore) error {
+	_, err := s.db.ExecContext(ctx, embeddingCacheSchemaSQL)
+	return err
+}
+
 func (s *sqliteStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error) {
-	expectedTables := []string{"schema_migrations", "files", "symbols", "imports", "symbols_fts", "calls", "routes", "documents", "document_links"}
-	expectedIndexes := []string{"idx_symbols_name", "idx_symbols_kind", "idx_symbols_file", "idx_imports_source", "idx_imports_file", "idx_calls_from", "idx_calls_to", "idx_calls_file", "idx_routes_path", "idx_routes_handler", "idx_routes_file", "idx_document_links_doc", "idx_document_links_target"}
+	expectedTables := []string{"schema_migrations", "files", "symbols", "imports", "symbols_fts", "calls", "routes", "documents", "document_links", "embedding_cache"}
+	expectedIndexes := []string{"idx_symbols_name", "idx_symbols_kind", "idx_symbols_file", "idx_imports_source", "idx_imports_file", "idx_calls_from", "idx_calls_to", "idx_calls_file", "idx_routes_path", "idx_routes_handler", "idx_routes_file", "idx_document_links_doc", "idx_document_links_target", "idx_embedding_cache_model_hash", "idx_embedding_cache_target"}
 	tables, err := s.sqliteObjects(ctx, "table")
 	if err != nil {
 		return nil, err
@@ -143,6 +170,156 @@ func (s *sqliteStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, erro
 		return nil, err
 	}
 	return &api.SchemaStatus{ExpectedVersion: SchemaVersion, AppliedVersion: appliedVersion, VersionOK: appliedVersion == SchemaVersion, Tables: intersectNames(tables, expectedTables), MissingTables: missingNames(tables, expectedTables), Indexes: intersectNames(indexes, expectedIndexes), MissingIndexes: missingNames(indexes, expectedIndexes)}, nil
+}
+
+func (s *sqliteStore) GetEmbedding(ctx context.Context, key string) (*EmbeddingCacheEntry, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+	var row embeddingCacheRow
+	err := s.db.QueryRowContext(ctx, `
+SELECT key, model, dimensions, content_hash, input_kind, target_json, metadata_json, vector_json, created_at, updated_at
+FROM embedding_cache
+WHERE key = ?`, key).Scan(
+		&row.Key,
+		&row.Model,
+		&row.Dimensions,
+		&row.ContentHash,
+		&row.InputKind,
+		&row.TargetJSON,
+		&row.MetadataJSON,
+		&row.VectorJSON,
+		&row.CreatedAt,
+		&row.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	entry, err := row.Entry()
+	if err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
+func (s *sqliteStore) UpsertEmbedding(ctx context.Context, entry EmbeddingCacheEntry) error {
+	entry.Key = strings.TrimSpace(entry.Key)
+	entry.Model = strings.TrimSpace(entry.Model)
+	if entry.Key == "" {
+		return fmt.Errorf("embedding cache key is required")
+	}
+	if entry.Model == "" {
+		return fmt.Errorf("embedding model is required")
+	}
+	if len(entry.Values) == 0 {
+		return fmt.Errorf("embedding vector is required")
+	}
+	if entry.Dimensions <= 0 {
+		entry.Dimensions = len(entry.Values)
+	}
+	if entry.ContentHash == "" {
+		return fmt.Errorf("embedding content hash is required")
+	}
+	targetJSON, err := json.Marshal(entry.Target)
+	if err != nil {
+		return err
+	}
+	metadataJSON, err := json.Marshal(nonNilStringMap(entry.Metadata))
+	if err != nil {
+		return err
+	}
+	vectorJSON, err := json.Marshal(entry.Values)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO embedding_cache(
+	key, model, dimensions, content_hash, input_kind,
+	target_kind, target_path, target_name, target_json, metadata_json, vector_json, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	model = excluded.model,
+	dimensions = excluded.dimensions,
+	content_hash = excluded.content_hash,
+	input_kind = excluded.input_kind,
+	target_kind = excluded.target_kind,
+	target_path = excluded.target_path,
+	target_name = excluded.target_name,
+	target_json = excluded.target_json,
+	metadata_json = excluded.metadata_json,
+	vector_json = excluded.vector_json,
+	updated_at = excluded.updated_at`,
+		entry.Key,
+		entry.Model,
+		entry.Dimensions,
+		entry.ContentHash,
+		string(entry.InputKind),
+		string(entry.Target.Kind),
+		entry.Target.Path,
+		entry.Target.Name,
+		string(targetJSON),
+		string(metadataJSON),
+		string(vectorJSON),
+		now,
+		now,
+	)
+	return err
+}
+
+type embeddingCacheRow struct {
+	Key          string
+	Model        string
+	Dimensions   int
+	ContentHash  string
+	InputKind    string
+	TargetJSON   string
+	MetadataJSON string
+	VectorJSON   string
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
+func (r embeddingCacheRow) Entry() (*EmbeddingCacheEntry, error) {
+	var target TargetRef
+	if strings.TrimSpace(r.TargetJSON) != "" {
+		if err := json.Unmarshal([]byte(r.TargetJSON), &target); err != nil {
+			return nil, err
+		}
+	}
+	var metadata map[string]string
+	if strings.TrimSpace(r.MetadataJSON) != "" {
+		if err := json.Unmarshal([]byte(r.MetadataJSON), &metadata); err != nil {
+			return nil, err
+		}
+	}
+	var values []float32
+	if err := json.Unmarshal([]byte(r.VectorJSON), &values); err != nil {
+		return nil, err
+	}
+	return &EmbeddingCacheEntry{
+		Key:         r.Key,
+		Model:       r.Model,
+		Dimensions:  r.Dimensions,
+		ContentHash: r.ContentHash,
+		InputKind:   EmbeddingInputKind(r.InputKind),
+		Target:      target,
+		Values:      values,
+		Metadata:    metadata,
+		CreatedAt:   time.Unix(r.CreatedAt, 0),
+		UpdatedAt:   time.Unix(r.UpdatedAt, 0),
+	}, nil
+}
+
+func nonNilStringMap(in map[string]string) map[string]string {
+	if in != nil {
+		return in
+	}
+	return map[string]string{}
 }
 
 func (s *sqliteStore) sqliteObjects(ctx context.Context, typ string) (map[string]bool, error) {

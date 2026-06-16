@@ -126,6 +126,9 @@ CREATE TABLE document_links (
 			t.Fatalf("expected migrated column %s", col)
 		}
 	}
+	if _, err := st.(*sqliteStore).db.ExecContext(context.Background(), `SELECT COUNT(*) FROM embedding_cache`); err != nil {
+		t.Fatalf("expected embedding_cache migration: %v", err)
+	}
 }
 
 func documentLinkColumnExists(t *testing.T, st Store, column string) bool {
@@ -173,6 +176,55 @@ func TestUpsertAndGetFile(t *testing.T) {
 	}
 	if got.Path != f.Path || got.Language != f.Language || got.ContentHash != f.ContentHash || got.Size != f.Size {
 		t.Fatalf("mismatched file fields: got=%v want=%v", got, f)
+	}
+}
+
+func TestEmbeddingCacheUpsertAndGet(t *testing.T) {
+	st, clean := newTestStore(t)
+	defer clean()
+	cache, ok := st.(EmbeddingCache)
+	if !ok {
+		t.Fatalf("sqlite store does not implement EmbeddingCache")
+	}
+
+	entry := EmbeddingCacheEntry{
+		Key:         "cache-key",
+		Model:       "text-embedding-test",
+		Dimensions:  3,
+		ContentHash: "hash",
+		InputKind:   EmbeddingInputSymbol,
+		Target: TargetRef{
+			Kind:    TargetSymbol,
+			Path:    "main.go",
+			Name:    "HealthHandler",
+			Type:    "function",
+			Line:    10,
+			EndLine: 12,
+		},
+		Values:   []float32{0.1, 0.2, 0.3},
+		Metadata: map[string]string{"kind": "function"},
+	}
+	if err := cache.UpsertEmbedding(context.Background(), entry); err != nil {
+		t.Fatalf("upsert embedding: %v", err)
+	}
+	got, err := cache.GetEmbedding(context.Background(), entry.Key)
+	if err != nil {
+		t.Fatalf("get embedding: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("expected cache entry")
+	}
+	if got.Model != entry.Model || got.Dimensions != entry.Dimensions || got.ContentHash != entry.ContentHash {
+		t.Fatalf("unexpected entry metadata: %+v", got)
+	}
+	if got.Target.Kind != TargetSymbol || got.Target.Name != "HealthHandler" {
+		t.Fatalf("unexpected target: %+v", got.Target)
+	}
+	if len(got.Values) != 3 || got.Values[2] != float32(0.3) {
+		t.Fatalf("unexpected vector: %+v", got.Values)
+	}
+	if got.Metadata["kind"] != "function" {
+		t.Fatalf("unexpected metadata: %+v", got.Metadata)
 	}
 }
 

@@ -21,6 +21,7 @@ const (
 	CapabilityWorkspaceSearch Capability = "workspace_search"
 	CapabilityMemory          Capability = "memory"
 	CapabilityEmbedding       Capability = "embedding"
+	CapabilityEmbeddingCache  Capability = "embedding_cache"
 )
 
 // CapabilityReporter lets backends advertise custom or partial advanced
@@ -69,6 +70,9 @@ func DetectCapabilities(provider any) []Capability {
 	}
 	if _, ok := provider.(Embedder); ok {
 		add(CapabilityEmbedding)
+	}
+	if _, ok := provider.(EmbeddingCache); ok {
+		add(CapabilityEmbeddingCache)
 	}
 
 	caps := make([]Capability, 0, len(seen))
@@ -414,6 +418,74 @@ type MemoryStore interface {
 	SearchMemory(ctx context.Context, query MemorySearchQuery) ([]MemoryHit, error)
 }
 
+type EmbeddingInputKind string
+
+const (
+	EmbeddingInputQuery    EmbeddingInputKind = "query"
+	EmbeddingInputDocument EmbeddingInputKind = "document"
+	EmbeddingInputCode     EmbeddingInputKind = "code"
+	EmbeddingInputSymbol   EmbeddingInputKind = "symbol"
+)
+
+// EmbeddingInput is the provider-neutral unit sent to an embedding provider.
+// The optional Target and Metadata fields let indexers retain source
+// provenance without binding the embedder to any storage backend.
+type EmbeddingInput struct {
+	ID       string             `json:"id,omitempty"`
+	Text     string             `json:"text"`
+	Kind     EmbeddingInputKind `json:"kind,omitempty"`
+	Target   TargetRef          `json:"target,omitempty"`
+	Metadata map[string]string  `json:"metadata,omitempty"`
+}
+
+type EmbeddingUsage struct {
+	PromptTokens int `json:"prompt_tokens,omitempty"`
+	TotalTokens  int `json:"total_tokens,omitempty"`
+}
+
+// EmbeddingVector is the provider-neutral output from an embedding provider.
+// Values are always float32 so they can be stored directly in vector indexes
+// such as Helix nodeVector/edgeVector properties.
+type EmbeddingVector struct {
+	ID         string            `json:"id,omitempty"`
+	Values     []float32         `json:"values"`
+	Model      string            `json:"model,omitempty"`
+	Dimensions int               `json:"dimensions,omitempty"`
+	Target     TargetRef         `json:"target,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	Usage      *EmbeddingUsage   `json:"usage,omitempty"`
+}
+
+type EmbeddingCacheEntry struct {
+	Key         string             `json:"key"`
+	Model       string             `json:"model"`
+	Dimensions  int                `json:"dimensions"`
+	ContentHash string             `json:"content_hash"`
+	InputKind   EmbeddingInputKind `json:"input_kind,omitempty"`
+	Target      TargetRef          `json:"target,omitempty"`
+	Values      []float32          `json:"values"`
+	Metadata    map[string]string  `json:"metadata,omitempty"`
+	CreatedAt   time.Time          `json:"created_at,omitempty"`
+	UpdatedAt   time.Time          `json:"updated_at,omitempty"`
+}
+
+type EmbeddingCache interface {
+	GetEmbedding(ctx context.Context, key string) (*EmbeddingCacheEntry, error)
+	UpsertEmbedding(ctx context.Context, entry EmbeddingCacheEntry) error
+}
+
+type EmbeddingModelInfo struct {
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Dimensions int    `json:"dimensions,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	BatchSize  int    `json:"batch_size,omitempty"`
+}
+
+// Embedder produces vectors for one or more inputs. Implementations should
+// preserve input order in the returned slice and should not perform retrieval
+// or storage writes themselves.
 type Embedder interface {
-	Embed(ctx context.Context, text string) ([]float32, error)
+	Embed(ctx context.Context, inputs []EmbeddingInput) ([]EmbeddingVector, error)
+	EmbeddingModel() EmbeddingModelInfo
 }

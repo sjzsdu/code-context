@@ -30,6 +30,22 @@ func TestDetectCapabilitiesMergesReporter(t *testing.T) {
 	}
 }
 
+func TestDetectCapabilitiesFromEmbedder(t *testing.T) {
+	got := DetectCapabilities(capabilityEmbedderProvider{})
+	want := []Capability{CapabilityEmbedding}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectCapabilities(embedder) = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectCapabilitiesFromEmbeddingCache(t *testing.T) {
+	got := DetectCapabilities(capabilityEmbeddingCacheProvider{})
+	want := []Capability{CapabilityEmbeddingCache}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectCapabilities(cache) = %#v, want %#v", got, want)
+	}
+}
+
 func TestDetectCapabilitiesNil(t *testing.T) {
 	if got := DetectCapabilities(nil); got != nil {
 		t.Fatalf("DetectCapabilities(nil) = %#v, want nil", got)
@@ -91,4 +107,24 @@ type capabilityReporterProvider struct{}
 
 func (capabilityReporterProvider) Capabilities() []Capability {
 	return []Capability{CapabilityHybridSearch, CapabilityTextSearch}
+}
+
+type capabilityEmbedderProvider struct{}
+
+func (capabilityEmbedderProvider) Embed(context.Context, []EmbeddingInput) ([]EmbeddingVector, error) {
+	return nil, nil
+}
+
+func (capabilityEmbedderProvider) EmbeddingModel() EmbeddingModelInfo {
+	return EmbeddingModelInfo{Provider: "test", Model: "test-model"}
+}
+
+type capabilityEmbeddingCacheProvider struct{}
+
+func (capabilityEmbeddingCacheProvider) GetEmbedding(context.Context, string) (*EmbeddingCacheEntry, error) {
+	return nil, nil
+}
+
+func (capabilityEmbeddingCacheProvider) UpsertEmbedding(context.Context, EmbeddingCacheEntry) error {
+	return nil
 }
