@@ -90,6 +90,8 @@ If no Helix URL is configured, the Helix Go SDK uses its local default endpoint 
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
+The smoke also starts `serve` and verifies `/api/text`, so keep `CODE_CONTEXT_HELIX_SMOKE_PORT`
+free or set it to an available port.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
 The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` and document

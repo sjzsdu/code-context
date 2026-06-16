@@ -5,17 +5,31 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELIX_URL="${HELIX_URL:-http://localhost:6969}"
 HELIX_PROJECT_ID="${HELIX_PROJECT_ID:-code-context-helix-smoke}"
 SMOKE_DIR="${CODE_CONTEXT_HELIX_SMOKE_DIR:-}"
+HTTP_PORT="${CODE_CONTEXT_HELIX_SMOKE_PORT:-19090}"
 KEEP_SMOKE_DIR="${KEEP_SMOKE_DIR:-0}"
+SERVER_PID=""
+CLEAN_SMOKE_DIR=0
+
+cleanup() {
+  if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  if [[ "$CLEAN_SMOKE_DIR" == "1" ]]; then
+    rm -rf "$SMOKE_DIR"
+  fi
+}
 
 if [[ -z "$SMOKE_DIR" ]]; then
   SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/code-context-helix-smoke.XXXXXX")"
   if [[ "$KEEP_SMOKE_DIR" != "1" ]]; then
-    trap 'rm -rf "$SMOKE_DIR"' EXIT
+    CLEAN_SMOKE_DIR=1
   fi
 else
   rm -rf "$SMOKE_DIR"
   mkdir -p "$SMOKE_DIR"
 fi
+trap cleanup EXIT
 
 FIXTURE="$SMOKE_DIR/fixture"
 mkdir -p "$FIXTURE/cmd/api" "$FIXTURE/internal/service" "$FIXTURE/docs"
@@ -71,6 +85,24 @@ run_code_context() {
     "$@"
 }
 
+wait_for_http() {
+  local url="http://127.0.0.1:${HTTP_PORT}/api/status"
+  for _ in {1..60}; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "$SERVER_PID" ]] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "code-context server exited before becoming ready" >&2
+      cat "$SERVER_LOG" >&2 || true
+      return 1
+    fi
+    sleep 0.25
+  done
+  echo "timed out waiting for code-context server on port ${HTTP_PORT}" >&2
+  cat "$SERVER_LOG" >&2 || true
+  return 1
+}
+
 echo "Helix smoke fixture: $FIXTURE"
 echo "Helix URL: $HELIX_URL"
 echo "Helix project id: $HELIX_PROJECT_ID"
@@ -95,5 +127,17 @@ grep -q "/health" <<<"$routes"
 docs="$(run_code_context docs-for HealthHandler)"
 printf '%s\n' "$docs"
 grep -q "docs/health.md" <<<"$docs"
+
+SERVER_LOG="$SMOKE_DIR/code-context-server.log"
+run_code_context serve --port "$HTTP_PORT" >"$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+wait_for_http
+
+text_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/text?q=Health&limit=10")"
+printf '%s\n' "$text_api"
+grep -q '"kind":"symbol"' <<<"$text_api"
+grep -q '"kind":"document"' <<<"$text_api"
+grep -q "HealthHandler" <<<"$text_api"
+grep -q "docs/health.md" <<<"$text_api"
 
 echo "Helix smoke passed."

@@ -472,8 +472,8 @@ helix start dev --port 6970
 HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh
 ```
 
-The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, and verifies
-`stats`, `search`, `routes`, and `docs-for` read paths. It only rebuilds the configured
+The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, starts the HTTP
+server, and verifies `stats`, `search`, `routes`, `docs-for`, and `/api/text` read paths. It only rebuilds the configured
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.
 
