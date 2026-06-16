@@ -254,6 +254,7 @@ type ServiceStatus struct {
 	Root         string       `json:"root"`
 	DatabasePath string       `json:"database_path"`
 	GraphVersion string       `json:"graph_version"`
+	Capabilities []string     `json:"capabilities"`
 	Index        *IndexStats  `json:"index,omitempty"`
 	Watch        *WatchStatus `json:"watch,omitempty"`
 }

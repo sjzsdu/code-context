@@ -197,7 +197,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 6. Prefer the recommended next tool calls in each response.`), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, and service metadata"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, provider capabilities, and service metadata"},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 			st, err := eng.Status(ctx)
 			if err != nil {

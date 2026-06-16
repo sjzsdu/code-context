@@ -984,6 +984,11 @@ func newStatusCmd() *cobra.Command {
 			fmt.Printf("Root:          %s\n", status.Root)
 			fmt.Printf("Database:      %s\n", status.DatabasePath)
 			fmt.Printf("Graph version: %s\n", status.GraphVersion)
+			capabilities := "-"
+			if len(status.Capabilities) > 0 {
+				capabilities = strings.Join(status.Capabilities, ", ")
+			}
+			fmt.Printf("Capabilities:  %s\n", capabilities)
 			if status.Index != nil {
 				fmt.Printf("Index version: %s\n", status.Index.IndexVersion)
 				fmt.Printf("Files:         %d\n", status.Index.TotalFiles)

@@ -395,7 +395,8 @@ Also shows index version metadata and the last successful indexing timestamp whe
 code-context status
 ```
 
-Shows root/database metadata, graph version, index version, last indexed time, and current watch refresh state.
+Shows root/database metadata, graph version, provider capabilities, index version, last indexed time,
+and current watch refresh state.
 
 ### `freshness` / `doctor` / `rebuild` — Index health and repair
 
@@ -473,7 +474,7 @@ HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/heli
 ```
 
 The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, starts the HTTP
-server, and verifies `stats`, `search`, `routes`, `docs-for`, and `/api/text` read paths. It only rebuilds the configured
+server, and verifies `stats`, `status` capabilities, `search`, `routes`, `docs-for`, and `/api/text` read paths. It only rebuilds the configured
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.
 
@@ -528,7 +529,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/test-impact` | `state?` | Recommend tests for git changed files and symbols |
 | GET | `/api/symbol-impact` | `name` | Return symbol-level callers, callees, docs, routes, tests, and risk |
 | GET | `/api/stats` | — | Index statistics with version metadata |
-| GET | `/api/status` | — | Service/workflow status including watch metadata |
+| GET | `/api/status` | — | Service/workflow status including provider capabilities and watch metadata |
 | GET | `/api/freshness` | `limit?` | Report indexed files/documents that differ from the filesystem |
 | GET | `/api/doctor` | — | Check database schema, index freshness, and service health |
 | POST | `/api/index` | `incremental?` | Trigger indexing |

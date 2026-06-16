@@ -376,6 +376,9 @@ func TestStatusEndpoint(t *testing.T) {
 	if payload.Index == nil || payload.Index.IndexVersion == "" {
 		t.Fatalf("expected index metadata in service status, got %+v", payload)
 	}
+	if payload.Capabilities == nil {
+		t.Fatalf("expected capabilities metadata in service status, got %+v", payload)
+	}
 	if payload.Watch == nil {
 		t.Fatalf("expected watch metadata in service status, got %+v", payload)
 	}

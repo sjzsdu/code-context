@@ -1822,9 +1822,20 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 		Root:         e.root,
 		DatabasePath: e.dbPath,
 		GraphVersion: graphExportVersion,
+		Capabilities: capabilityNames(store.DetectCapabilities(e.store)),
 		Index:        stats,
 		Watch:        &watch,
 	}, nil
+}
+
+func capabilityNames(caps []store.Capability) []string {
+	names := make([]string, 0, len(caps))
+	for _, cap := range caps {
+		if cap != "" {
+			names = append(names, string(cap))
+		}
+	}
+	return names
 }
 
 func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {

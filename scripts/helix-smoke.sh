@@ -115,6 +115,10 @@ printf '%s\n' "$stats"
 grep -q "Files:[[:space:]]*2" <<<"$stats"
 grep -q "Documents:[[:space:]]*1" <<<"$stats"
 
+status="$(run_code_context status)"
+printf '%s\n' "$status"
+grep -q "Capabilities:.*text_search" <<<"$status"
+
 search="$(run_code_context search Health)"
 printf '%s\n' "$search"
 grep -q "HealthHandler" <<<"$search"

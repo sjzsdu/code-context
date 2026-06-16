@@ -99,6 +99,9 @@ func TestStatusCmdIncludesWorkflowMetadata(t *testing.T) {
 	if !strings.Contains(out, "Graph version:") {
 		t.Fatalf("expected graph version in status output, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Capabilities:") {
+		t.Fatalf("expected capabilities in status output, got:\n%s", out)
+	}
 	if !strings.Contains(out, "Watch enabled:") {
 		t.Fatalf("expected watch metadata in status output, got:\n%s", out)
 	}
