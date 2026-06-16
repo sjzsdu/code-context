@@ -163,6 +163,11 @@ grep -q '"kind":"document"' <<<"$text_api"
 grep -q "HealthHandler" <<<"$text_api"
 grep -q "docs/health.md" <<<"$text_api"
 
+vector_api_status="$(curl -sS -o "$SMOKE_DIR/vector-api.out" -w "%{http_code}" -X POST "http://127.0.0.1:${HTTP_PORT}/api/vector" -H 'Content-Type: application/json' --data '{}')"
+cat "$SMOKE_DIR/vector-api.out"
+[[ "$vector_api_status" == "400" ]]
+grep -q "missing 'vector' or 'query_text'" "$SMOKE_DIR/vector-api.out"
+
 traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"target":"text:Health","edge_kinds":["similar"],"filter":{"target_kinds":["symbol"]},"include_paths":true,"direction":"outbound","limit":10}')"
 printf '%s\n' "$traverse_api"
 grep -q '"kind":"similar"' <<<"$traverse_api"

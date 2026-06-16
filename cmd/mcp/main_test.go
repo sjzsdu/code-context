@@ -111,6 +111,30 @@ func TestRunGraphTraverseToolUnsupported(t *testing.T) {
 	}
 }
 
+func TestRunVectorSearchToolRequiresQueryOrVector(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runVectorSearchTool(context.Background(), eng, VectorSearchArgs{})
+	if err == nil || !strings.Contains(err.Error(), "query_text or vector") {
+		t.Fatalf("expected missing vector query error, got %v", err)
+	}
+}
+
+func TestRunVectorSearchToolUnsupported(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runVectorSearchTool(context.Background(), eng, VectorSearchArgs{
+		Vector: []float32{1},
+		Model:  "fake",
+		Limit:  5,
+	})
+	if err == nil || !strings.Contains(err.Error(), "capability unsupported") {
+		t.Fatalf("expected unsupported capability error, got %v", err)
+	}
+}
+
 func TestRunImpactToolForFileAndSymbol(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()

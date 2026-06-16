@@ -580,6 +580,49 @@ func (e *Engine) SearchVector(ctx context.Context, query store.VectorSearchQuery
 	return searcher.SearchVector(ctx, query)
 }
 
+func (e *Engine) SearchVectorText(ctx context.Context, text string, query store.VectorSearchQuery) ([]store.SearchHit, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("vector search query text is required")
+	}
+	if e.embedder == nil {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityEmbedding)
+	}
+
+	vectors, err := e.embedder.Embed(ctx, []store.EmbeddingInput{{
+		ID:   "query",
+		Text: text,
+		Kind: store.EmbeddingInputQuery,
+	}})
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) == 0 || len(vectors[0].Values) == 0 {
+		return nil, fmt.Errorf("embedding provider returned no query vector")
+	}
+
+	info := e.embedder.EmbeddingModel()
+	vector := vectors[0]
+	query.QueryText = text
+	query.Vector = vector.Values
+	if query.Model == "" {
+		query.Model = strings.TrimSpace(vector.Model)
+		if query.Model == "" {
+			query.Model = strings.TrimSpace(info.Model)
+		}
+	}
+	if query.Dimensions <= 0 {
+		query.Dimensions = vector.Dimensions
+	}
+	if query.Dimensions <= 0 {
+		query.Dimensions = info.Dimensions
+	}
+	if query.Dimensions <= 0 {
+		query.Dimensions = len(vector.Values)
+	}
+	return e.SearchVector(ctx, query)
+}
+
 func (e *Engine) bestEffortGraphTraversal(ctx context.Context, query store.GraphTraversalQuery) *store.GraphTraversalResult {
 	result, err := e.TraverseGraph(ctx, query)
 	if err != nil {

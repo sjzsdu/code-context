@@ -70,6 +70,16 @@ type GraphTraverseArgs struct {
 	IncludePaths bool `json:"include_paths,omitempty"`
 }
 
+type VectorSearchArgs struct {
+	QueryText  string             `json:"query_text,omitempty"`
+	Vector     []float32          `json:"vector,omitempty"`
+	Model      string             `json:"model,omitempty"`
+	Dimensions int                `json:"dimensions,omitempty"`
+	Filter     store.SearchFilter `json:"filter,omitempty"`
+	Limit      int                `json:"limit,omitempty"`
+	Offset     int                `json:"offset,omitempty"`
+}
+
 type SearchArgs struct {
 	Query string `json:"query"`
 }
@@ -262,9 +272,10 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 1. Start with code_context_status to verify freshness.
 2. Use code_context_explore for a query before broad grep/read.
 3. Use code_context_search for symbols, code_context_context for a symbol profile, and code_context_snapshot for focused LLM context.
-4. Use code_context_callers and code_context_callees for lightweight call graph navigation.
-5. If status or a result reports stale/pending files, read those files directly before editing.
-6. Prefer the recommended next tool calls in each response.`), nil, nil
+4. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
+5. Use code_context_callers and code_context_callees for lightweight call graph navigation.
+6. If status or a result reports stale/pending files, read those files directly before editing.
+7. Prefer the recommended next tool calls in each response.`), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, provider capabilities, and service metadata"},
@@ -335,6 +346,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			}
 			out += recommendedCalls("code_context_context", "code_context_snapshot", "code_context_graph_neighbors")
 			return textResult(withStaleWarning(ctx, eng, out)), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_vector_search", Description: "Search provider-backed embedding vectors using query_text or a raw vector"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args VectorSearchArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runVectorSearchTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_graph_traverse", "code_context_snapshot"))), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callers", Description: "Show functions/methods that call a symbol name"},
@@ -557,6 +577,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: search.FormatSymbols(results)}},
 		}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "vector_search",
+		Description: "Search provider-backed embedding vectors using query_text or a raw vector",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args VectorSearchArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runVectorSearchTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("vector_search failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
 
 	// Find definition tool
@@ -1113,6 +1144,33 @@ func printMap(m *engine.ModuleMap, indent int, output *string) {
 	for _, c := range m.Children {
 		printMap(&c, indent+1, output)
 	}
+}
+
+func runVectorSearchTool(ctx context.Context, eng *engine.Engine, args VectorSearchArgs) (string, error) {
+	query := store.VectorSearchQuery{
+		QueryText:  strings.TrimSpace(args.QueryText),
+		Vector:     args.Vector,
+		Model:      strings.TrimSpace(args.Model),
+		Dimensions: args.Dimensions,
+		Filter:     args.Filter,
+		Limit:      args.Limit,
+		Offset:     args.Offset,
+	}
+	var (
+		hits []store.SearchHit
+		err  error
+	)
+	if len(query.Vector) > 0 {
+		hits, err = eng.SearchVector(ctx, query)
+	} else if query.QueryText != "" {
+		hits, err = eng.SearchVectorText(ctx, query.QueryText, query)
+	} else {
+		return "", fmt.Errorf("missing required parameter: query_text or vector")
+	}
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(map[string]any{"results": hits, "count": len(hits)})
 }
 
 func runGraphTool(ctx context.Context, eng *engine.Engine, args GraphArgs) (string, error) {

@@ -109,6 +109,32 @@ func TestSearchVectorUnsupportedCapability(t *testing.T) {
 	}
 }
 
+func TestSearchVectorTextEmbedsQueryAndSearchesVectorProvider(t *testing.T) {
+	vectorStore := &fakeVectorStore{}
+	eng := &Engine{store: vectorStore, embedder: fakeEmbedder{}}
+	hits, err := eng.SearchVectorText(context.Background(), "hello", store.VectorSearchQuery{Limit: 3})
+	if err != nil {
+		t.Fatalf("SearchVectorText: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Target.Name != "Result" {
+		t.Fatalf("hits = %#v", hits)
+	}
+	if vectorStore.query.QueryText != "hello" || vectorStore.query.Model != "fake" || vectorStore.query.Dimensions != 1 {
+		t.Fatalf("query = %#v", vectorStore.query)
+	}
+	if len(vectorStore.query.Vector) != 1 || vectorStore.query.Vector[0] != 1 {
+		t.Fatalf("query vector = %#v", vectorStore.query.Vector)
+	}
+}
+
+func TestSearchVectorTextRequiresEmbedder(t *testing.T) {
+	eng := &Engine{store: &fakeVectorStore{}}
+	_, err := eng.SearchVectorText(context.Background(), "hello", store.VectorSearchQuery{})
+	if !errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("SearchVectorText error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
 func TestTraverseGraphUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))
@@ -159,4 +185,18 @@ func (fakeEmbedder) Embed(_ context.Context, inputs []store.EmbeddingInput) ([]s
 
 func (fakeEmbedder) EmbeddingModel() store.EmbeddingModelInfo {
 	return store.EmbeddingModelInfo{Provider: "fake", Model: "fake", Dimensions: 1}
+}
+
+type fakeVectorStore struct {
+	store.Store
+	query store.VectorSearchQuery
+}
+
+func (s *fakeVectorStore) SearchVector(_ context.Context, query store.VectorSearchQuery) ([]store.SearchHit, error) {
+	s.query = query
+	return []store.SearchHit{{
+		Target: store.TargetRef{Kind: store.TargetSymbol, Name: "Result"},
+		Score:  1,
+		Source: store.SearchSourceVector,
+	}}, nil
 }

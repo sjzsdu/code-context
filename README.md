@@ -225,6 +225,7 @@ code-context index
 code-context map
 code-context snapshot
 code-context search Snapshot
+code-context vector-search Snapshot
 code-context context Snapshot
 code-context impact Snapshot
 code-context impact internal/engine/engine.go
@@ -250,6 +251,16 @@ Shows directory structure with file/symbol counts plus repository-level graph an
 ```bash
 code-context search "Handler"
 code-context search "parse" --kind function --limit 20
+```
+
+### `vector-search [query]` — Search provider-backed embedding vectors
+
+Requires a backend that implements `VectorSearcher` (Helix) and either a configured embedding
+provider for query text or a raw vector supplied with `--vector`.
+
+```bash
+code-context vector-search "handler health check" --limit 10
+code-context vector-search --vector 0.1,0.2,0.3 --model text-embedding-test --dimensions 3 --json
 ```
 
 ### `find-def <name>` — Find definition of a symbol
@@ -511,7 +522,7 @@ HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/heli
 
 The smoke creates a small Go fixture, runs the Helix backend through `rebuild`, starts the HTTP
 server, and verifies `stats`, `status` capabilities, `search`, `routes`, `docs-for`, `/api/text`,
-and `/api/graph/traverse` read paths. It only rebuilds the configured
+`/api/vector` validation, and `/api/graph/traverse` read paths. It only rebuilds the configured
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.
 
@@ -534,7 +545,9 @@ semantic edge groups, target/file/metadata filters, depth/path metadata, text-qu
 `context`, `impact`, `route-context`, `snapshot`, and their MCP equivalents include best-effort
 provider graph traversal summaries when the backend supports `GraphTraverser`; SQLite/local
 fallbacks simply omit those optional fields. `/api/text` and search callers use text search when
-available and keep the local grep fallback for backends without the capability.
+available and keep the local grep fallback for backends without the capability. `vector-search`,
+`/api/vector`, and MCP `vector_search`/`code_context_vector_search` call `VectorSearcher` directly;
+when query text is provided, they first use the configured `Embedder` to produce the query vector.
 
 Embedding support starts as provider-neutral plumbing rather than a full RAG framework dependency.
 The built-in `openai-compatible` adapter posts batches to `{base_url}/embeddings`, preserves source
@@ -557,6 +570,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/definitions` | `name` | Find symbol definitions |
 | GET | `/api/references` | `name` | Find references to a symbol |
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
+| POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |
@@ -648,6 +662,7 @@ Add to your AI client config:
 |---|---|---|
 | `index` | Index the codebase for search | - |
 | `search` | Search symbols by name | `query` |
+| `vector_search` | Provider-backed vector search | `query_text?`, `vector?`, `model?`, `dimensions?`, `filter?`, `limit?`, `offset?` |
 | `find_def` | Find where a symbol is defined | `name` |
 | `find_refs` | Find all references to a symbol | `name` |
 | `files` | List indexed files | `language?` |
@@ -678,6 +693,7 @@ Add to your AI client config:
 | `symbol_impact` | Return symbol-level impact, risk, docs, routes, and tests | `symbol` |
 | `code_context_impact` | Agent-friendly unified file or symbol impact report with recommendations | `target`, `depth?` |
 | `code_context_impact_git` | Agent-friendly unified impact report for local git changes | `state?`, `depth?` |
+| `code_context_vector_search` | Agent-friendly provider-backed vector search | `query_text?`, `vector?`, `model?`, `dimensions?`, `filter?`, `limit?`, `offset?` |
 | `trace` | Trace call chain between symbols | `from`, `to` |
 
 ### Usage Example
@@ -691,6 +707,7 @@ code-context:index
 
 # Then search
 code-context:search "Server"
+code-context:vector_search '{"query_text":"health handler","limit":5}'
 
 # Inspect graph navigation via MCP
 code-context:graph_neighbors '{"target":"Engine","limit":5}'

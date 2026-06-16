@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -88,6 +89,7 @@ func main() {
 		newOnboardCmd(),
 		newIndexCmd(),
 		newSearchCmd(),
+		newVectorSearchCmd(),
 		newFindDefCmd(),
 		newGitFilesCmd(),
 		newGitDiffCmd(),
@@ -828,6 +830,91 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by kind (function,method,class,type,interface)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max results")
 	cmd.Flags().BoolVar(&hybrid, "hybrid", false, "use hybrid retrieval (FTS5 + semantic ranking)")
+	return cmd
+}
+
+func newVectorSearchCmd() *cobra.Command {
+	var vectorValue string
+	var model string
+	var dimensions int
+	var limit int
+	var offset int
+	var filePattern string
+	var targetKinds []string
+	var metadata []string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "vector-search [query]",
+		Short: "Search provider vector index using embedded query text or a raw vector",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			queryText := ""
+			if len(args) > 0 {
+				queryText = strings.TrimSpace(args[0])
+			}
+			filter, err := searchFilterFromFlags(filePattern, targetKinds, metadata)
+			if err != nil {
+				return err
+			}
+			query := store.VectorSearchQuery{
+				QueryText:  queryText,
+				Model:      strings.TrimSpace(model),
+				Dimensions: dimensions,
+				Filter:     filter,
+				Limit:      limit,
+				Offset:     offset,
+			}
+			if query.Model == "" {
+				query.Model = strings.TrimSpace(embeddingModel)
+			}
+			if query.Dimensions <= 0 {
+				query.Dimensions = embeddingDimensions
+			}
+
+			var hits []store.SearchHit
+			if strings.TrimSpace(vectorValue) != "" {
+				query.Vector, err = parseFloat32List(vectorValue)
+				if err != nil {
+					return err
+				}
+				if queryText == "" {
+					query.QueryText = "raw-vector"
+				}
+				hits, err = eng.SearchVector(context.Background(), query)
+			} else {
+				if queryText == "" {
+					return fmt.Errorf("query text is required unless --vector is provided")
+				}
+				hits, err = eng.SearchVectorText(context.Background(), queryText, query)
+			}
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(map[string]any{"results": hits, "count": len(hits)})
+			}
+			fmt.Println(formatSearchHitsPlain(hits))
+			fmt.Printf("\n%d results\n", len(hits))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&vectorValue, "vector", "", "raw query vector as comma-separated float32 values; skips embedding provider")
+	cmd.Flags().StringVar(&model, "model", "", "embedding model namespace; defaults to configured embedding model")
+	cmd.Flags().IntVar(&dimensions, "dimensions", 0, "embedding dimensions namespace; defaults to configured/provider dimensions")
+	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "filter target kinds; repeat or comma-separate (symbol,document,file,text)")
+	cmd.Flags().StringVar(&filePattern, "file-pattern", "", "filter hits whose path matches this substring or glob")
+	cmd.Flags().StringArrayVar(&metadata, "metadata", nil, "metadata filter as key=value; supports model/embedding_model and dimensions/embedding_dimensions")
+	cmd.Flags().IntVar(&limit, "limit", 10, "max results")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip the first N vector hits")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON results")
 	return cmd
 }
 
@@ -2180,6 +2267,91 @@ func printGraphTraversalSummary(label string, traversal *store.GraphTraversalRes
 		summary = fmt.Sprintf("%d nodes, %d edges", len(traversal.Nodes), len(traversal.Edges))
 	}
 	fmt.Printf("\n%s: %s\n", label, summary)
+}
+
+func parseFloat32List(value string) ([]float32, error) {
+	parts := strings.Split(value, ",")
+	out := make([]float32, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(part, 32)
+		if err != nil {
+			return nil, fmt.Errorf("parse vector value %q: %w", part, err)
+		}
+		out = append(out, float32(parsed))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("vector must contain at least one float")
+	}
+	return out, nil
+}
+
+func searchFilterFromFlags(filePattern string, targetKinds []string, metadata []string) (store.SearchFilter, error) {
+	filter := store.SearchFilter{FilePattern: strings.TrimSpace(filePattern)}
+	for _, targetKind := range targetKinds {
+		targetKind = strings.TrimSpace(targetKind)
+		if targetKind != "" {
+			filter.TargetKinds = append(filter.TargetKinds, store.TargetKind(targetKind))
+		}
+	}
+	for _, item := range metadata {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			return filter, fmt.Errorf("metadata filter must be key=value: %q", item)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" {
+			return filter, fmt.Errorf("metadata filter key is required: %q", item)
+		}
+		if filter.Metadata == nil {
+			filter.Metadata = map[string]string{}
+		}
+		filter.Metadata[key] = value
+	}
+	return filter, nil
+}
+
+func formatSearchHitsPlain(hits []store.SearchHit) string {
+	if len(hits) == 0 {
+		return "No vector results found"
+	}
+	var b strings.Builder
+	for i, hit := range hits {
+		target := hit.Target
+		name := target.Name
+		if name == "" {
+			name = target.Value
+		}
+		if name == "" {
+			name = target.RoutePath
+		}
+		if name == "" {
+			name = target.Path
+		}
+		location := target.Path
+		if target.Line > 0 {
+			location = fmt.Sprintf("%s:%d", location, target.Line)
+		}
+		if location == "" {
+			location = string(target.Kind)
+		}
+		fmt.Fprintf(&b, "%d. %.4f  %s", i+1, hit.Score, location)
+		if name != "" && name != target.Path {
+			fmt.Fprintf(&b, "  %s", name)
+		}
+		if target.Kind != "" {
+			fmt.Fprintf(&b, "  [%s]", target.Kind)
+		}
+		b.WriteByte('\n')
+		if strings.TrimSpace(hit.Evidence) != "" {
+			fmt.Fprintf(&b, "   %s\n", strings.TrimSpace(hit.Evidence))
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func newTestImpactCmd() *cobra.Command {

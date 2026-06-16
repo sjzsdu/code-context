@@ -159,6 +159,36 @@ func TestSemanticSearchEndpoint(t *testing.T) {
 	}
 }
 
+func TestVectorSearchEndpointReportsUnsupportedBackend(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(ts.URL+"/api/vector", "application/json", strings.NewReader(`{"vector":[1],"model":"fake"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 501, got %d: %s", resp.StatusCode, string(body))
+	}
+}
+
+func TestVectorSearchEndpointRequiresVectorOrQueryText(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(ts.URL+"/api/vector", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400, got %d: %s", resp.StatusCode, string(body))
+	}
+}
+
 func TestSearchMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

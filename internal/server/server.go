@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/engine"
@@ -40,6 +41,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/definitions", s.handleDefinitions)
 	mux.HandleFunc("/api/references", s.handleReferences)
 	mux.HandleFunc("/api/text", s.handleTextSearch)
+	mux.HandleFunc("/api/vector", s.handleVectorSearch)
+	mux.HandleFunc("/api/vector-search", s.handleVectorSearch)
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
 	mux.HandleFunc("/api/callers", s.handleCallers)
@@ -187,6 +190,40 @@ func (s *Server) handleTextSearch(w http.ResponseWriter, r *http.Request) {
 	results, err := s.eng.SearchText(r.Context(), q, pattern, limit)
 	if err != nil {
 		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("POST only"), http.StatusMethodNotAllowed)
+		return
+	}
+	var query store.VectorSearchQuery
+	if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
+		writeError(w, fmt.Errorf("decode vector search query: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	var (
+		results []store.SearchHit
+		err     error
+	)
+	if len(query.Vector) > 0 {
+		results, err = s.eng.SearchVector(r.Context(), query)
+	} else if strings.TrimSpace(query.QueryText) != "" {
+		results, err = s.eng.SearchVectorText(r.Context(), query.QueryText, query)
+	} else {
+		writeError(w, fmt.Errorf("missing 'vector' or 'query_text'"), http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		if errors.Is(err, engine.ErrCapabilityUnsupported) {
+			writeError(w, err, http.StatusNotImplemented)
+			return
+		}
+		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})

@@ -46,17 +46,20 @@ code-context map
 # 3. Search symbols
 code-context search "Handler"
 
-# 4. Get detailed context
+# 4. Search provider-backed vectors when Helix + embeddings are configured
+code-context vector-search "handler health check"
+
+# 5. Get detailed context
 code-context context Engine
 
-# 5. Explore graph relationships
+# 6. Explore graph relationships
 code-context graph neighbors Engine
 
-# 6. Generate project-wide or focused LLM context
+# 7. Generate project-wide or focused LLM context
 code-context snapshot
 code-context snapshot "authentication"
 
-# 7. Open the interactive visual graph
+# 8. Open the interactive visual graph
 code-context graph html > graph.html
 ```
 
@@ -98,7 +101,7 @@ If no Helix URL is configured, the Helix Go SDK uses its local default endpoint 
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
-The smoke also verifies `status` capabilities, `/api/text`, and `/api/graph/traverse` through
+The smoke also verifies `status` capabilities, `/api/text`, `/api/vector` validation, and `/api/graph/traverse` through
 `serve`, so keep `CODE_CONTEXT_HELIX_SMOKE_PORT` free or set it to an available port.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
@@ -111,7 +114,9 @@ openai-compatible` with a local or hosted `/embeddings` API when semantic/vector
 the project should keep embedding, vector search, hybrid search, and future RAG behavior behind
 provider-neutral interfaces. SQLite and Helix implement the provider-neutral embedding cache; Helix
 stores vectors in model+dimension-namespaced chunk properties so different embedding spaces are not
-mixed in one vector index.
+mixed in one vector index. Use `vector-search`, `/api/vector`, or MCP `vector_search`/
+`code_context_vector_search` to call `VectorSearcher`; query-text search additionally requires a
+configured `Embedder`.
 
 ## Recommended Dogfood Workflow
 

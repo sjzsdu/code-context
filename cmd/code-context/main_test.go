@@ -197,6 +197,50 @@ func TestGraphTraverseCmdReportsUnsupportedBackend(t *testing.T) {
 	}
 }
 
+func TestVectorSearchCmdReportsUnsupportedBackend(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-vector-search-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	prevRoot, prevDB, prevStoreBackend := root, dbPath, storeBackend
+	prevEmbeddingProvider, prevEmbeddingModel, prevEmbeddingDimensions := embeddingProvider, embeddingModel, embeddingDimensions
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	storeBackend = ""
+	embeddingProvider = ""
+	embeddingModel = ""
+	embeddingDimensions = 0
+	defer func() {
+		root, dbPath, storeBackend = prevRoot, prevDB, prevStoreBackend
+		embeddingProvider, embeddingModel, embeddingDimensions = prevEmbeddingProvider, prevEmbeddingModel, prevEmbeddingDimensions
+	}()
+
+	cmd := newVectorSearchCmd()
+	cmd.SetArgs([]string{"--vector", "1", "--model", "fake"})
+	_, err = captureStdout(func() error { return cmd.Execute() })
+	if err == nil || !strings.Contains(err.Error(), "capability unsupported") {
+		t.Fatalf("expected unsupported capability error, got %v", err)
+	}
+}
+
+func TestParseFloat32List(t *testing.T) {
+	got, err := parseFloat32List("1, 0.5, -2")
+	if err != nil {
+		t.Fatalf("parseFloat32List: %v", err)
+	}
+	want := []float32{1, 0.5, -2}
+	if len(got) != len(want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestGraphPathCmd(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-graph-path-test-*")
 	if err != nil {
