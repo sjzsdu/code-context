@@ -572,6 +572,14 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 	return e.embedder.Embed(ctx, inputs)
 }
 
+func (e *Engine) SearchVector(ctx context.Context, query store.VectorSearchQuery) ([]store.SearchHit, error) {
+	searcher, ok := e.store.(store.VectorSearcher)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityVectorSearch)
+	}
+	return searcher.SearchVector(ctx, query)
+}
+
 func (e *Engine) bestEffortGraphTraversal(ctx context.Context, query store.GraphTraversalQuery) *store.GraphTraversalResult {
 	result, err := e.TraverseGraph(ctx, query)
 	if err != nil {

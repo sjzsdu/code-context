@@ -128,11 +128,13 @@ type TextSearchQuery struct {
 }
 
 type VectorSearchQuery struct {
-	Vector    []float32    `json:"vector"`
-	QueryText string       `json:"query_text,omitempty"`
-	Filter    SearchFilter `json:"filter,omitempty"`
-	Limit     int          `json:"limit,omitempty"`
-	Offset    int          `json:"offset,omitempty"`
+	Vector     []float32    `json:"vector"`
+	QueryText  string       `json:"query_text,omitempty"`
+	Model      string       `json:"model,omitempty"`
+	Dimensions int          `json:"dimensions,omitempty"`
+	Filter     SearchFilter `json:"filter,omitempty"`
+	Limit      int          `json:"limit,omitempty"`
+	Offset     int          `json:"offset,omitempty"`
 }
 
 type HybridSearchQuery struct {

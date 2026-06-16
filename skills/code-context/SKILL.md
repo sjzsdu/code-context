@@ -103,14 +103,15 @@ The smoke also verifies `status` capabilities, `/api/text`, and `/api/graph/trav
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
 The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` and document
-metadata/summary `search_text`, plus `GraphTraverser` over the indexed file/symbol/import/call/
-route/document-link graph; consumers should use the interfaces and keep fallbacks for providers
-that do not implement them.
+metadata/summary `search_text`, `EmbeddingCache`/`VectorSearcher` over namespaced embedding chunk
+nodes, plus `GraphTraverser` over the indexed file/symbol/import/call/route/document-link graph;
+consumers should use the interfaces and keep fallbacks for providers that do not implement them.
 Embedding support is optional and disabled by default. Configure `embedding.provider:
 openai-compatible` with a local or hosted `/embeddings` API when semantic/vector phases are needed;
 the project should keep embedding, vector search, hybrid search, and future RAG behavior behind
-provider-neutral interfaces. SQLite implements the provider-neutral embedding cache, so enabled
-embedding runs can cache symbol/document chunk vectors without changing search behavior yet.
+provider-neutral interfaces. SQLite and Helix implement the provider-neutral embedding cache; Helix
+stores vectors in model+dimension-namespaced chunk properties so different embedding spaces are not
+mixed in one vector index.
 
 ## Recommended Dogfood Workflow
 

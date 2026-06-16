@@ -524,8 +524,11 @@ Helix-specific features are kept behind provider-neutral optional interfaces in
 instead of importing Helix SDK types. Backends can implement any subset of these interfaces; callers
 can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
 fallbacks where appropriate. The Helix backend currently implements `TextSearcher` with BM25 over
-indexed symbol text and document metadata/summary text, and `GraphTraverser` over the indexed
-file/symbol/import/call/route/document-link graph. Graph traversal supports target-string parsing,
+indexed symbol text and document metadata/summary text, `EmbeddingCache`/`VectorSearcher` over
+namespaced embedding chunk nodes, and `GraphTraverser` over the indexed
+file/symbol/import/call/route/document-link graph. Helix vector properties are namespaced by
+embedding model + dimensions so different embedding spaces do not share the same vector index.
+Graph traversal supports target-string parsing,
 semantic edge groups, target/file/metadata filters, depth/path metadata, text-query expansion through
 `similar` edges, and handler-to-route relationships. Higher-level outputs such as `explain`,
 `context`, `impact`, `route-context`, `snapshot`, and their MCP equivalents include best-effort
@@ -538,8 +541,10 @@ The built-in `openai-compatible` adapter posts batches to `{base_url}/embeddings
 target metadata, records model/dimension metadata, and keeps the provider disabled by default. This
 lets local runtimes such as Ollama/LocalAI/TEI or hosted OpenAI-compatible APIs supply vectors while
 code-context owns only the chunking, caching, storage, and retrieval glue. When a backend implements
-`EmbeddingCache` (SQLite does), indexing builds symbol/document chunks and stores generated vectors
-by model + dimensions + chunk hash for reuse by later vector-search providers.
+`EmbeddingCache` (SQLite and Helix do), indexing builds symbol/document chunks and stores generated
+vectors by model + dimensions + chunk hash. Helix stores those vectors in `CodeContextEmbeddingChunk`
+nodes and exposes them through `VectorSearcher`; `HybridSearcher` fusion is intentionally left as a
+separate stage.
 
 ## HTTP API
 

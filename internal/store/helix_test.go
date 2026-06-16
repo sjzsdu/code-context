@@ -151,6 +151,87 @@ func TestHelixTextRowsToHitsFiltersAndRanks(t *testing.T) {
 	}
 }
 
+func TestHelixVectorSearchRequestMarshals(t *testing.T) {
+	req, limit := helixVectorSearchRequest("project-a", VectorSearchQuery{
+		Vector:     []float32{0.1, 0.2, 0.3},
+		Model:      "text-embedding-test",
+		Dimensions: 3,
+		Limit:      10,
+	}, "text-embedding-test", 3)
+	if limit != 10 {
+		t.Fatalf("limit = %d, want 10", limit)
+	}
+	if _, err := helix.MarshalRequest(req); err != nil {
+		t.Fatalf("marshal vector search request: %v", err)
+	}
+}
+
+func TestHelixVectorRowsToHitsFiltersAndRanks(t *testing.T) {
+	rows := []helixVectorChunkRow{
+		{
+			helixEmbeddingChunkRow: helixEmbeddingChunkRow{
+				Key:               "a",
+				Model:             "text-embedding-test",
+				Dimensions:        3,
+				ContentHash:       "hash-a",
+				InputKind:         string(EmbeddingInputSymbol),
+				TargetKind:        string(TargetSymbol),
+				TargetPath:        "internal/health.go",
+				TargetName:        "HealthHandler",
+				TargetType:        string(api.Function),
+				TargetLine:        12,
+				TargetEndLine:     18,
+				MetadataJSON:      `{"signature":"func HealthHandler()"}`,
+				EmbeddingProperty: helixEmbeddingVectorProperty("text-embedding-test", 3),
+			},
+			Score: 0,
+		},
+		{
+			helixEmbeddingChunkRow: helixEmbeddingChunkRow{
+				Key:          "b",
+				Model:        "text-embedding-test",
+				Dimensions:   3,
+				ContentHash:  "hash-b",
+				InputKind:    string(EmbeddingInputDocument),
+				TargetKind:   string(TargetDocument),
+				TargetPath:   "README.md",
+				TargetName:   "Readme",
+				TargetType:   "document",
+				MetadataJSON: `{"title":"Readme"}`,
+			},
+			Score: 2,
+		},
+	}
+	hits := helixVectorRowsToHits("project-a", rows, SearchFilter{TargetKinds: []TargetKind{TargetSymbol}, FilePattern: "*.go"})
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	if hits[0].Source != SearchSourceVector || hits[0].Target.Name != "HealthHandler" {
+		t.Fatalf("unexpected hit: %+v", hits[0])
+	}
+	if hits[0].Metadata["model"] != "text-embedding-test" {
+		t.Fatalf("metadata = %+v", hits[0].Metadata)
+	}
+}
+
+func TestHelixEmbeddingVectorPropertyIsNamespaced(t *testing.T) {
+	a := helixEmbeddingVectorProperty("model-a", 3)
+	b := helixEmbeddingVectorProperty("model-b", 3)
+	c := helixEmbeddingVectorProperty("model-a", 4)
+	if a == b || a == c {
+		t.Fatalf("property should vary by model and dimensions: %q %q %q", a, b, c)
+	}
+	if !strings.HasPrefix(a, "embedding_") {
+		t.Fatalf("property = %q", a)
+	}
+}
+
+func TestHelixEmbeddingKeyScopesByProject(t *testing.T) {
+	if helixEmbeddingKey("project-a", "same") == helixEmbeddingKey("project-b", "same") {
+		t.Fatalf("embedding cache key should be project-scoped")
+	}
+}
+
 func TestDocumentSearchTextIncludesMetadata(t *testing.T) {
 	got := documentSearchText(&api.Document{
 		Path:     "README.md",
@@ -179,7 +260,7 @@ func TestSearchFilterAllowsProject(t *testing.T) {
 
 func TestHelixStoreDetectsAdvancedCapabilities(t *testing.T) {
 	got := DetectCapabilities(&helixStore{})
-	want := []Capability{CapabilityGraphTraversal, CapabilityTextSearch}
+	want := []Capability{CapabilityEmbeddingCache, CapabilityGraphTraversal, CapabilityTextSearch, CapabilityVectorSearch}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DetectCapabilities(helixStore) = %#v, want %#v", got, want)
 	}

@@ -119,6 +119,8 @@ status="$(run_code_context status)"
 printf '%s\n' "$status"
 grep -q "Capabilities:.*text_search" <<<"$status"
 grep -q "Capabilities:.*graph_traversal" <<<"$status"
+grep -q "Capabilities:.*vector_search" <<<"$status"
+grep -q "Capabilities:.*embedding_cache" <<<"$status"
 
 search="$(run_code_context search Health)"
 printf '%s\n' "$search"

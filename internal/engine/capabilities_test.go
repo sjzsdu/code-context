@@ -92,6 +92,23 @@ func TestEmbedDelegatesToProvider(t *testing.T) {
 	}
 }
 
+func TestSearchVectorUnsupportedCapability(t *testing.T) {
+	root := t.TempDir()
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer eng.Close()
+
+	_, err = eng.SearchVector(context.Background(), store.VectorSearchQuery{
+		Vector: []float32{1},
+		Model:  "fake",
+	})
+	if !errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("SearchVector error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
 func TestTraverseGraphUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))

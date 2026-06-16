@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	pathpkg "path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,13 +21,14 @@ import (
 const HelixSchemaVersion = "helix.schema.v1.code-context"
 
 const (
-	helixFileLabel         = "CodeContextFile"
-	helixSymbolLabel       = "CodeContextSymbol"
-	helixImportLabel       = "CodeContextImport"
-	helixCallLabel         = "CodeContextCall"
-	helixRouteLabel        = "CodeContextRoute"
-	helixDocumentLabel     = "CodeContextDocument"
-	helixDocumentLinkLabel = "CodeContextDocumentLink"
+	helixFileLabel           = "CodeContextFile"
+	helixSymbolLabel         = "CodeContextSymbol"
+	helixImportLabel         = "CodeContextImport"
+	helixCallLabel           = "CodeContextCall"
+	helixRouteLabel          = "CodeContextRoute"
+	helixDocumentLabel       = "CodeContextDocument"
+	helixDocumentLinkLabel   = "CodeContextDocumentLink"
+	helixEmbeddingChunkLabel = "CodeContextEmbeddingChunk"
 
 	helixDefinesEdge       = "DEFINES"
 	helixImportsEdge       = "IMPORTS"
@@ -88,6 +93,12 @@ func (s *helixStore) Init(ctx context.Context) error {
 		q.VarAs("document_link_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "project_id")))
 		q.VarAs("document_link_doc", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "document_path")))
 		q.VarAs("document_link_target", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixDocumentLinkLabel, "target_key")))
+		q.VarAs("embedding_chunk_key", helix.G().CreateIndexIfNotExists(helix.NodeUniqueEqualityIndex(helixEmbeddingChunkLabel, "key")))
+		q.VarAs("embedding_chunk_cache_key", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixEmbeddingChunkLabel, "cache_key")))
+		q.VarAs("embedding_chunk_project", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixEmbeddingChunkLabel, "project_id")))
+		q.VarAs("embedding_chunk_model", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixEmbeddingChunkLabel, "model")))
+		q.VarAs("embedding_chunk_target", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixEmbeddingChunkLabel, "target_key")))
+		q.VarAs("embedding_chunk_target_path", helix.G().CreateIndexIfNotExists(helix.NodeEqualityIndex(helixEmbeddingChunkLabel, "target_path")))
 		return q.Returning()
 	}, nil)
 }
@@ -165,6 +176,10 @@ func (s *helixStore) ReplaceFileIndex(ctx context.Context, idx FileIndex) (int64
 		q.VarAs("drop_imports", helix.G().N(helix.NodeVar("existing")).Out(helixImportsEdge).Drop().Count())
 		q.VarAs("drop_calls", helix.G().N(helix.NodeVar("existing")).Out(helixRecordsCallEdge).Drop().Count())
 		q.VarAs("drop_routes", helix.G().N(helix.NodeVar("existing")).Out(helixDeclaresRouteEdge).Drop().Count())
+		q.VarAs("drop_embedding_chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+			Where(helix.PredEq("project_id", projectID)).
+			Where(helix.PredEq("target_path", path)).
+			Drop().Count())
 		q.VarAs("drop_file", helix.G().N(helix.NodeVar("existing")).Drop().Count())
 		q.VarAs("file", helix.G().AddN(helixFileLabel, helix.Props{
 			helix.Prop("key", key),
@@ -208,11 +223,17 @@ func (s *helixStore) DeleteFile(ctx context.Context, path string) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_delete_file")
 		keyParam := q.ParamString("key", helixKey(s.projectID, path))
+		projectParam := q.ParamString("project_id", s.projectID)
+		pathParam := q.ParamString("path", path)
 		q.VarAs("file", helix.G().NWithLabel(helixFileLabel).Where(helix.PredEq("key", keyParam)))
 		q.VarAs("drop_symbols", helix.G().N(helix.NodeVar("file")).Out(helixDefinesEdge).Drop().Count())
 		q.VarAs("drop_imports", helix.G().N(helix.NodeVar("file")).Out(helixImportsEdge).Drop().Count())
 		q.VarAs("drop_calls", helix.G().N(helix.NodeVar("file")).Out(helixRecordsCallEdge).Drop().Count())
 		q.VarAs("drop_routes", helix.G().N(helix.NodeVar("file")).Out(helixDeclaresRouteEdge).Drop().Count())
+		q.VarAs("drop_embedding_chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+			Where(helix.PredEq("project_id", projectParam)).
+			Where(helix.PredEq("target_path", pathParam)).
+			Drop().Count())
 		q.VarAs("drop_file", helix.G().N(helix.NodeVar("file")).Drop().Count())
 		return q.Returning()
 	}, nil)
@@ -352,6 +373,192 @@ func (s *helixStore) SearchText(ctx context.Context, query TextSearchQuery) ([]S
 	return hits, nil
 }
 
+func (s *helixStore) GetEmbedding(ctx context.Context, key string) (*EmbeddingCacheEntry, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+	var out struct {
+		Chunks helixRows[helixEmbeddingChunkRow] `json:"chunks"`
+	}
+	q := helix.ReadQuery("code_context_get_embedding")
+	physicalKey := helixEmbeddingKey(s.projectID, key)
+	req := q.VarAs("chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Where(helix.PredEq("key", q.ParamString("key", physicalKey))).
+		Limit(1).
+		Project(helixEmbeddingChunkProjections()...)).
+		Returning("chunks")
+	if err := s.client.Exec(ctx, req, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Chunks.Properties) == 0 {
+		return nil, nil
+	}
+	return out.Chunks.Properties[0].Entry()
+}
+
+func (s *helixStore) UpsertEmbedding(ctx context.Context, entry EmbeddingCacheEntry) error {
+	entry.Key = strings.TrimSpace(entry.Key)
+	entry.Model = strings.TrimSpace(entry.Model)
+	if entry.Key == "" {
+		return fmt.Errorf("embedding cache key is required")
+	}
+	if entry.Model == "" {
+		return fmt.Errorf("embedding model is required")
+	}
+	if len(entry.Values) == 0 {
+		return fmt.Errorf("embedding vector is required")
+	}
+	if entry.Dimensions <= 0 {
+		entry.Dimensions = len(entry.Values)
+	}
+	if entry.ContentHash == "" {
+		return fmt.Errorf("embedding content hash is required")
+	}
+
+	target := normalizeGraphStart(entry.Target)
+	target.ProjectID = s.projectID
+	targetKey := helixEmbeddingTargetKey(target)
+	vectorProperty := helixEmbeddingVectorProperty(entry.Model, entry.Dimensions)
+	physicalKey := helixEmbeddingKey(s.projectID, entry.Key)
+	targetJSON, err := json.Marshal(target)
+	if err != nil {
+		return err
+	}
+	metadataJSON, err := json.Marshal(nonNilStringMap(entry.Metadata))
+	if err != nil {
+		return err
+	}
+	vectorJSON, err := json.Marshal(entry.Values)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+
+	return s.execWrite(ctx, func() helix.Request {
+		q := helix.WriteQuery("code_context_upsert_embedding")
+		projectID := q.ParamString("project_id", s.projectID)
+		key := q.ParamString("key", physicalKey)
+		cacheKey := q.ParamString("cache_key", entry.Key)
+		model := q.ParamString("model", entry.Model)
+		dimensions := q.ParamI64("dimensions", int64(entry.Dimensions))
+		contentHash := q.ParamString("content_hash", entry.ContentHash)
+		inputKind := q.ParamString("input_kind", string(entry.InputKind))
+		targetKind := q.ParamString("target_kind", string(target.Kind))
+		targetPath := q.ParamString("target_path", target.Path)
+		targetName := q.ParamString("target_name", target.Name)
+		targetType := q.ParamString("target_type", target.Type)
+		targetLine := q.ParamI64("target_line", int64(target.Line))
+		targetEndLine := q.ParamI64("target_end_line", int64(target.EndLine))
+		targetMethod := q.ParamString("target_method", target.Method)
+		targetRoutePath := q.ParamString("target_route_path", target.RoutePath)
+		targetValue := q.ParamString("target_value", target.Value)
+		targetKeyParam := q.ParamString("target_key", targetKey)
+		targetJSONParam := q.ParamString("target_json", string(targetJSON))
+		metadataJSONParam := q.ParamString("metadata_json", string(metadataJSON))
+		vectorJSONParam := q.ParamString("vector_json", string(vectorJSON))
+		vectorPropertyParam := q.ParamString("embedding_property", vectorProperty)
+		vector := q.ParamArray("embedding", entry.Values, helix.ParamTypeF32())
+		createdAt := q.ParamI64("created_at", now)
+		updatedAt := q.ParamI64("updated_at", now)
+
+		q.VarAs("vector_index", helix.G().CreateIndexIfNotExists(helix.NodeVectorIndex(helixEmbeddingChunkLabel, vectorProperty, "project_id")))
+		q.VarAs("existing", helix.G().NWithLabel(helixEmbeddingChunkLabel).Where(helix.PredEq("key", key)))
+		update := helix.G().N(helix.NodeVar("existing")).
+			SetProperty("project_id", projectID).
+			SetProperty("cache_key", cacheKey).
+			SetProperty("model", model).
+			SetProperty("dimensions", dimensions).
+			SetProperty("content_hash", contentHash).
+			SetProperty("input_kind", inputKind).
+			SetProperty("target_kind", targetKind).
+			SetProperty("target_path", targetPath).
+			SetProperty("target_name", targetName).
+			SetProperty("target_type", targetType).
+			SetProperty("target_line", targetLine).
+			SetProperty("target_end_line", targetEndLine).
+			SetProperty("target_method", targetMethod).
+			SetProperty("target_route_path", targetRoutePath).
+			SetProperty("target_value", targetValue).
+			SetProperty("target_key", targetKeyParam).
+			SetProperty("target_json", targetJSONParam).
+			SetProperty("metadata_json", metadataJSONParam).
+			SetProperty("vector_json", vectorJSONParam).
+			SetProperty("embedding_property", vectorPropertyParam).
+			SetProperty(vectorProperty, vector).
+			SetProperty("updated_at", updatedAt).
+			Project(helix.ProjectPropAs("$id", "id"))
+		q.VarAsIf("updated", helix.VarNotEmpty("existing"), update)
+		q.VarAsIf("created", helix.VarEmpty("existing"), helix.G().AddN(helixEmbeddingChunkLabel, helix.Props{
+			helix.Prop("key", key),
+			helix.Prop("cache_key", cacheKey),
+			helix.Prop("project_id", projectID),
+			helix.Prop("model", model),
+			helix.Prop("dimensions", dimensions),
+			helix.Prop("content_hash", contentHash),
+			helix.Prop("input_kind", inputKind),
+			helix.Prop("target_kind", targetKind),
+			helix.Prop("target_path", targetPath),
+			helix.Prop("target_name", targetName),
+			helix.Prop("target_type", targetType),
+			helix.Prop("target_line", targetLine),
+			helix.Prop("target_end_line", targetEndLine),
+			helix.Prop("target_method", targetMethod),
+			helix.Prop("target_route_path", targetRoutePath),
+			helix.Prop("target_value", targetValue),
+			helix.Prop("target_key", targetKeyParam),
+			helix.Prop("target_json", targetJSONParam),
+			helix.Prop("metadata_json", metadataJSONParam),
+			helix.Prop("vector_json", vectorJSONParam),
+			helix.Prop("embedding_property", vectorPropertyParam),
+			helix.Prop(vectorProperty, vector),
+			helix.Prop("created_at", createdAt),
+			helix.Prop("updated_at", updatedAt),
+		}).Project(helix.ProjectPropAs("$id", "id")))
+		return q.Returning("updated", "created")
+	}, nil)
+}
+
+func (s *helixStore) SearchVector(ctx context.Context, query VectorSearchQuery) ([]SearchHit, error) {
+	if len(query.Vector) == 0 {
+		return nil, nil
+	}
+	if !searchFilterAllowsProject(s.projectID, query.Filter) {
+		return nil, nil
+	}
+	model := vectorSearchModel(query)
+	if model == "" {
+		return nil, fmt.Errorf("vector search embedding model is required")
+	}
+	dimensions := query.Dimensions
+	if dimensions <= 0 {
+		dimensions = len(query.Vector)
+	}
+	if dimensions != len(query.Vector) {
+		return nil, fmt.Errorf("vector dimensions = %d, query vector length = %d", dimensions, len(query.Vector))
+	}
+
+	req, limit := helixVectorSearchRequest(s.projectID, query, model, dimensions)
+	var out struct {
+		Chunks helixRows[helixVectorChunkRow] `json:"chunks"`
+	}
+	if err := s.client.Exec(ctx, req, &out); err != nil {
+		return nil, err
+	}
+	hits := helixVectorRowsToHits(s.projectID, out.Chunks.Properties, query.Filter)
+	if query.Offset > 0 {
+		if query.Offset >= len(hits) {
+			return nil, nil
+		}
+		hits = hits[query.Offset:]
+	}
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
 func helixTextSearchRequest(projectID string, query TextSearchQuery) (helix.Request, bool, bool, int) {
 	includeSymbols, includeDocuments := helixTextSearchTargets(query.Filter.TargetKinds)
 	limit := helixTextSearchLimit(query.Limit)
@@ -400,6 +607,116 @@ func helixTextSearchLimit(limit int) int {
 		return 50
 	}
 	return limit
+}
+
+func helixVectorSearchRequest(projectID string, query VectorSearchQuery, model string, dimensions int) (helix.Request, int) {
+	limit := helixTextSearchLimit(query.Limit)
+	searchLimit := limit
+	if len(query.Filter.TargetKinds) > 0 || query.Filter.FilePattern != "" || len(query.Filter.Metadata) > 0 {
+		searchLimit = limit * 4
+		if searchLimit < 20 {
+			searchLimit = 20
+		}
+	}
+	vectorProperty := helixEmbeddingVectorProperty(model, dimensions)
+
+	q := helix.ReadQuery("code_context_search_vector")
+	vector := q.ParamArray("query_vector", query.Vector, helix.ParamTypeF32())
+	limitParam := q.ParamI64("limit", int64(searchLimit))
+	projectParam := q.ParamString("project_id", projectID)
+	projectInput := projectParam.Input()
+	modelParam := q.ParamString("model", model)
+	dimensionsParam := q.ParamI64("dimensions", int64(dimensions))
+
+	tr := helix.G().
+		VectorSearchNodesWith(helixEmbeddingChunkLabel, vectorProperty, vector.Input(), limitParam.Bound(), &projectInput).
+		Where(helix.PredEq("project_id", projectParam)).
+		Where(helix.PredEq("model", modelParam)).
+		Where(helix.PredEq("dimensions", dimensionsParam)).
+		Project(helixVectorChunkProjections()...)
+	return q.VarAs("chunks", tr).Returning("chunks"), limit
+}
+
+func helixVectorRowsToHits(projectID string, rows []helixVectorChunkRow, filter SearchFilter) []SearchHit {
+	hits := make([]SearchHit, 0, len(rows))
+	for _, row := range rows {
+		target, err := row.Target()
+		if err != nil {
+			continue
+		}
+		target.ProjectID = projectID
+		if !vectorFilterAllows(projectID, filter, target, row) {
+			continue
+		}
+		metadata, _ := parseStringMapJSON(row.MetadataJSON)
+		if metadata == nil {
+			metadata = map[string]string{}
+		}
+		metadata["backend"] = "helix"
+		metadata["model"] = row.Model
+		metadata["dimensions"] = strconv.Itoa(row.Dimensions)
+		metadata["embedding_property"] = row.EmbeddingProperty
+		evidence := firstNonEmpty(metadata["signature"], metadata["title"], target.Name, target.Path, row.ContentHash)
+		hits = append(hits, SearchHit{
+			Target:   target,
+			Score:    helixTextScore(row.Score),
+			Source:   SearchSourceVector,
+			Evidence: evidence,
+			Highlights: []SearchHighlight{{
+				Line:    target.Line,
+				Snippet: evidence,
+			}},
+			Metadata: metadata,
+		})
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		if hits[i].Target.Path != hits[j].Target.Path {
+			return hits[i].Target.Path < hits[j].Target.Path
+		}
+		if hits[i].Target.Line != hits[j].Target.Line {
+			return hits[i].Target.Line < hits[j].Target.Line
+		}
+		return hits[i].Target.Name < hits[j].Target.Name
+	})
+	return hits
+}
+
+func vectorSearchModel(query VectorSearchQuery) string {
+	if strings.TrimSpace(query.Model) != "" {
+		return strings.TrimSpace(query.Model)
+	}
+	for _, key := range []string{"embedding_model", "model"} {
+		if value := strings.TrimSpace(query.Filter.Metadata[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func vectorFilterAllows(projectID string, filter SearchFilter, target TargetRef, row helixVectorChunkRow) bool {
+	if !graphTraversalFilterAllows(projectID, filter, target) {
+		return false
+	}
+	for key, value := range filter.Metadata {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "embedding_model", "model":
+			if row.Model != value {
+				return false
+			}
+		case "embedding_dimensions", "dimensions":
+			if strconv.Itoa(row.Dimensions) != value {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func searchFilterAllowsProject(projectID string, filter SearchFilter) bool {
@@ -961,8 +1278,8 @@ func (s *helixStore) SchemaStatus(ctx context.Context) (*api.SchemaStatus, error
 		ExpectedVersion: HelixSchemaVersion,
 		AppliedVersion:  HelixSchemaVersion,
 		VersionOK:       true,
-		Tables:          []string{helixFileLabel, helixSymbolLabel, helixImportLabel, helixCallLabel, helixRouteLabel, helixDocumentLabel, helixDocumentLinkLabel},
-		Indexes:         []string{"file.key", "file.project_id", "symbol.key", "symbol.project_id", "symbol.search_text", "document.key", "document.project_id", "document.search_text", "document_link.target_key"},
+		Tables:          []string{helixFileLabel, helixSymbolLabel, helixImportLabel, helixCallLabel, helixRouteLabel, helixDocumentLabel, helixDocumentLinkLabel, helixEmbeddingChunkLabel},
+		Indexes:         []string{"file.key", "file.project_id", "symbol.key", "symbol.project_id", "symbol.search_text", "document.key", "document.project_id", "document.search_text", "document_link.target_key", "embedding_chunk.key", "embedding_chunk.cache_key", "embedding_chunk.project_id", "embedding_chunk.model", "embedding_chunk.target_key", "embedding_chunk.target_path", "embedding_chunk.<namespace>"},
 	}, nil
 }
 
@@ -970,6 +1287,7 @@ func (s *helixStore) ResetIndex(ctx context.Context) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_reset_index")
 		projectParam := q.ParamString("project_id", s.projectID)
+		q.VarAs("embedding_chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
 		q.VarAs("document_links", helix.G().NWithLabel(helixDocumentLinkLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
 		q.VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
 		q.VarAs("routes", helix.G().NWithLabel(helixRouteLabel).Where(helix.PredEq("project_id", projectParam)).Drop().Count())
@@ -1003,6 +1321,10 @@ func (s *helixStore) UpsertDocument(ctx context.Context, doc *api.Document) (int
 		size := q.ParamI64("size", int64(doc.Size))
 		indexedAt := q.ParamI64("indexed_at", now)
 		q.VarAs("existing", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("key", key)))
+		q.VarAs("drop_embedding_chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+			Where(helix.PredEq("project_id", projectID)).
+			Where(helix.PredEq("target_path", path)).
+			Drop().Count())
 		q.VarAsIf("updated", helix.VarNotEmpty("existing"), helix.G().N(helix.NodeVar("existing")).
 			SetProperty("project_id", projectID).
 			SetProperty("language", language).
@@ -1052,8 +1374,14 @@ func (s *helixStore) DeleteDocument(ctx context.Context, path string) error {
 	return s.execWrite(ctx, func() helix.Request {
 		q := helix.WriteQuery("code_context_delete_document")
 		keyParam := q.ParamString("key", helixKey(s.projectID, path))
+		projectParam := q.ParamString("project_id", s.projectID)
+		pathParam := q.ParamString("path", path)
 		q.VarAs("document", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("key", keyParam)))
 		q.VarAs("drop_links", helix.G().N(helix.NodeVar("document")).Out(helixDocumentLinkEdge).Drop().Count())
+		q.VarAs("drop_embedding_chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+			Where(helix.PredEq("project_id", projectParam)).
+			Where(helix.PredEq("target_path", pathParam)).
+			Drop().Count())
 		q.VarAs("drop_document", helix.G().N(helix.NodeVar("document")).Drop().Count())
 		return q.Returning()
 	}, nil)
@@ -1257,6 +1585,102 @@ type helixTextDocumentRow struct {
 	Score      float64 `json:"score"`
 }
 
+type helixEmbeddingChunkRow struct {
+	Key               string `json:"key"`
+	CacheKey          string `json:"cache_key"`
+	Model             string `json:"model"`
+	Dimensions        int    `json:"dimensions"`
+	ContentHash       string `json:"content_hash"`
+	InputKind         string `json:"input_kind"`
+	TargetKind        string `json:"target_kind"`
+	TargetPath        string `json:"target_path"`
+	TargetName        string `json:"target_name"`
+	TargetType        string `json:"target_type"`
+	TargetLine        int    `json:"target_line"`
+	TargetEndLine     int    `json:"target_end_line"`
+	TargetMethod      string `json:"target_method"`
+	TargetRoutePath   string `json:"target_route_path"`
+	TargetValue       string `json:"target_value"`
+	TargetKey         string `json:"target_key"`
+	TargetJSON        string `json:"target_json"`
+	MetadataJSON      string `json:"metadata_json"`
+	VectorJSON        string `json:"vector_json"`
+	EmbeddingProperty string `json:"embedding_property"`
+	CreatedAt         int64  `json:"created_at"`
+	UpdatedAt         int64  `json:"updated_at"`
+}
+
+func (r helixEmbeddingChunkRow) Entry() (*EmbeddingCacheEntry, error) {
+	target, err := r.Target()
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := parseStringMapJSON(r.MetadataJSON)
+	if err != nil {
+		return nil, err
+	}
+	var values []float32
+	if strings.TrimSpace(r.VectorJSON) != "" {
+		if err := json.Unmarshal([]byte(r.VectorJSON), &values); err != nil {
+			return nil, err
+		}
+	}
+	return &EmbeddingCacheEntry{
+		Key:         firstNonEmpty(r.CacheKey, r.Key),
+		Model:       r.Model,
+		Dimensions:  r.Dimensions,
+		ContentHash: r.ContentHash,
+		InputKind:   EmbeddingInputKind(r.InputKind),
+		Target:      target,
+		Values:      values,
+		Metadata:    metadata,
+		CreatedAt:   time.Unix(r.CreatedAt, 0),
+		UpdatedAt:   time.Unix(r.UpdatedAt, 0),
+	}, nil
+}
+
+func (r helixEmbeddingChunkRow) Target() (TargetRef, error) {
+	var target TargetRef
+	if strings.TrimSpace(r.TargetJSON) != "" {
+		if err := json.Unmarshal([]byte(r.TargetJSON), &target); err != nil {
+			return target, err
+		}
+	}
+	if target.Kind == "" {
+		target.Kind = TargetKind(r.TargetKind)
+	}
+	if target.Path == "" {
+		target.Path = r.TargetPath
+	}
+	if target.Name == "" {
+		target.Name = r.TargetName
+	}
+	if target.Type == "" {
+		target.Type = r.TargetType
+	}
+	if target.Line == 0 {
+		target.Line = r.TargetLine
+	}
+	if target.EndLine == 0 {
+		target.EndLine = r.TargetEndLine
+	}
+	if target.Method == "" {
+		target.Method = r.TargetMethod
+	}
+	if target.RoutePath == "" {
+		target.RoutePath = r.TargetRoutePath
+	}
+	if target.Value == "" {
+		target.Value = r.TargetValue
+	}
+	return normalizeGraphStart(target), nil
+}
+
+type helixVectorChunkRow struct {
+	helixEmbeddingChunkRow
+	Score float64 `json:"score"`
+}
+
 func fileTraversal() *helix.Traversal {
 	return helix.G().NWithLabel(helixFileLabel)
 }
@@ -1364,6 +1788,39 @@ func helixTextDocumentProjections() []helix.Projection {
 		helix.ProjectPropAs("search_text", "search_text"),
 		helix.ProjectPropAs("$distance", "score"),
 	}
+}
+
+func helixEmbeddingChunkProjections() []helix.Projection {
+	return []helix.Projection{
+		helix.ProjectPropAs("key", "key"),
+		helix.ProjectPropAs("cache_key", "cache_key"),
+		helix.ProjectPropAs("model", "model"),
+		helix.ProjectPropAs("dimensions", "dimensions"),
+		helix.ProjectPropAs("content_hash", "content_hash"),
+		helix.ProjectPropAs("input_kind", "input_kind"),
+		helix.ProjectPropAs("target_kind", "target_kind"),
+		helix.ProjectPropAs("target_path", "target_path"),
+		helix.ProjectPropAs("target_name", "target_name"),
+		helix.ProjectPropAs("target_type", "target_type"),
+		helix.ProjectPropAs("target_line", "target_line"),
+		helix.ProjectPropAs("target_end_line", "target_end_line"),
+		helix.ProjectPropAs("target_method", "target_method"),
+		helix.ProjectPropAs("target_route_path", "target_route_path"),
+		helix.ProjectPropAs("target_value", "target_value"),
+		helix.ProjectPropAs("target_key", "target_key"),
+		helix.ProjectPropAs("target_json", "target_json"),
+		helix.ProjectPropAs("metadata_json", "metadata_json"),
+		helix.ProjectPropAs("vector_json", "vector_json"),
+		helix.ProjectPropAs("embedding_property", "embedding_property"),
+		helix.ProjectPropAs("created_at", "created_at"),
+		helix.ProjectPropAs("updated_at", "updated_at"),
+	}
+}
+
+func helixVectorChunkProjections() []helix.Projection {
+	projections := append([]helix.Projection{}, helixEmbeddingChunkProjections()...)
+	projections = append(projections, helix.ProjectPropAs("$distance", "score"))
+	return projections
 }
 
 func documentLinkTraversal() *helix.Traversal {
@@ -2178,6 +2635,43 @@ func symbolKeyForHelix(projectID, filePath, name string, line int) string {
 
 func helixKey(parts ...string) string {
 	return strings.Join(parts, "\x1f")
+}
+
+func helixEmbeddingKey(projectID, cacheKey string) string {
+	return helixKey(projectID, cacheKey)
+}
+
+func helixEmbeddingTargetKey(target TargetRef) string {
+	target = normalizeGraphStart(target)
+	return helixKey(
+		string(target.Kind),
+		target.Path,
+		target.Name,
+		target.Type,
+		fmt.Sprint(target.Line),
+		target.Method,
+		target.RoutePath,
+		target.Value,
+	)
+}
+
+func helixEmbeddingVectorProperty(model string, dimensions int) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(model),
+		fmt.Sprint(dimensions),
+	}, "\x00")))
+	return "embedding_" + hex.EncodeToString(sum[:8])
+}
+
+func parseStringMapJSON(value string) (map[string]string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(value), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func definitionKindPredicate() helix.Predicate {
