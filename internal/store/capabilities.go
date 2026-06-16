@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -199,14 +201,21 @@ const (
 
 type GraphTraversalQuery struct {
 	Start     TargetRef       `json:"start"`
+	Target    string          `json:"target,omitempty"`
 	EdgeKinds []GraphEdgeKind `json:"edge_kinds,omitempty"`
 	Direction GraphDirection  `json:"direction,omitempty"`
 	MaxDepth  int             `json:"max_depth,omitempty"`
 	Limit     int             `json:"limit,omitempty"`
+	Filter    SearchFilter    `json:"filter,omitempty"`
+	// IncludePaths asks providers to include shortest traversal paths from the
+	// start target to reached nodes when the backend can derive them cheaply.
+	IncludePaths bool `json:"include_paths,omitempty"`
 }
 
 type GraphNode struct {
 	Target     TargetRef         `json:"target"`
+	Depth      int               `json:"depth,omitempty"`
+	Root       bool              `json:"root,omitempty"`
 	Score      float64           `json:"score,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
 }
@@ -215,17 +224,150 @@ type GraphEdge struct {
 	From       TargetRef         `json:"from"`
 	To         TargetRef         `json:"to"`
 	Kind       GraphEdgeKind     `json:"kind"`
+	Depth      int               `json:"depth,omitempty"`
 	Weight     float64           `json:"weight,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
 }
 
+type GraphTraversalStep struct {
+	From      TargetRef      `json:"from"`
+	To        TargetRef      `json:"to"`
+	EdgeKind  GraphEdgeKind  `json:"edge_kind"`
+	Direction GraphDirection `json:"direction,omitempty"`
+}
+
+type GraphTraversalPath struct {
+	Target TargetRef            `json:"target"`
+	Depth  int                  `json:"depth,omitempty"`
+	Steps  []GraphTraversalStep `json:"steps,omitempty"`
+}
+
 type GraphTraversalResult struct {
-	Nodes []GraphNode `json:"nodes,omitempty"`
-	Edges []GraphEdge `json:"edges,omitempty"`
+	Start     TargetRef            `json:"start,omitempty"`
+	Direction GraphDirection       `json:"direction,omitempty"`
+	MaxDepth  int                  `json:"max_depth,omitempty"`
+	EdgeKinds []GraphEdgeKind      `json:"edge_kinds,omitempty"`
+	Nodes     []GraphNode          `json:"nodes,omitempty"`
+	Edges     []GraphEdge          `json:"edges,omitempty"`
+	Paths     []GraphTraversalPath `json:"paths,omitempty"`
+	Summary   string               `json:"summary,omitempty"`
 }
 
 type GraphTraverser interface {
 	TraverseGraph(ctx context.Context, query GraphTraversalQuery) (*GraphTraversalResult, error)
+}
+
+// ParseTargetRef converts a human-friendly graph target into a provider-neutral
+// TargetRef. It intentionally supports only stable code-context concepts (not
+// backend ids), so it can be reused by CLI, HTTP, MCP, and future providers.
+func ParseTargetRef(raw string) TargetRef {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return TargetRef{}
+	}
+
+	lower := strings.ToLower(raw)
+	for _, prefix := range []struct {
+		text string
+		kind TargetKind
+	}{
+		{"file:", TargetFile},
+		{"document:", TargetDocument},
+		{"doc:", TargetDocument},
+		{"symbol:", TargetSymbol},
+		{"route:", TargetRoute},
+		{"text:", TargetText},
+	} {
+		if strings.HasPrefix(lower, prefix.text) {
+			return parseTargetRefBody(prefix.kind, strings.TrimSpace(raw[len(prefix.text):]))
+		}
+	}
+
+	if method, routePath, ok := parseMethodRoute(raw); ok {
+		return TargetRef{Kind: TargetRoute, Method: method, RoutePath: routePath, Value: strings.TrimSpace(method + " " + routePath)}
+	}
+	if looksLikeDocumentPath(raw) {
+		path, line := splitTargetPathLine(raw)
+		return TargetRef{Kind: TargetDocument, Path: path, Line: line}
+	}
+	if looksLikeFilePath(raw) {
+		path, line := splitTargetPathLine(raw)
+		return TargetRef{Kind: TargetFile, Path: path, Line: line}
+	}
+	return TargetRef{Kind: TargetSymbol, Name: raw}
+}
+
+func parseTargetRefBody(kind TargetKind, body string) TargetRef {
+	switch kind {
+	case TargetFile:
+		path, line := splitTargetPathLine(body)
+		return TargetRef{Kind: TargetFile, Path: path, Line: line}
+	case TargetDocument:
+		path, line := splitTargetPathLine(body)
+		return TargetRef{Kind: TargetDocument, Path: path, Line: line}
+	case TargetSymbol:
+		if before, after, ok := strings.Cut(body, "@"); ok {
+			path, line := splitTargetPathLine(strings.TrimSpace(after))
+			return TargetRef{Kind: TargetSymbol, Name: strings.TrimSpace(before), Path: path, Line: line}
+		}
+		if before, after, ok := strings.Cut(body, "#"); ok && looksLikeFilePath(before) {
+			path, line := splitTargetPathLine(strings.TrimSpace(before))
+			return TargetRef{Kind: TargetSymbol, Name: strings.TrimSpace(after), Path: path, Line: line}
+		}
+		return TargetRef{Kind: TargetSymbol, Name: body}
+	case TargetRoute:
+		if method, routePath, ok := parseMethodRoute(body); ok {
+			return TargetRef{Kind: TargetRoute, Method: method, RoutePath: routePath, Value: strings.TrimSpace(method + " " + routePath)}
+		}
+		return TargetRef{Kind: TargetRoute, RoutePath: body, Value: body}
+	case TargetText:
+		return TargetRef{Kind: TargetText, Value: body}
+	default:
+		return TargetRef{Kind: kind, Value: body}
+	}
+}
+
+func parseMethodRoute(raw string) (string, string, bool) {
+	fields := strings.Fields(raw)
+	if len(fields) < 2 {
+		return "", "", false
+	}
+	method := strings.ToUpper(fields[0])
+	switch method {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT":
+		return method, strings.Join(fields[1:], " "), true
+	default:
+		return "", "", false
+	}
+}
+
+func looksLikeDocumentPath(raw string) bool {
+	path, _ := splitTargetPathLine(raw)
+	lower := strings.ToLower(path)
+	for _, suffix := range []string{".md", ".mdx", ".markdown", ".rst", ".adoc", ".txt"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeFilePath(raw string) bool {
+	path, _ := splitTargetPathLine(raw)
+	return strings.Contains(path, "/") || strings.Contains(path, "\\") || strings.HasPrefix(path, ".")
+}
+
+func splitTargetPathLine(raw string) (string, int) {
+	raw = strings.TrimSpace(raw)
+	colon := strings.LastIndex(raw, ":")
+	if colon <= 0 || colon == len(raw)-1 {
+		return raw, 0
+	}
+	line, err := strconv.Atoi(raw[colon+1:])
+	if err != nil || line <= 0 {
+		return raw, 0
+	}
+	return raw[:colon], line
 }
 
 type WorkspaceSearchQuery struct {

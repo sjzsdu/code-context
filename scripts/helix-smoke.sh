@@ -133,10 +133,16 @@ docs="$(run_code_context docs-for HealthHandler)"
 printf '%s\n' "$docs"
 grep -q "docs/health.md" <<<"$docs"
 
-traverse_cli="$(run_code_context graph traverse --kind document --path docs/health.md --edge references --limit 10)"
+traverse_cli="$(run_code_context graph traverse docs/health.md --edge references --include-paths --limit 10)"
 printf '%s\n' "$traverse_cli"
 grep -q '"kind": "references"' <<<"$traverse_cli"
 grep -q "HealthHandler" <<<"$traverse_cli"
+grep -q '"paths"' <<<"$traverse_cli"
+
+traverse_text_cli="$(run_code_context graph traverse "text:Health" --edge similar --target-kind symbol --include-paths --limit 10)"
+printf '%s\n' "$traverse_text_cli"
+grep -q '"kind": "similar"' <<<"$traverse_text_cli"
+grep -q "HealthMessage" <<<"$traverse_text_cli"
 
 SERVER_LOG="$SMOKE_DIR/code-context-server.log"
 run_code_context serve --port "$HTTP_PORT" >"$SERVER_LOG" 2>&1 &
@@ -150,9 +156,10 @@ grep -q '"kind":"document"' <<<"$text_api"
 grep -q "HealthHandler" <<<"$text_api"
 grep -q "docs/health.md" <<<"$text_api"
 
-traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"start":{"kind":"document","path":"docs/health.md"},"edge_kinds":["references"],"direction":"outbound","limit":10}')"
+traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"target":"text:Health","edge_kinds":["similar"],"filter":{"target_kinds":["symbol"]},"include_paths":true,"direction":"outbound","limit":10}')"
 printf '%s\n' "$traverse_api"
-grep -q '"kind":"references"' <<<"$traverse_api"
-grep -q "HealthHandler" <<<"$traverse_api"
+grep -q '"kind":"similar"' <<<"$traverse_api"
+grep -q "HealthMessage" <<<"$traverse_api"
+grep -q '"paths"' <<<"$traverse_api"
 
 echo "Helix smoke passed."

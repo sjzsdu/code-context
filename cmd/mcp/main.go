@@ -49,11 +49,15 @@ type GraphSubgraphArgs struct {
 }
 
 type GraphTraverseArgs struct {
-	Start     store.TargetRef       `json:"start"`
+	Start     store.TargetRef       `json:"start,omitempty"`
+	Target    string                `json:"target,omitempty"`
 	EdgeKinds []store.GraphEdgeKind `json:"edge_kinds,omitempty"`
 	Direction store.GraphDirection  `json:"direction,omitempty"`
 	MaxDepth  int                   `json:"max_depth,omitempty"`
 	Limit     int                   `json:"limit,omitempty"`
+	Filter    store.SearchFilter    `json:"filter,omitempty"`
+	// IncludePaths includes shortest traversal paths from the start target when supported.
+	IncludePaths bool `json:"include_paths,omitempty"`
 }
 
 type SearchArgs struct {
@@ -1095,15 +1099,18 @@ func runGraphSubgraphTool(ctx context.Context, eng *engine.Engine, args GraphSub
 }
 
 func runGraphTraverseTool(ctx context.Context, eng *engine.Engine, args GraphTraverseArgs) (string, error) {
-	if args.Start.Kind == "" && args.Start.Path == "" && args.Start.Name == "" && args.Start.Value == "" && args.Start.RoutePath == "" {
-		return "", fmt.Errorf("missing required parameter: start")
+	if args.Target == "" && args.Start.Kind == "" && args.Start.Path == "" && args.Start.Name == "" && args.Start.Value == "" && args.Start.RoutePath == "" {
+		return "", fmt.Errorf("missing required parameter: start or target")
 	}
 	result, err := eng.TraverseGraph(ctx, store.GraphTraversalQuery{
-		Start:     args.Start,
-		EdgeKinds: args.EdgeKinds,
-		Direction: args.Direction,
-		MaxDepth:  args.MaxDepth,
-		Limit:     args.Limit,
+		Start:        args.Start,
+		Target:       args.Target,
+		EdgeKinds:    args.EdgeKinds,
+		Direction:    args.Direction,
+		MaxDepth:     args.MaxDepth,
+		Limit:        args.Limit,
+		Filter:       args.Filter,
+		IncludePaths: args.IncludePaths,
 	})
 	if err != nil {
 		return "", err

@@ -60,7 +60,8 @@ code-context search "Server"
 # Inspect graph relationships around a symbol or file
 code-context graph neighbors Engine
 code-context graph path internal/engine/engine.go internal/server/server.go
-code-context graph traverse --kind document --path docs/health.md --edge references
+code-context graph traverse docs/health.md --edge references --include-paths
+code-context graph traverse "text:Health" --edge similar --target-kind symbol
 
 # Generate LLM context with graph recommendations
 code-context snapshot
@@ -273,12 +274,18 @@ code-context graph --focus Engine
 code-context graph path Engine Server
 code-context graph neighbors internal/engine/engine.go --limit 5
 code-context graph subgraph Engine --depth 2
-code-context graph traverse --kind document --path docs/health.md --edge references --limit 10
+code-context graph traverse docs/health.md --edge references --include-paths --limit 10
+code-context graph traverse "text:Health" --edge similar --target-kind symbol --include-paths
 code-context graph html --focus internal/server/server.go > graph.html
 ```
 
 Exports graph JSON, finds file-level paths, shows neighboring files/symbols, runs provider-backed
 traversals when supported, and returns local subgraphs for focused analysis.
+Provider-backed traversals accept structured starts (`--kind/--path/--name`) or target strings such
+as `docs/health.md`, `symbol:HealthHandler@cmd/api/main.go`, `GET /health`, and `text:Health`.
+Edge filters support concrete edge kinds plus semantic groups: `code`, `docs`, `symbols`, and
+`entrypoints`. Use `--target-kind`, `--file-pattern`, `--metadata key=value`, and `--include-paths`
+to narrow traversal output and include shortest paths from the start target.
 
 Graph exports are versioned as `graph-export.v2` and now include richer code-knowledge graph structure:
 - node types: `file`, `symbol`, `import`, `module`, `package`
@@ -491,7 +498,9 @@ instead of importing Helix SDK types. Backends can implement any subset of these
 can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
 fallbacks where appropriate. The Helix backend currently implements `TextSearcher` with BM25 over
 indexed symbol text and document metadata/summary text, and `GraphTraverser` over the indexed
-file/symbol/import/call/route/document-link graph. `/api/text` and search callers use text search
+file/symbol/import/call/route/document-link graph. Graph traversal supports target-string parsing,
+semantic edge groups, target/file/metadata filters, depth/path metadata, text-query expansion through
+`similar` edges, and handler-to-route relationships. `/api/text` and search callers use text search
 when available and keep the local grep fallback for backends without the capability.
 
 ## HTTP API
@@ -643,7 +652,8 @@ code-context:search "Server"
 # Inspect graph navigation via MCP
 code-context:graph_neighbors '{"target":"Engine","limit":5}'
 code-context:graph_path '{"from":"Engine","to":"Server"}'
-code-context:graph_traverse '{"start":{"kind":"document","path":"docs/health.md"},"edge_kinds":["references"],"limit":10}'
+code-context:graph_traverse '{"target":"docs/health.md","edge_kinds":["references"],"include_paths":true,"limit":10}'
+code-context:graph_traverse '{"target":"text:Health","edge_kinds":["similar"],"filter":{"target_kinds":["symbol"]},"include_paths":true,"limit":10}'
 code-context:graph '{"focus":"internal/server/server.go"}'
 
 # Unified impact analysis for an edit target

@@ -186,12 +186,12 @@ func TestHelixStoreDetectsAdvancedCapabilities(t *testing.T) {
 }
 
 func TestGraphTraversalBuilderDeduplicatesNodesAndEdges(t *testing.T) {
-	builder := newGraphTraversalBuilder()
+	builder := newGraphTraversalBuilder("project-a")
 	from := TargetRef{Kind: TargetFile, Path: "internal/health.go"}
 	to := TargetRef{Kind: TargetSymbol, Path: "internal/health.go", Name: "HealthMessage", Type: "function", Line: 3}
 
-	builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", "3"))
-	builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", "3"))
+	builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", "3"), 0, 1, 1)
+	builder.addEdge(from, to, GraphEdgeDefines, graphProperties("line", "3"), 0, 1, 1)
 
 	result := builder.result()
 	if len(result.Nodes) != 2 {
@@ -202,6 +202,9 @@ func TestGraphTraversalBuilderDeduplicatesNodesAndEdges(t *testing.T) {
 	}
 	if result.Edges[0].Kind != GraphEdgeDefines {
 		t.Fatalf("edge kind = %q, want %q", result.Edges[0].Kind, GraphEdgeDefines)
+	}
+	if result.Nodes[1].Depth != 1 || result.Edges[0].Depth != 1 {
+		t.Fatalf("depth metadata missing: nodes=%+v edges=%+v", result.Nodes, result.Edges)
 	}
 }
 
@@ -222,6 +225,64 @@ func TestGraphEdgeAllowed(t *testing.T) {
 	}
 	if !graphEdgeAllowed(nil, GraphEdgeImports) {
 		t.Fatal("empty edge filter should allow imports")
+	}
+}
+
+func TestNormalizeGraphEdgeKindsExpandsGroups(t *testing.T) {
+	kinds, allowed, err := normalizeGraphEdgeKinds([]GraphEdgeKind{"code", "docs", GraphEdgeSimilar})
+	if err != nil {
+		t.Fatalf("normalizeGraphEdgeKinds: %v", err)
+	}
+	for _, want := range []GraphEdgeKind{GraphEdgeDefines, GraphEdgeImports, GraphEdgeCalls, GraphEdgeRoutes, GraphEdgeDocuments, GraphEdgeReferences, GraphEdgeSimilar} {
+		if !graphEdgeAllowed(allowed, want) {
+			t.Fatalf("expected %q in allowed set %#v", want, allowed)
+		}
+	}
+	if len(kinds) != 7 {
+		t.Fatalf("expanded kinds = %#v, want 7 unique kinds", kinds)
+	}
+}
+
+func TestNormalizeGraphEdgeKindsRejectsUnknown(t *testing.T) {
+	if _, _, err := normalizeGraphEdgeKinds([]GraphEdgeKind{"mystery"}); err == nil {
+		t.Fatal("expected invalid graph edge kind error")
+	}
+}
+
+func TestNormalizeGraphDirectionRejectsUnknown(t *testing.T) {
+	if _, err := normalizeGraphDirection("sideways"); err == nil {
+		t.Fatal("expected invalid graph direction error")
+	}
+}
+
+func TestGraphTraversalFilterAllowsTarget(t *testing.T) {
+	filter := SearchFilter{TargetKinds: []TargetKind{TargetSymbol}, FilePattern: "internal/*.go", Metadata: map[string]string{"type": "function"}}
+	target := TargetRef{Kind: TargetSymbol, Path: "internal/health.go", Type: "function", Name: "HealthMessage"}
+	if !graphTraversalFilterAllows("project-a", filter, target) {
+		t.Fatal("expected target to pass traversal filter")
+	}
+	if graphTraversalFilterAllows("project-a", filter, TargetRef{Kind: TargetDocument, Path: "docs/health.md", Type: "document"}) {
+		t.Fatal("expected document target to be rejected by symbol filter")
+	}
+}
+
+func TestGraphTraversalPathsBuildsShortestPath(t *testing.T) {
+	start := TargetRef{Kind: TargetDocument, Path: "docs/health.md"}
+	symbol := TargetRef{Kind: TargetSymbol, Name: "HealthHandler"}
+	callee := TargetRef{Kind: TargetSymbol, Name: "HealthMessage"}
+	parents := map[string]graphPathHop{
+		graphTargetKey(symbol): {from: start, to: symbol, edgeKind: GraphEdgeReferences, direction: GraphOutbound},
+		graphTargetKey(callee): {from: symbol, to: callee, edgeKind: GraphEdgeCalls, direction: GraphOutbound},
+	}
+	paths := graphTraversalPaths(start, []GraphNode{{Target: start}, {Target: symbol}, {Target: callee}}, parents)
+	if len(paths) != 3 {
+		t.Fatalf("paths = %d, want 3: %+v", len(paths), paths)
+	}
+	if paths[2].Depth != 2 || len(paths[2].Steps) != 2 {
+		t.Fatalf("callee path = %+v, want depth 2 with two steps", paths[2])
+	}
+	if paths[2].Steps[0].EdgeKind != GraphEdgeReferences || paths[2].Steps[1].EdgeKind != GraphEdgeCalls {
+		t.Fatalf("unexpected path steps: %+v", paths[2].Steps)
 	}
 }
 

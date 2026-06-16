@@ -1539,12 +1539,16 @@ func newGraphSubgraphCmd() *cobra.Command {
 func newGraphTraverseCmd() *cobra.Command {
 	var kind, path, name, typ, value, method, routePath, direction string
 	var edges []string
+	var targetKinds []string
+	var filePattern string
+	var metadata []string
+	var includePaths bool
 	var depth int
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "traverse",
+		Use:   "traverse [target]",
 		Short: "Run provider-backed graph traversal",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eng, err := newEngine()
 			if err != nil {
@@ -1552,7 +1556,12 @@ func newGraphTraverseCmd() *cobra.Command {
 			}
 			defer eng.Close()
 
+			var target string
+			if len(args) > 0 {
+				target = args[0]
+			}
 			query := store.GraphTraversalQuery{
+				Target: target,
 				Start: store.TargetRef{
 					Kind:      store.TargetKind(kind),
 					Path:      path,
@@ -1565,12 +1574,37 @@ func newGraphTraverseCmd() *cobra.Command {
 				Direction: store.GraphDirection(direction),
 				MaxDepth:  depth,
 				Limit:     limit,
+				Filter: store.SearchFilter{
+					FilePattern: filePattern,
+				},
+				IncludePaths: includePaths,
 			}
 			for _, edge := range edges {
 				edge = strings.TrimSpace(edge)
 				if edge != "" {
 					query.EdgeKinds = append(query.EdgeKinds, store.GraphEdgeKind(edge))
 				}
+			}
+			for _, targetKind := range targetKinds {
+				targetKind = strings.TrimSpace(targetKind)
+				if targetKind != "" {
+					query.Filter.TargetKinds = append(query.Filter.TargetKinds, store.TargetKind(targetKind))
+				}
+			}
+			for _, item := range metadata {
+				key, value, ok := strings.Cut(item, "=")
+				if !ok {
+					return fmt.Errorf("metadata filter must be key=value: %q", item)
+				}
+				key = strings.TrimSpace(key)
+				value = strings.TrimSpace(value)
+				if key == "" {
+					return fmt.Errorf("metadata filter key is required: %q", item)
+				}
+				if query.Filter.Metadata == nil {
+					query.Filter.Metadata = map[string]string{}
+				}
+				query.Filter.Metadata[key] = value
 			}
 			result, err := eng.TraverseGraph(context.Background(), query)
 			if err != nil {
@@ -1590,7 +1624,11 @@ func newGraphTraverseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&method, "method", "", "start route method")
 	cmd.Flags().StringVar(&routePath, "route", "", "start route path")
 	cmd.Flags().StringVar(&direction, "direction", "outbound", "traversal direction: outbound, inbound, or both")
-	cmd.Flags().StringSliceVar(&edges, "edge", nil, "edge kind filter; repeat or comma-separate (defines,imports,calls,routes,documents,references)")
+	cmd.Flags().StringSliceVar(&edges, "edge", nil, "edge kind filter; repeat or comma-separate (defines,imports,calls,routes,documents,references,similar,code,docs,symbols,entrypoints)")
+	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "only traverse to target kinds; repeat or comma-separate (file,symbol,route,document,text)")
+	cmd.Flags().StringVar(&filePattern, "file-pattern", "", "only traverse to targets whose path matches this substring or glob")
+	cmd.Flags().StringArrayVar(&metadata, "metadata", nil, "metadata filter as key=value; supports kind,target_kind,type,name,path")
+	cmd.Flags().BoolVar(&includePaths, "include-paths", false, "include shortest traversal paths from the start target")
 	cmd.Flags().IntVar(&depth, "depth", 1, "max traversal depth")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max traversal edges")
 	return cmd
