@@ -96,7 +96,7 @@ func TestLoadStoreConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
 	configPath := filepath.Join(tmpDir, ".code-context.yaml")
-	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\nembedding:\n  provider: openai-compatible\n  base_url: http://localhost:8080/v1\n  api_key_env: EMBEDDING_API_KEY\n  model: text-embedding-test\n  dimensions: 384\n  timeout: 10s\n  batch_size: 32\n")
+	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\nembedding:\n  provider: openai-compatible\n  base_url: http://localhost:8080/v1\n  api_key_env: EMBEDDING_API_KEY\n  model: text-embedding-test\n  dimensions: 384\n  timeout: 10s\n  batch_size: 32\nanswer:\n  provider: openai-compatible\n  base_url: http://localhost:8081/v1\n  api_key_env: ANSWER_API_KEY\n  model: chat-test\n  timeout: 20s\n  max_tokens: 2048\n  temperature: 0.3\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -142,6 +142,27 @@ func TestLoadStoreConfig(t *testing.T) {
 	if loaded.Config.Embedding.BatchSize != 32 {
 		t.Fatalf("embedding.batch_size = %d", loaded.Config.Embedding.BatchSize)
 	}
+	if loaded.Config.Answer.Provider != "openai-compatible" {
+		t.Fatalf("answer.provider = %q", loaded.Config.Answer.Provider)
+	}
+	if loaded.Config.Answer.BaseURL != "http://localhost:8081/v1" {
+		t.Fatalf("answer.base_url = %q", loaded.Config.Answer.BaseURL)
+	}
+	if loaded.Config.Answer.APIKeyEnv != "ANSWER_API_KEY" {
+		t.Fatalf("answer.api_key_env = %q", loaded.Config.Answer.APIKeyEnv)
+	}
+	if loaded.Config.Answer.Model != "chat-test" {
+		t.Fatalf("answer.model = %q", loaded.Config.Answer.Model)
+	}
+	if loaded.Config.Answer.Timeout != 20*time.Second {
+		t.Fatalf("answer.timeout = %s", loaded.Config.Answer.Timeout)
+	}
+	if loaded.Config.Answer.MaxTokens != 2048 {
+		t.Fatalf("answer.max_tokens = %d", loaded.Config.Answer.MaxTokens)
+	}
+	if loaded.Config.Answer.Temperature != 0.3 {
+		t.Fatalf("answer.temperature = %f", loaded.Config.Answer.Temperature)
+	}
 }
 
 func TestLoadConfigNotFound(t *testing.T) {
@@ -166,13 +187,13 @@ func TestLoadMergesUserAndProjectConfig(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	userConfigPath := filepath.Join(homeDir, ".code-context", "config.yaml")
-	userConfig := []byte("store:\n  backend: helix\n  helix:\n    url: http://user-helix:6969\n    api_key_env: USER_HELIX_KEY\nembedding:\n  provider: openai-compatible\n  base_url: http://user-embedding/v1\n  model: user-model\n  batch_size: 16\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 5s\ndocs:\n  fail_on_broken: true\n")
+	userConfig := []byte("store:\n  backend: helix\n  helix:\n    url: http://user-helix:6969\n    api_key_env: USER_HELIX_KEY\nembedding:\n  provider: openai-compatible\n  base_url: http://user-embedding/v1\n  model: user-model\n  batch_size: 16\nanswer:\n  provider: openai-compatible\n  base_url: http://user-answer/v1\n  model: user-chat\n  max_tokens: 1024\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 5s\ndocs:\n  fail_on_broken: true\n")
 	if err := os.WriteFile(userConfigPath, userConfig, 0o644); err != nil {
 		t.Fatalf("write user config: %v", err)
 	}
 
 	projectConfigPath := filepath.Join(projectDir, ".code-context", "config.yaml")
-	projectConfig := []byte("root: .\ndb: .code-context/index.db\nstore:\n  helix:\n    project_id: project-a\nembedding:\n  model: project-model\nserver:\n  port: 9090\nwatch:\n  enabled: false\ndocs:\n  fail_on_broken: false\n")
+	projectConfig := []byte("root: .\ndb: .code-context/index.db\nstore:\n  helix:\n    project_id: project-a\nembedding:\n  model: project-model\nanswer:\n  model: project-chat\n  temperature: 0.1\nserver:\n  port: 9090\nwatch:\n  enabled: false\ndocs:\n  fail_on_broken: false\n")
 	if err := os.WriteFile(projectConfigPath, projectConfig, 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
@@ -220,6 +241,21 @@ func TestLoadMergesUserAndProjectConfig(t *testing.T) {
 	}
 	if loaded.Config.Embedding.BatchSize != 16 {
 		t.Fatalf("embedding.batch_size = %d", loaded.Config.Embedding.BatchSize)
+	}
+	if loaded.Config.Answer.Provider != "openai-compatible" {
+		t.Fatalf("answer.provider = %q", loaded.Config.Answer.Provider)
+	}
+	if loaded.Config.Answer.BaseURL != "http://user-answer/v1" {
+		t.Fatalf("answer.base_url = %q", loaded.Config.Answer.BaseURL)
+	}
+	if loaded.Config.Answer.Model != "project-chat" {
+		t.Fatalf("answer.model = %q", loaded.Config.Answer.Model)
+	}
+	if loaded.Config.Answer.MaxTokens != 1024 {
+		t.Fatalf("answer.max_tokens = %d", loaded.Config.Answer.MaxTokens)
+	}
+	if loaded.Config.Answer.Temperature != 0.1 {
+		t.Fatalf("answer.temperature = %f", loaded.Config.Answer.Temperature)
 	}
 	if loaded.Config.Server.Port != 9090 {
 		t.Fatalf("server.port = %d", loaded.Config.Server.Port)

@@ -22,6 +22,7 @@ const (
 	CapabilityMemory          Capability = "memory"
 	CapabilityEmbedding       Capability = "embedding"
 	CapabilityEmbeddingCache  Capability = "embedding_cache"
+	CapabilityAnswer          Capability = "answer"
 )
 
 // CapabilityReporter lets backends advertise custom or partial advanced
@@ -70,6 +71,9 @@ func DetectCapabilities(provider any) []Capability {
 	}
 	if _, ok := provider.(Embedder); ok {
 		add(CapabilityEmbedding)
+	}
+	if _, ok := provider.(Answerer); ok {
+		add(CapabilityAnswer)
 	}
 	if _, ok := provider.(EmbeddingCache); ok {
 		add(CapabilityEmbeddingCache)
@@ -426,6 +430,59 @@ type MemoryHit struct {
 type MemoryStore interface {
 	UpsertMemory(ctx context.Context, memory MemoryRecord) (string, error)
 	SearchMemory(ctx context.Context, query MemorySearchQuery) ([]MemoryHit, error)
+}
+
+type AnswerMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type AnswerContext struct {
+	Target   TargetRef         `json:"target,omitempty"`
+	Source   SearchSource      `json:"source,omitempty"`
+	Score    float64           `json:"score,omitempty"`
+	Title    string            `json:"title,omitempty"`
+	Content  string            `json:"content"`
+	Evidence string            `json:"evidence,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+type AnswerRequest struct {
+	Question     string            `json:"question,omitempty"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	Messages     []AnswerMessage   `json:"messages,omitempty"`
+	Context      []AnswerContext   `json:"context,omitempty"`
+	MaxTokens    int               `json:"max_tokens,omitempty"`
+	Temperature  *float64          `json:"temperature,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+type AnswerUsage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+}
+
+type AnswerResponse struct {
+	Answer   string            `json:"answer"`
+	Model    string            `json:"model,omitempty"`
+	Usage    *AnswerUsage      `json:"usage,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+type AnswerModelInfo struct {
+	Provider    string  `json:"provider,omitempty"`
+	Model       string  `json:"model,omitempty"`
+	BaseURL     string  `json:"base_url,omitempty"`
+	MaxTokens   int     `json:"max_tokens,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+}
+
+// Answerer turns retrieved, provider-neutral context into a natural-language
+// response. It intentionally does not perform retrieval or storage writes.
+type Answerer interface {
+	Answer(ctx context.Context, req AnswerRequest) (*AnswerResponse, error)
+	AnswerModel() AnswerModelInfo
 }
 
 type EmbeddingInputKind string

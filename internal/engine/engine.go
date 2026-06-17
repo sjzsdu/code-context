@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	answerpkg "github.com/sjzsdu/code-context/internal/answer"
 	"github.com/sjzsdu/code-context/internal/api"
 	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
 	"github.com/sjzsdu/code-context/internal/graph"
@@ -28,6 +29,7 @@ type Engine struct {
 	dbPath      string
 	store       store.Store
 	embedder    store.Embedder
+	answerer    store.Answerer
 	parser      parser.Parser
 	indexer     *indexer.Indexer
 	search      *search.Searcher
@@ -57,6 +59,7 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 type Options struct {
 	Store     store.Options
 	Embedding embeddingpkg.Options
+	Answer    answerpkg.Options
 }
 
 func NewWithOptions(root string, opts Options) (*Engine, error) {
@@ -97,6 +100,11 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("configure embedding provider: %w", err)
 	}
+	answerer, err := answerpkg.New(opts.Answer)
+	if err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("configure answer provider: %w", err)
+	}
 
 	if err := s.Init(context.Background()); err != nil {
 		return nil, fmt.Errorf("init store: %w", err)
@@ -112,6 +120,7 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 		dbPath:   storeLocation,
 		store:    s,
 		embedder: embedder,
+		answerer: answerer,
 		parser:   p,
 		indexer:  idx,
 		search:   sr,
@@ -570,6 +579,154 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityEmbedding)
 	}
 	return e.embedder.Embed(ctx, inputs)
+}
+
+type AnswerOptions struct {
+	Query       string   `json:"query,omitempty"`
+	Question    string   `json:"question,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	ContextOnly bool     `json:"context_only,omitempty"`
+	MaxTokens   int      `json:"max_tokens,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
+}
+
+type AnswerResult struct {
+	Question    string                `json:"question"`
+	Answer      string                `json:"answer,omitempty"`
+	Provider    string                `json:"provider,omitempty"`
+	Model       string                `json:"model,omitempty"`
+	ContextOnly bool                  `json:"context_only,omitempty"`
+	Context     []store.AnswerContext `json:"context,omitempty"`
+	Hits        []store.SearchHit     `json:"hits,omitempty"`
+	Usage       *store.AnswerUsage    `json:"usage,omitempty"`
+	Summary     string                `json:"summary"`
+}
+
+func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult, error) {
+	question := strings.TrimSpace(opts.Question)
+	if question == "" {
+		question = strings.TrimSpace(opts.Query)
+	}
+	if question == "" {
+		return nil, fmt.Errorf("answer question is required")
+	}
+
+	contextItems, hits, err := e.AnswerContext(ctx, question, opts.Limit)
+	if err != nil {
+		return nil, err
+	}
+	result := &AnswerResult{
+		Question:    question,
+		ContextOnly: opts.ContextOnly,
+		Context:     contextItems,
+		Hits:        hits,
+		Summary:     fmt.Sprintf("Prepared %d retrieved context items for question %q", len(contextItems), question),
+	}
+	if opts.ContextOnly {
+		result.Summary += " (context-only; answer provider was not called)"
+		return result, nil
+	}
+	if e.answerer == nil {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityAnswer)
+	}
+	info := e.answerer.AnswerModel()
+	response, err := e.answerer.Answer(ctx, store.AnswerRequest{
+		Question:    question,
+		Context:     contextItems,
+		MaxTokens:   opts.MaxTokens,
+		Temperature: opts.Temperature,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Answer = response.Answer
+	result.Provider = info.Provider
+	result.Model = response.Model
+	if result.Model == "" {
+		result.Model = info.Model
+	}
+	result.Usage = response.Usage
+	result.Summary = fmt.Sprintf("Answered question %q using %d retrieved context items", question, len(contextItems))
+	return result, nil
+}
+
+func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) ([]store.AnswerContext, []store.SearchHit, error) {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return nil, nil, fmt.Errorf("answer question is required")
+	}
+	if limit <= 0 {
+		limit = 8
+	}
+	hits, err := e.SearchHybrid(ctx, store.HybridSearchQuery{Query: question, Limit: limit})
+	if err != nil {
+		return nil, nil, err
+	}
+	contextItems := make([]store.AnswerContext, 0, len(hits))
+	for i, hit := range hits {
+		content := strings.TrimSpace(hit.Evidence)
+		if content == "" {
+			content = answerContentFromHighlights(hit.Highlights)
+		}
+		if content == "" {
+			content = answerTargetLabel(hit.Target)
+		}
+		metadata := map[string]string{"rank": fmt.Sprint(i + 1)}
+		for k, v := range hit.Metadata {
+			metadata[k] = v
+		}
+		contextItems = append(contextItems, store.AnswerContext{
+			Target:   hit.Target,
+			Source:   hit.Source,
+			Score:    hit.Score,
+			Title:    answerTargetLabel(hit.Target),
+			Content:  content,
+			Evidence: hit.Evidence,
+			Metadata: metadata,
+		})
+	}
+	return contextItems, hits, nil
+}
+
+func answerContentFromHighlights(highlights []store.SearchHighlight) string {
+	if len(highlights) == 0 {
+		return ""
+	}
+	var snippets []string
+	for _, highlight := range highlights {
+		snippet := strings.TrimSpace(highlight.Snippet)
+		if snippet == "" {
+			continue
+		}
+		if highlight.Line > 0 {
+			snippet = fmt.Sprintf("%d: %s", highlight.Line, snippet)
+		}
+		snippets = append(snippets, snippet)
+	}
+	return strings.Join(snippets, "\n")
+}
+
+func answerTargetLabel(target store.TargetRef) string {
+	switch {
+	case target.Path != "" && target.Name != "" && target.Line > 0:
+		return fmt.Sprintf("%s:%d %s", target.Path, target.Line, target.Name)
+	case target.Path != "" && target.Line > 0:
+		return fmt.Sprintf("%s:%d", target.Path, target.Line)
+	case target.Path != "" && target.Name != "":
+		return target.Path + " " + target.Name
+	case target.Path != "":
+		return target.Path
+	case target.Method != "" && target.RoutePath != "":
+		return strings.TrimSpace(target.Method + " " + target.RoutePath)
+	case target.Name != "":
+		return target.Name
+	case target.Value != "":
+		return target.Value
+	case target.Kind != "":
+		return string(target.Kind)
+	default:
+		return "unknown"
+	}
 }
 
 func (e *Engine) SearchVector(ctx context.Context, query store.VectorSearchQuery) ([]store.SearchHit, error) {
@@ -2552,6 +2709,7 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 		GraphVersion: graphExportVersion,
 		Capabilities: e.capabilityNames(),
 		Embedding:    e.embeddingStatus(),
+		Answer:       e.answerStatus(),
 		Index:        stats,
 		Watch:        &watch,
 	}, nil
@@ -2559,7 +2717,7 @@ func (e *Engine) Status(ctx context.Context) (*api.ServiceStatus, error) {
 
 func (e *Engine) capabilityNames() []string {
 	seen := map[string]struct{}{}
-	for _, provider := range []any{e.store, e.embedder} {
+	for _, provider := range []any{e.store, e.embedder, e.answerer} {
 		for _, cap := range store.DetectCapabilities(provider) {
 			if cap != "" {
 				seen[string(cap)] = struct{}{}
@@ -2605,6 +2763,21 @@ func (e *Engine) embeddingStatus() *api.EmbeddingStatus {
 		Dimensions: info.Dimensions,
 		BaseURL:    info.BaseURL,
 		BatchSize:  info.BatchSize,
+	}
+}
+
+func (e *Engine) answerStatus() *api.AnswerStatus {
+	if e.answerer == nil {
+		return &api.AnswerStatus{Enabled: false}
+	}
+	info := e.answerer.AnswerModel()
+	return &api.AnswerStatus{
+		Enabled:     true,
+		Provider:    info.Provider,
+		Model:       info.Model,
+		BaseURL:     info.BaseURL,
+		MaxTokens:   info.MaxTokens,
+		Temperature: info.Temperature,
 	}
 }
 

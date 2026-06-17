@@ -28,6 +28,7 @@ type Config struct {
 	DB        string          `json:"db" yaml:"db"`
 	Store     StoreConfig     `json:"store" yaml:"store"`
 	Embedding EmbeddingConfig `json:"embedding" yaml:"embedding"`
+	Answer    AnswerConfig    `json:"answer" yaml:"answer"`
 	Server    ServerConfig    `json:"server" yaml:"server"`
 	Watch     WatchConfig     `json:"watch" yaml:"watch"`
 	Docs      DocsConfig      `json:"docs" yaml:"docs"`
@@ -59,6 +60,17 @@ type EmbeddingConfig struct {
 	Dimensions int           `json:"dimensions" yaml:"dimensions"`
 	Timeout    time.Duration `json:"timeout" yaml:"timeout"`
 	BatchSize  int           `json:"batch_size" yaml:"batch_size"`
+}
+
+type AnswerConfig struct {
+	Provider    string        `json:"provider" yaml:"provider"`
+	BaseURL     string        `json:"base_url" yaml:"base_url"`
+	APIKey      string        `json:"api_key" yaml:"api_key"`
+	APIKeyEnv   string        `json:"api_key_env" yaml:"api_key_env"`
+	Model       string        `json:"model" yaml:"model"`
+	Timeout     time.Duration `json:"timeout" yaml:"timeout"`
+	MaxTokens   int           `json:"max_tokens" yaml:"max_tokens"`
+	Temperature float64       `json:"temperature" yaml:"temperature"`
 }
 
 type ServerConfig struct {
@@ -108,6 +120,14 @@ type configFields struct {
 	EmbeddingDimensions   bool
 	EmbeddingTimeout      bool
 	EmbeddingBatchSize    bool
+	AnswerProvider        bool
+	AnswerBaseURL         bool
+	AnswerAPIKey          bool
+	AnswerAPIKeyEnv       bool
+	AnswerModel           bool
+	AnswerTimeout         bool
+	AnswerMaxTokens       bool
+	AnswerTemperature     bool
 	ServerPort            bool
 	WatchEnabled          bool
 	WatchInterval         bool
@@ -334,6 +354,16 @@ func fieldsFromMap(raw map[string]any) configFields {
 		f.EmbeddingTimeout = has(embedding, "timeout")
 		f.EmbeddingBatchSize = has(embedding, "batch_size")
 	}
+	if answer := nested(raw, "answer"); answer != nil {
+		f.AnswerProvider = has(answer, "provider")
+		f.AnswerBaseURL = has(answer, "base_url")
+		f.AnswerAPIKey = has(answer, "api_key")
+		f.AnswerAPIKeyEnv = has(answer, "api_key_env")
+		f.AnswerModel = has(answer, "model")
+		f.AnswerTimeout = has(answer, "timeout")
+		f.AnswerMaxTokens = has(answer, "max_tokens")
+		f.AnswerTemperature = has(answer, "temperature")
+	}
 	if server := nested(raw, "server"); server != nil {
 		f.ServerPort = has(server, "port")
 	}
@@ -428,6 +458,38 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 	if srcFields.EmbeddingBatchSize {
 		dst.Embedding.BatchSize = src.Embedding.BatchSize
 		dstFields.EmbeddingBatchSize = true
+	}
+	if srcFields.AnswerProvider {
+		dst.Answer.Provider = src.Answer.Provider
+		dstFields.AnswerProvider = true
+	}
+	if srcFields.AnswerBaseURL {
+		dst.Answer.BaseURL = src.Answer.BaseURL
+		dstFields.AnswerBaseURL = true
+	}
+	if srcFields.AnswerAPIKey {
+		dst.Answer.APIKey = src.Answer.APIKey
+		dstFields.AnswerAPIKey = true
+	}
+	if srcFields.AnswerAPIKeyEnv {
+		dst.Answer.APIKeyEnv = src.Answer.APIKeyEnv
+		dstFields.AnswerAPIKeyEnv = true
+	}
+	if srcFields.AnswerModel {
+		dst.Answer.Model = src.Answer.Model
+		dstFields.AnswerModel = true
+	}
+	if srcFields.AnswerTimeout {
+		dst.Answer.Timeout = src.Answer.Timeout
+		dstFields.AnswerTimeout = true
+	}
+	if srcFields.AnswerMaxTokens {
+		dst.Answer.MaxTokens = src.Answer.MaxTokens
+		dstFields.AnswerMaxTokens = true
+	}
+	if srcFields.AnswerTemperature {
+		dst.Answer.Temperature = src.Answer.Temperature
+		dstFields.AnswerTemperature = true
 	}
 	if srcFields.ServerPort {
 		dst.Server.Port = src.Server.Port

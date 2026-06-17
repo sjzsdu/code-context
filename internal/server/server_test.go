@@ -226,6 +226,46 @@ func TestHybridSearchEndpointRequiresSignal(t *testing.T) {
 	}
 }
 
+func TestAnswerEndpointContextOnly(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(ts.URL+"/api/answer", "application/json", strings.NewReader(`{"question":"Where is Foo handled?","context_only":true,"limit":3}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload engine.AnswerResult
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !payload.ContextOnly {
+		t.Fatalf("context_only = false")
+	}
+	if payload.Question != "Where is Foo handled?" {
+		t.Fatalf("question = %q", payload.Question)
+	}
+}
+
+func TestAnswerEndpointRequiresProviderWhenNotContextOnly(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(ts.URL+"/api/answer", "application/json", strings.NewReader(`{"question":"Where is Foo handled?"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 501, got %d: %s", resp.StatusCode, string(body))
+	}
+}
+
 func TestSearchMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

@@ -7,9 +7,11 @@ HELIX_PROJECT_ID="${HELIX_PROJECT_ID:-code-context-helix-smoke}"
 SMOKE_DIR="${CODE_CONTEXT_HELIX_SMOKE_DIR:-}"
 HTTP_PORT="${CODE_CONTEXT_HELIX_SMOKE_PORT:-19090}"
 EMBEDDING_PORT="${CODE_CONTEXT_HELIX_EMBEDDING_PORT:-19091}"
+ANSWER_PORT="${CODE_CONTEXT_HELIX_ANSWER_PORT:-19092}"
 KEEP_SMOKE_DIR="${KEEP_SMOKE_DIR:-0}"
 SERVER_PID=""
 EMBEDDING_PID=""
+ANSWER_PID=""
 CLEAN_SMOKE_DIR=0
 
 cleanup() {
@@ -20,6 +22,10 @@ cleanup() {
   if [[ -n "$EMBEDDING_PID" ]] && kill -0 "$EMBEDDING_PID" 2>/dev/null; then
     kill "$EMBEDDING_PID" 2>/dev/null || true
     wait "$EMBEDDING_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$ANSWER_PID" ]] && kill -0 "$ANSWER_PID" 2>/dev/null; then
+    kill "$ANSWER_PID" 2>/dev/null || true
+    wait "$ANSWER_PID" 2>/dev/null || true
   fi
   if [[ "$CLEAN_SMOKE_DIR" == "1" ]]; then
     rm -rf "$SMOKE_DIR"
@@ -152,6 +158,57 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 PY
 
+cat > "$SMOKE_DIR/fake-answer.py" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        if not self.path.endswith("/chat/completions"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = json.loads(self.rfile.read(length) or b"{}")
+        model = body.get("model") or "smoke-answer"
+        messages = body.get("messages") or []
+        prompt = "\n".join(str(m.get("content", "")) for m in messages)
+        if "HealthMessage" in prompt:
+            answer = "Smoke answer: HealthMessage returns the health response and is reached from HealthHandler [1]."
+        elif "HealthHandler" in prompt:
+            answer = "Smoke answer: HealthHandler handles /health and delegates to HealthMessage [1]."
+        else:
+            answer = "Smoke answer: insufficient fixture evidence."
+        payload = {
+            "model": model,
+            "choices": [{"message": {"role": "assistant", "content": answer}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": len(prompt.split()), "completion_tokens": len(answer.split()), "total_tokens": len(prompt.split()) + len(answer.split())},
+        }
+        raw = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        return
+
+
+HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+
 run_code_context_model() {
   local model="$1"
   local dimensions="$2"
@@ -165,6 +222,9 @@ run_code_context_model() {
     --embedding-base-url "http://127.0.0.1:${EMBEDDING_PORT}/v1" \
     --embedding-model "$model" \
     --embedding-dimensions "$dimensions" \
+    --answer-provider openai-compatible \
+    --answer-base-url "http://127.0.0.1:${ANSWER_PORT}/v1" \
+    --answer-model smoke-answer \
     "$@"
 }
 
@@ -194,6 +254,24 @@ wait_for_embedding() {
   return 1
 }
 
+wait_for_answer() {
+  local url="http://127.0.0.1:${ANSWER_PORT}/health"
+  for _ in {1..60}; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "$ANSWER_PID" ]] && ! kill -0 "$ANSWER_PID" 2>/dev/null; then
+      echo "fake answer server exited before becoming ready" >&2
+      cat "$SMOKE_DIR/fake-answer.log" >&2 || true
+      return 1
+    fi
+    sleep 0.25
+  done
+  echo "timed out waiting for fake answer server on port ${ANSWER_PORT}" >&2
+  cat "$SMOKE_DIR/fake-answer.log" >&2 || true
+  return 1
+}
+
 wait_for_http() {
   local url="http://127.0.0.1:${HTTP_PORT}/api/status"
   for _ in {1..60}; do
@@ -216,11 +294,15 @@ echo "Helix smoke fixture: $FIXTURE"
 echo "Helix URL: $HELIX_URL"
 echo "Helix project id: $HELIX_PROJECT_ID"
 echo "Fake embedding URL: http://127.0.0.1:${EMBEDDING_PORT}/v1"
+echo "Fake answer URL: http://127.0.0.1:${ANSWER_PORT}/v1"
 echo "WARNING: use a fresh/dedicated Helix instance if it was initialized by older code-context versions with unscoped unique path indexes."
 
 python3 "$SMOKE_DIR/fake-embedding.py" "$EMBEDDING_PORT" >"$SMOKE_DIR/fake-embedding.log" 2>&1 &
 EMBEDDING_PID=$!
 wait_for_embedding
+python3 "$SMOKE_DIR/fake-answer.py" "$ANSWER_PORT" >"$SMOKE_DIR/fake-answer.log" 2>&1 &
+ANSWER_PID=$!
+wait_for_answer
 
 run_code_context rebuild --verbose
 
@@ -236,7 +318,9 @@ grep -q "Capabilities:.*graph_traversal" <<<"$status"
 grep -q "Capabilities:.*hybrid_search" <<<"$status"
 grep -q "Capabilities:.*vector_search" <<<"$status"
 grep -q "Capabilities:.*embedding_cache" <<<"$status"
+grep -q "Capabilities:.*answer" <<<"$status"
 grep -q "Embedding:.*openai-compatible.*smoke-embedding" <<<"$status"
+grep -q "Answer:.*openai-compatible.*smoke-answer" <<<"$status"
 
 embedding_status="$(run_code_context embedding-status --json --limit 10)"
 printf '%s\n' "$embedding_status"
@@ -300,6 +384,18 @@ printf '%s\n' "$hybrid_cli"
 grep -q '"source": "hybrid"' <<<"$hybrid_cli"
 grep -q '"hybrid_vector_score"' <<<"$hybrid_cli"
 grep -q "HealthMessage" <<<"$hybrid_cli"
+
+answer_context_cli="$(run_code_context answer "Where is HealthMessage used?" --context-only --json --limit 5)"
+printf '%s\n' "$answer_context_cli"
+grep -q '"context_only": true' <<<"$answer_context_cli"
+grep -q '"context":' <<<"$answer_context_cli"
+grep -q "HealthMessage" <<<"$answer_context_cli"
+
+answer_cli="$(run_code_context answer "Where is HealthMessage used?" --json --limit 5)"
+printf '%s\n' "$answer_cli"
+grep -q '"model": "smoke-answer"' <<<"$answer_cli"
+grep -q "Smoke answer: HealthMessage" <<<"$answer_cli"
+grep -q '"usage":' <<<"$answer_cli"
 
 routes="$(run_code_context routes)"
 printf '%s\n' "$routes"
@@ -373,6 +469,18 @@ printf '%s\n' "$hybrid_api"
 grep -q '"source":"hybrid"' <<<"$hybrid_api"
 grep -q '"hybrid_vector_score"' <<<"$hybrid_api"
 grep -q "HealthMessage" <<<"$hybrid_api"
+
+answer_context_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/answer" -H 'Content-Type: application/json' --data '{"question":"Where is HealthMessage used?","context_only":true,"limit":5}')"
+printf '%s\n' "$answer_context_api"
+grep -q '"context_only":true' <<<"$answer_context_api"
+grep -q '"context":' <<<"$answer_context_api"
+grep -q "HealthMessage" <<<"$answer_context_api"
+
+answer_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/answer" -H 'Content-Type: application/json' --data '{"question":"Where is HealthMessage used?","limit":5}')"
+printf '%s\n' "$answer_api"
+grep -q '"model":"smoke-answer"' <<<"$answer_api"
+grep -q "Smoke answer: HealthMessage" <<<"$answer_api"
+grep -q '"usage":' <<<"$answer_api"
 
 traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"target":"text:Health","edge_kinds":["similar"],"filter":{"target_kinds":["symbol"]},"include_paths":true,"direction":"outbound","limit":10}')"
 printf '%s\n' "$traverse_api"

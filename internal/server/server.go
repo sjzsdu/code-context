@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/vector-search", s.handleVectorSearch)
 	mux.HandleFunc("/api/hybrid", s.handleHybridSearch)
 	mux.HandleFunc("/api/hybrid-search", s.handleHybridSearch)
+	mux.HandleFunc("/api/answer", s.handleAnswer)
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
 	mux.HandleFunc("/api/callers", s.handleCallers)
@@ -261,6 +262,32 @@ func (s *Server) handleHybridSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("POST only"), http.StatusMethodNotAllowed)
+		return
+	}
+	var opts engine.AnswerOptions
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+		writeError(w, fmt.Errorf("decode answer request: %w", err), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(opts.Question) == "" && strings.TrimSpace(opts.Query) == "" {
+		writeError(w, fmt.Errorf("missing 'question' or 'query'"), http.StatusBadRequest)
+		return
+	}
+	result, err := s.eng.Answer(r.Context(), opts)
+	if err != nil {
+		if errors.Is(err, engine.ErrCapabilityUnsupported) {
+			writeError(w, err, http.StatusNotImplemented)
+			return
+		}
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) handleImports(w http.ResponseWriter, r *http.Request) {

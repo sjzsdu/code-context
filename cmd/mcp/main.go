@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	answerpkg "github.com/sjzsdu/code-context/internal/answer"
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
 	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
@@ -37,6 +38,14 @@ var (
 	embeddingDimensions int
 	embeddingTimeout    time.Duration
 	embeddingBatchSize  int
+	answerProvider      string
+	answerBaseURL       string
+	answerAPIKey        string
+	answerAPIKeyEnv     string
+	answerModel         string
+	answerTimeout       time.Duration
+	answerMaxTokens     int
+	answerTemperature   float64
 )
 
 type GraphArgs struct {
@@ -93,6 +102,15 @@ type HybridSearchArgs struct {
 	GraphWeight    float64            `json:"graph_weight,omitempty"`
 	ExpandFrom     []store.TargetRef  `json:"expand_from,omitempty"`
 	ExpandMaxDepth int                `json:"expand_max_depth,omitempty"`
+}
+
+type AnswerArgs struct {
+	Query       string   `json:"query,omitempty"`
+	Question    string   `json:"question,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	ContextOnly bool     `json:"context_only,omitempty"`
+	MaxTokens   int      `json:"max_tokens,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
 }
 
 type SearchArgs struct {
@@ -162,6 +180,14 @@ func main() {
 	flag.IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding vector dimensions")
 	flag.DurationVar(&embeddingTimeout, "embedding-timeout", 0, "embedding request timeout")
 	flag.IntVar(&embeddingBatchSize, "embedding-batch-size", 0, "embedding batch size")
+	flag.StringVar(&answerProvider, "answer-provider", "", "answer provider (none|openai|openai-compatible; default: none)")
+	flag.StringVar(&answerBaseURL, "answer-base-url", "", "answer API base URL")
+	flag.StringVar(&answerAPIKey, "answer-api-key", "", "answer API key")
+	flag.StringVar(&answerAPIKeyEnv, "answer-api-key-env", "", "environment variable containing the answer API key")
+	flag.StringVar(&answerModel, "answer-model", "", "answer model name")
+	flag.DurationVar(&answerTimeout, "answer-timeout", 0, "answer request timeout")
+	flag.IntVar(&answerMaxTokens, "answer-max-tokens", 0, "answer max completion tokens")
+	flag.Float64Var(&answerTemperature, "answer-temperature", 0, "answer sampling temperature")
 	flag.Parse()
 	applyConfigDefaults()
 
@@ -169,6 +195,7 @@ func main() {
 	eng, err := engine.NewWithOptions(root, engine.Options{
 		Store:     mcpStoreOptions(),
 		Embedding: mcpEmbeddingOptions(),
+		Answer:    mcpAnswerOptions(),
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
@@ -263,6 +290,30 @@ func applyConfigDefaults() {
 	if !visited["embedding-batch-size"] && loaded.Config.Embedding.BatchSize > 0 {
 		embeddingBatchSize = loaded.Config.Embedding.BatchSize
 	}
+	if !visited["answer-provider"] && loaded.Config.Answer.Provider != "" {
+		answerProvider = loaded.Config.Answer.Provider
+	}
+	if !visited["answer-base-url"] && loaded.Config.Answer.BaseURL != "" {
+		answerBaseURL = loaded.Config.Answer.BaseURL
+	}
+	if !visited["answer-api-key"] && loaded.Config.Answer.APIKey != "" {
+		answerAPIKey = loaded.Config.Answer.APIKey
+	}
+	if !visited["answer-api-key-env"] && loaded.Config.Answer.APIKeyEnv != "" {
+		answerAPIKeyEnv = loaded.Config.Answer.APIKeyEnv
+	}
+	if !visited["answer-model"] && loaded.Config.Answer.Model != "" {
+		answerModel = loaded.Config.Answer.Model
+	}
+	if !visited["answer-timeout"] && loaded.Config.Answer.Timeout > 0 {
+		answerTimeout = loaded.Config.Answer.Timeout
+	}
+	if !visited["answer-max-tokens"] && loaded.Config.Answer.MaxTokens > 0 {
+		answerMaxTokens = loaded.Config.Answer.MaxTokens
+	}
+	if !visited["answer-temperature"] && loaded.Config.Answer.Temperature != 0 {
+		answerTemperature = loaded.Config.Answer.Temperature
+	}
 }
 
 func mcpStoreOptions() store.Options {
@@ -291,6 +342,19 @@ func mcpEmbeddingOptions() embeddingpkg.Options {
 	}
 }
 
+func mcpAnswerOptions() answerpkg.Options {
+	return answerpkg.Options{
+		Provider:    answerProvider,
+		BaseURL:     answerBaseURL,
+		APIKey:      answerAPIKey,
+		APIKeyEnv:   answerAPIKeyEnv,
+		Model:       answerModel,
+		Timeout:     answerTimeout,
+		MaxTokens:   answerMaxTokens,
+		Temperature: answerTemperature,
+	}
+}
+
 func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_instructions", Description: "How agents should use code-context before broad grep/read exploration"},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
@@ -300,13 +364,14 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 2. Use code_context_explore for a query before broad grep/read.
 3. Use code_context_search for symbols, code_context_context for a symbol profile, and code_context_snapshot for focused LLM context.
 4. Use code_context_hybrid_search when status reports hybrid_search and you want text + vector + graph fusion.
-5. Use code_context_embedding_status for embedding lifecycle recommendations.
-6. Use code_context_embedding_namespaces to inspect cached model/dimension namespaces before changing embedding models.
-7. Use code_context_embedding_prune as a dry-run first before deleting stale embedding namespaces.
-8. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
-9. Use code_context_callers and code_context_callees for lightweight call graph navigation.
-10. If status or a result reports stale/pending files, read those files directly before editing.
-11. Prefer the recommended next tool calls in each response.`), nil, nil
+5. Use code_context_answer with context_only=true to prepare provider-neutral RAG context, or with a configured answer provider when status reports answer.
+6. Use code_context_embedding_status for embedding lifecycle recommendations.
+7. Use code_context_embedding_namespaces to inspect cached model/dimension namespaces before changing embedding models.
+8. Use code_context_embedding_prune as a dry-run first before deleting stale embedding namespaces.
+9. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
+10. Use code_context_callers and code_context_callees for lightweight call graph navigation.
+11. If status or a result reports stale/pending files, read those files directly before editing.
+12. Prefer the recommended next tool calls in each response.`), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, provider capabilities, and service metadata"},
@@ -441,6 +506,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_context", "code_context_graph_traverse"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runAnswerTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_hybrid_search", "code_context_snapshot"))), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callers", Description: "Show functions/methods that call a symbol name"},
@@ -693,6 +767,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		output, err := runHybridSearchTool(ctx, eng, args)
 		if err != nil {
 			return nil, nil, fmt.Errorf("hybrid_search failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "answer",
+		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runAnswerTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("answer failed: %w", err)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
@@ -1394,6 +1479,27 @@ func runHybridSearchTool(ctx context.Context, eng *engine.Engine, args HybridSea
 		return "", err
 	}
 	return marshalIndentedJSON(map[string]any{"results": hits, "count": len(hits)})
+}
+
+func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (string, error) {
+	question := strings.TrimSpace(args.Question)
+	if question == "" {
+		question = strings.TrimSpace(args.Query)
+	}
+	if question == "" {
+		return "", fmt.Errorf("missing required parameter: question or query")
+	}
+	result, err := eng.Answer(ctx, engine.AnswerOptions{
+		Question:    question,
+		Limit:       args.Limit,
+		ContextOnly: args.ContextOnly,
+		MaxTokens:   args.MaxTokens,
+		Temperature: args.Temperature,
+	})
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
 }
 
 func runGraphTool(ctx context.Context, eng *engine.Engine, args GraphArgs) (string, error) {

@@ -149,6 +149,14 @@ Supported options:
 | `embedding.dimensions` | int | Optional requested embedding dimensions |
 | `embedding.timeout` | duration | Embedding request timeout |
 | `embedding.batch_size` | int | Maximum embedding batch size |
+| `answer.provider` | string | Answer provider: `none`, `openai`, or `openai-compatible` |
+| `answer.base_url` | string | Answer API base URL (`/chat/completions` is appended for OpenAI-compatible providers) |
+| `answer.api_key` | string | Answer API key |
+| `answer.api_key_env` | string | Environment variable containing the answer API key |
+| `answer.model` | string | Chat/answer model name |
+| `answer.timeout` | duration | Answer request timeout |
+| `answer.max_tokens` | int | Default max completion tokens |
+| `answer.temperature` | number | Default answer sampling temperature |
 | `server.port` | int | HTTP server port |
 | `watch.enabled` | bool | Enable watch mode / background refresh by default |
 | `watch.interval` | duration | Polling interval for incremental refresh |
@@ -180,6 +188,16 @@ embedding:
   dimensions: 0
   timeout: 30s
   batch_size: 64
+answer:
+  provider: none
+  # OpenAI-compatible local or hosted chat-completions API:
+  # provider: openai-compatible
+  # base_url: http://localhost:11434/v1
+  # model: qwen2.5-coder
+  api_key_env: ANSWER_API_KEY
+  timeout: 60s
+  max_tokens: 1024
+  temperature: 0.2
 server:
   port: 9090
 watch:
@@ -236,6 +254,7 @@ code-context embedding-namespaces
 code-context embedding-prune --model text-embedding-old --dimensions 768
 code-context vector-search Snapshot
 code-context hybrid-search Snapshot
+code-context answer "How does Snapshot build context?" --context-only
 code-context context Snapshot
 code-context impact Snapshot
 code-context impact internal/engine/engine.go
@@ -338,6 +357,17 @@ fusion metadata in each hit for explainable tuning.
 ```bash
 code-context hybrid-search "handler health check" --limit 10
 code-context hybrid-search "handler health check" --text-weight 0.5 --vector-weight 0.4 --graph-weight 0.1
+```
+
+### `answer <question>` — Provider-neutral RAG answer
+
+Builds answer context from hybrid retrieval, then optionally calls the configured `Answerer`.
+The provider is disabled by default, so `--context-only` is the safe way to preview the retrieved
+evidence without any external model call.
+
+```bash
+code-context answer "Where is status served?" --context-only
+code-context answer "Where is status served?" --answer-provider openai-compatible --answer-base-url http://localhost:11434/v1 --answer-model qwen2.5-coder
 ```
 
 ### `find-def <name>` — Find definition of a symbol
@@ -586,6 +616,14 @@ code-context test-impact --state unstaged
 | `--embedding-dimensions` | | `0` | Optional requested embedding dimensions |
 | `--embedding-timeout` | | `30s` | Embedding request timeout when provider is enabled |
 | `--embedding-batch-size` | | `64` | Maximum embedding batch size |
+| `--answer-provider` | | `none` | Answer provider (`none`, `openai`, `openai-compatible`) |
+| `--answer-base-url` | | | Answer API base URL |
+| `--answer-api-key` | | | Answer API key |
+| `--answer-api-key-env` | | | Environment variable containing the answer API key |
+| `--answer-model` | | | Chat/answer model name |
+| `--answer-timeout` | | `60s` | Answer request timeout when provider is enabled |
+| `--answer-max-tokens` | | `1024` | Default answer max completion tokens |
+| `--answer-temperature` | | `0.2` | Default answer sampling temperature |
 
 ### Helix Smoke Validation
 
@@ -597,11 +635,12 @@ helix start dev --port 6970
 HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh
 ```
 
-The smoke creates a small Go fixture, starts a deterministic local OpenAI-compatible fake embedding
-server, runs the Helix backend through `rebuild`, starts the HTTP server, and verifies `stats`,
-`status` capabilities, embedding lifecycle status, namespace inventory, prune dry-run/apply safety,
-`search`, `routes`, `docs-for`, `/api/text`, real `/api/vector` query-text
-results, `/api/hybrid` vector fusion, and `/api/graph/traverse` read paths. It only rebuilds the configured
+The smoke creates a small Go fixture, starts deterministic local OpenAI-compatible fake embedding
+and chat-completions servers, runs the Helix backend through `rebuild`, starts the HTTP server, and
+verifies `stats`, `status` capabilities, embedding lifecycle status, namespace inventory, prune
+dry-run/apply safety, `search`, `routes`, `docs-for`, `answer --context-only`, provider-backed
+`answer`, `/api/text`, real `/api/vector` query-text results, `/api/hybrid` vector fusion,
+`/api/answer`, and `/api/graph/traverse` read paths. It only rebuilds the configured
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.
 
@@ -610,7 +649,7 @@ created unscoped unique path indexes.
 Helix-specific features are kept behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`. Callers should depend on capabilities such as `TextSearcher`,
 `VectorSearcher`, `HybridSearcher`, `GraphTraverser`, `WorkspaceSearcher`, `MemoryStore`,
-`Embedder`, and `EmbeddingCache`
+`Embedder`, `EmbeddingCache`, and `Answerer`
 instead of importing Helix SDK types. Backends can implement any subset of these interfaces; callers
 can use `store.DetectCapabilities(provider)` or normal Go type assertions and keep SQLite/local
 fallbacks where appropriate. The Helix backend currently implements `TextSearcher` with BM25 over
@@ -634,6 +673,13 @@ normalized sum and annotates each hit with source ranks/contributions (`hybrid_*
 ranking tuning transparent while remaining backend-neutral. `vector-search`,
 `/api/vector`, and MCP `vector_search`/`code_context_vector_search` call `VectorSearcher` directly;
 when query text is provided, they first use the configured `Embedder` to produce the query vector.
+
+Answer/RAG support is also provider-neutral. `answer`, `POST /api/answer`, and MCP
+`answer`/`code_context_answer` first build context from `SearchHybrid`, then call the configured
+`Answerer` only when `answer.provider` is enabled. Use `--context-only` or JSON
+`{"context_only": true}` to inspect retrieved evidence without any external model call. The built-in
+`openai-compatible` answer adapter posts to `{base_url}/chat/completions`; additional answer
+providers can implement `store.Answerer` without changing retrieval or storage call sites.
 
 Embedding support starts as provider-neutral plumbing rather than a full RAG framework dependency.
 The built-in `openai-compatible` adapter posts batches to `{base_url}/embeddings`, preserves source
@@ -667,6 +713,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
+| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?` | Build RAG context and optionally call the configured answer provider |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

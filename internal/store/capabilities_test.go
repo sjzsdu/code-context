@@ -62,6 +62,14 @@ func TestDetectCapabilitiesFromEmbeddingCachePruner(t *testing.T) {
 	}
 }
 
+func TestDetectCapabilitiesFromAnswerer(t *testing.T) {
+	got := DetectCapabilities(capabilityAnswererProvider{})
+	want := []Capability{CapabilityAnswer}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectCapabilities(answerer) = %#v, want %#v", got, want)
+	}
+}
+
 func TestDetectCapabilitiesNil(t *testing.T) {
 	if got := DetectCapabilities(nil); got != nil {
 		t.Fatalf("DetectCapabilities(nil) = %#v, want nil", got)
@@ -155,4 +163,14 @@ type capabilityEmbeddingCachePrunerProvider struct{}
 
 func (capabilityEmbeddingCachePrunerProvider) DeleteEmbeddingNamespace(context.Context, string, int) (int, error) {
 	return 0, nil
+}
+
+type capabilityAnswererProvider struct{}
+
+func (capabilityAnswererProvider) Answer(context.Context, AnswerRequest) (*AnswerResponse, error) {
+	return nil, nil
+}
+
+func (capabilityAnswererProvider) AnswerModel() AnswerModelInfo {
+	return AnswerModelInfo{Provider: "test", Model: "chat-test"}
 }

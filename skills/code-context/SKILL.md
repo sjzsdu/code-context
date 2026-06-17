@@ -60,17 +60,20 @@ code-context vector-search "handler health check"
 # 6. Fuse text/vector/graph when advanced capabilities are available
 code-context hybrid-search "handler health check"
 
-# 7. Get detailed context
+# 7. Build provider-neutral answer context without external model calls
+code-context answer "How is status served?" --context-only
+
+# 8. Get detailed context
 code-context context Engine
 
-# 8. Explore graph relationships
+# 9. Explore graph relationships
 code-context graph neighbors Engine
 
-# 9. Generate project-wide or focused LLM context
+# 10. Generate project-wide or focused LLM context
 code-context snapshot
 code-context snapshot "authentication"
 
-# 10. Open the interactive visual graph
+# 11. Open the interactive visual graph
 code-context graph html > graph.html
 ```
 
@@ -97,6 +100,15 @@ embedding:
   api_key_env: EMBEDDING_API_KEY
   timeout: 30s
   batch_size: 64
+answer:
+  provider: none
+  # provider: openai-compatible
+  # base_url: http://localhost:11434/v1
+  # model: qwen2.5-coder
+  api_key_env: ANSWER_API_KEY
+  timeout: 60s
+  max_tokens: 1024
+  temperature: 0.2
 server:
   port: 9090
 watch:
@@ -112,11 +124,13 @@ If no Helix URL is configured, the Helix Go SDK uses its local default endpoint 
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
-The smoke starts a deterministic local OpenAI-compatible fake embedding server and verifies `status`
-capabilities, embedding lifecycle status, namespace inventory, prune dry-run/apply safety,
-`/api/text`, real `/api/vector` query-text results, `/api/hybrid` vector fusion, and
-`/api/graph/traverse` through `serve`; keep `CODE_CONTEXT_HELIX_SMOKE_PORT` and
-`CODE_CONTEXT_HELIX_EMBEDDING_PORT` free or set them to available ports.
+The smoke starts deterministic local OpenAI-compatible fake embedding and chat-completions servers
+and verifies `status` capabilities, embedding lifecycle status, namespace inventory, prune
+dry-run/apply safety, `answer --context-only`, provider-backed `answer`, `/api/text`, real
+`/api/vector` query-text results, `/api/hybrid` vector fusion, `/api/answer`, and
+`/api/graph/traverse` through `serve`; keep `CODE_CONTEXT_HELIX_SMOKE_PORT`,
+`CODE_CONTEXT_HELIX_EMBEDDING_PORT`, and `CODE_CONTEXT_HELIX_ANSWER_PORT` free or set them to
+available ports.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
 The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` and document
@@ -149,6 +163,10 @@ fusion details under `hybrid_*` metadata for explainable ranking. Query-focused 
 `snapshot`, HTTP responses, and agent `code_context_explore`/`code_context_context`/
 `code_context_snapshot` also expose best-effort `hybrid_hits` as optional evidence; consumers should
 treat the field as additive and not backend-specific.
+Answer/RAG support follows the same provider-neutral rule: `answer`, `POST /api/answer`, and MCP
+`answer`/`code_context_answer` build context from hybrid retrieval first, then call a configured
+`Answerer` only when `answer.provider` is enabled. Use `--context-only` or JSON
+`{"context_only": true}` to inspect evidence without any external model call.
 
 ## Recommended Dogfood Workflow
 
@@ -159,6 +177,7 @@ code-context index
 code-context map
 code-context snapshot
 code-context search Snapshot
+code-context answer "How does Snapshot build context?" --context-only
 code-context context Snapshot
 code-context impact Snapshot
 code-context impact internal/engine/engine.go
@@ -457,6 +476,9 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/search` | `q`, `kind?`, `limit?`, `hybrid?` | Search symbols (add `hybrid=true` for semantic) |
 | GET | `/api/semantic-search` | `q`, `kind?`, `limit?` | Semantic hybrid search |
 | GET | `/api/text` | `q`, `file?`, `limit?` | Text search |
+| POST | `/api/vector` | JSON `VectorSearchQuery` | Provider-backed vector search |
+| POST | `/api/hybrid` | JSON `HybridSearchQuery` | Provider-neutral text/vector/graph fusion |
+| POST | `/api/answer` | JSON `AnswerOptions` | Build answer context and optionally call configured `Answerer` |
 
 ### Symbol Endpoints
 
@@ -526,6 +548,7 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 - `GET /api/graph/neighbors?target=...` — neighboring graph context
 - `GET /api/graph/subgraph?target=...&depth=...` — focused local graph
 - `POST /api/graph/traverse` — provider-backed graph traversal with `GraphTraversalQuery`
+- `POST /api/answer` — provider-neutral RAG context/answer endpoint (`context_only` avoids external model calls)
 - `GET /api/stats` — index stats with version metadata
 - `GET /api/status` — workflow/service status with provider capabilities and watch metadata
 - `GET /api/embedding-status` — embedding lifecycle summary with recommendations

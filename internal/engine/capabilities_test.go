@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	answerpkg "github.com/sjzsdu/code-context/internal/answer"
 	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
 	"github.com/sjzsdu/code-context/internal/store"
 )
@@ -68,6 +69,40 @@ func TestStatusIncludesEmbeddingCapability(t *testing.T) {
 	}
 }
 
+func TestStatusIncludesAnswerCapability(t *testing.T) {
+	root := t.TempDir()
+	eng, err := NewWithOptions(root, Options{
+		Store: store.Options{
+			Backend: store.BackendSQLite,
+			SQLite:  store.SQLiteOptions{Path: filepath.Join(root, "index.db")},
+		},
+		Answer: answerpkg.Options{
+			Provider:  answerpkg.ProviderOpenAICompatible,
+			BaseURL:   "http://answer.local/v1",
+			Model:     "chat-test",
+			MaxTokens: 256,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+	defer eng.Close()
+
+	status, err := eng.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Answer == nil || !status.Answer.Enabled {
+		t.Fatalf("answer status = %#v, want enabled", status.Answer)
+	}
+	if status.Answer.Model != "chat-test" {
+		t.Fatalf("answer model = %q", status.Answer.Model)
+	}
+	if !containsString(status.Capabilities, "answer") {
+		t.Fatalf("capabilities = %#v, want answer", status.Capabilities)
+	}
+}
+
 func TestEmbedUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))
@@ -90,6 +125,49 @@ func TestEmbedDelegatesToProvider(t *testing.T) {
 	}
 	if len(vectors) != 1 || vectors[0].ID != "q" || len(vectors[0].Values) != 1 {
 		t.Fatalf("vectors = %#v", vectors)
+	}
+}
+
+func TestAnswerUnsupportedCapability(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
+	_, err := eng.Answer(context.Background(), AnswerOptions{Question: "hello"})
+	if !errors.Is(err, ErrCapabilityUnsupported) {
+		t.Fatalf("Answer error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
+func TestAnswerContextOnlyUsesHybridRetrieval(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
+	result, err := eng.Answer(context.Background(), AnswerOptions{Question: "hello", ContextOnly: true, Limit: 3})
+	if err != nil {
+		t.Fatalf("Answer context-only: %v", err)
+	}
+	if !result.ContextOnly {
+		t.Fatalf("context_only = false")
+	}
+	if result.Answer != "" {
+		t.Fatalf("answer = %q, want empty in context-only mode", result.Answer)
+	}
+	if len(result.Context) != 1 || !strings.Contains(result.Context[0].Content, "text evidence") {
+		t.Fatalf("context = %#v", result.Context)
+	}
+}
+
+func TestAnswerDelegatesToProvider(t *testing.T) {
+	answerer := &fakeAnswerer{}
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
+	result, err := eng.Answer(context.Background(), AnswerOptions{Question: "hello", Limit: 3, MaxTokens: 128})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if result.Answer != "fake answer" || result.Provider != "fake" || result.Model != "fake-chat" {
+		t.Fatalf("result = %#v", result)
+	}
+	if answerer.request.Question != "hello" || answerer.request.MaxTokens != 128 {
+		t.Fatalf("request = %#v", answerer.request)
+	}
+	if len(answerer.request.Context) != 1 {
+		t.Fatalf("request context = %#v", answerer.request.Context)
 	}
 }
 
@@ -256,6 +334,19 @@ func (fakeEmbedder) Embed(_ context.Context, inputs []store.EmbeddingInput) ([]s
 
 func (fakeEmbedder) EmbeddingModel() store.EmbeddingModelInfo {
 	return store.EmbeddingModelInfo{Provider: "fake", Model: "fake", Dimensions: 1}
+}
+
+type fakeAnswerer struct {
+	request store.AnswerRequest
+}
+
+func (a *fakeAnswerer) Answer(_ context.Context, req store.AnswerRequest) (*store.AnswerResponse, error) {
+	a.request = req
+	return &store.AnswerResponse{Answer: "fake answer", Model: "fake-chat"}, nil
+}
+
+func (a *fakeAnswerer) AnswerModel() store.AnswerModelInfo {
+	return store.AnswerModelInfo{Provider: "fake", Model: "fake-chat"}
 }
 
 type fakeVectorStore struct {

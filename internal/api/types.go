@@ -256,6 +256,7 @@ type ServiceStatus struct {
 	GraphVersion string           `json:"graph_version"`
 	Capabilities []string         `json:"capabilities"`
 	Embedding    *EmbeddingStatus `json:"embedding,omitempty"`
+	Answer       *AnswerStatus    `json:"answer,omitempty"`
 	Index        *IndexStats      `json:"index,omitempty"`
 	Watch        *WatchStatus     `json:"watch,omitempty"`
 }
@@ -267,6 +268,15 @@ type EmbeddingStatus struct {
 	Dimensions int    `json:"dimensions,omitempty"`
 	BaseURL    string `json:"base_url,omitempty"`
 	BatchSize  int    `json:"batch_size,omitempty"`
+}
+
+type AnswerStatus struct {
+	Enabled     bool    `json:"enabled"`
+	Provider    string  `json:"provider,omitempty"`
+	Model       string  `json:"model,omitempty"`
+	BaseURL     string  `json:"base_url,omitempty"`
+	MaxTokens   int     `json:"max_tokens,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
 }
 
 // DoctorCheck reports one health check result.

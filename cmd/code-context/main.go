@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	answerpkg "github.com/sjzsdu/code-context/internal/answer"
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/config"
 	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
@@ -43,6 +45,14 @@ var (
 	embeddingDimensions int
 	embeddingTimeout    time.Duration
 	embeddingBatchSize  int
+	answerProvider      string
+	answerBaseURL       string
+	answerAPIKey        string
+	answerAPIKeyEnv     string
+	answerModel         string
+	answerTimeout       time.Duration
+	answerMaxTokens     int
+	answerTemperature   float64
 )
 
 type runtimeConfig struct {
@@ -84,6 +94,14 @@ func main() {
 	cmd.PersistentFlags().IntVar(&embeddingDimensions, "embedding-dimensions", 0, "embedding vector dimensions (optional provider parameter)")
 	cmd.PersistentFlags().DurationVar(&embeddingTimeout, "embedding-timeout", 0, "embedding request timeout")
 	cmd.PersistentFlags().IntVar(&embeddingBatchSize, "embedding-batch-size", 0, "embedding batch size")
+	cmd.PersistentFlags().StringVar(&answerProvider, "answer-provider", "", "answer provider (none|openai|openai-compatible; default: none)")
+	cmd.PersistentFlags().StringVar(&answerBaseURL, "answer-base-url", "", "answer API base URL (for openai-compatible, e.g. http://localhost:11434/v1)")
+	cmd.PersistentFlags().StringVar(&answerAPIKey, "answer-api-key", "", "answer API key")
+	cmd.PersistentFlags().StringVar(&answerAPIKeyEnv, "answer-api-key-env", "", "environment variable containing the answer API key")
+	cmd.PersistentFlags().StringVar(&answerModel, "answer-model", "", "answer model name")
+	cmd.PersistentFlags().DurationVar(&answerTimeout, "answer-timeout", 0, "answer request timeout")
+	cmd.PersistentFlags().IntVar(&answerMaxTokens, "answer-max-tokens", 0, "answer max completion tokens")
+	cmd.PersistentFlags().Float64Var(&answerTemperature, "answer-temperature", 0, "answer sampling temperature")
 
 	cmd.AddCommand(
 		newConfigCmd(),
@@ -92,6 +110,7 @@ func main() {
 		newSearchCmd(),
 		newVectorSearchCmd(),
 		newHybridSearchCmd(),
+		newAnswerCmd(),
 		newFindDefCmd(),
 		newGitFilesCmd(),
 		newGitDiffCmd(),
@@ -180,7 +199,11 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 		!cmd.Flags().Changed("embedding-provider") || !cmd.Flags().Changed("embedding-base-url") ||
 		!cmd.Flags().Changed("embedding-api-key") || !cmd.Flags().Changed("embedding-api-key-env") ||
 		!cmd.Flags().Changed("embedding-model") || !cmd.Flags().Changed("embedding-dimensions") ||
-		!cmd.Flags().Changed("embedding-timeout") || !cmd.Flags().Changed("embedding-batch-size") {
+		!cmd.Flags().Changed("embedding-timeout") || !cmd.Flags().Changed("embedding-batch-size") ||
+		!cmd.Flags().Changed("answer-provider") || !cmd.Flags().Changed("answer-base-url") ||
+		!cmd.Flags().Changed("answer-api-key") || !cmd.Flags().Changed("answer-api-key-env") ||
+		!cmd.Flags().Changed("answer-model") || !cmd.Flags().Changed("answer-timeout") ||
+		!cmd.Flags().Changed("answer-max-tokens") || !cmd.Flags().Changed("answer-temperature") {
 
 		if loaded == nil && loadErr != config.ErrNotFound {
 			loaded, loadErr = config.Load(root)
@@ -237,6 +260,30 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			if !cmd.Flags().Changed("embedding-batch-size") && loaded.Config.Embedding.BatchSize > 0 {
 				embeddingBatchSize = loaded.Config.Embedding.BatchSize
 			}
+			if !cmd.Flags().Changed("answer-provider") && loaded.Config.Answer.Provider != "" {
+				answerProvider = loaded.Config.Answer.Provider
+			}
+			if !cmd.Flags().Changed("answer-base-url") && loaded.Config.Answer.BaseURL != "" {
+				answerBaseURL = loaded.Config.Answer.BaseURL
+			}
+			if !cmd.Flags().Changed("answer-api-key") && loaded.Config.Answer.APIKey != "" {
+				answerAPIKey = loaded.Config.Answer.APIKey
+			}
+			if !cmd.Flags().Changed("answer-api-key-env") && loaded.Config.Answer.APIKeyEnv != "" {
+				answerAPIKeyEnv = loaded.Config.Answer.APIKeyEnv
+			}
+			if !cmd.Flags().Changed("answer-model") && loaded.Config.Answer.Model != "" {
+				answerModel = loaded.Config.Answer.Model
+			}
+			if !cmd.Flags().Changed("answer-timeout") && loaded.Config.Answer.Timeout > 0 {
+				answerTimeout = loaded.Config.Answer.Timeout
+			}
+			if !cmd.Flags().Changed("answer-max-tokens") && loaded.Config.Answer.MaxTokens > 0 {
+				answerMaxTokens = loaded.Config.Answer.MaxTokens
+			}
+			if !cmd.Flags().Changed("answer-temperature") && loaded.Config.Answer.Temperature != 0 {
+				answerTemperature = loaded.Config.Answer.Temperature
+			}
 		}
 	}
 	_ = cfg
@@ -246,6 +293,7 @@ func newEngine() (*engine.Engine, error) {
 	return engine.NewWithOptions(root, engine.Options{
 		Store:     storeOptions(),
 		Embedding: embeddingOptions(),
+		Answer:    answerOptions(),
 	})
 }
 
@@ -272,6 +320,19 @@ func embeddingOptions() embeddingpkg.Options {
 		Dimensions: embeddingDimensions,
 		Timeout:    embeddingTimeout,
 		BatchSize:  embeddingBatchSize,
+	}
+}
+
+func answerOptions() answerpkg.Options {
+	return answerpkg.Options{
+		Provider:    answerProvider,
+		BaseURL:     answerBaseURL,
+		APIKey:      answerAPIKey,
+		APIKeyEnv:   answerAPIKeyEnv,
+		Model:       answerModel,
+		Timeout:     answerTimeout,
+		MaxTokens:   answerMaxTokens,
+		Temperature: answerTemperature,
 	}
 }
 
@@ -380,6 +441,30 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 	}
 	if embeddingBatchSize > 0 {
 		cfg.Embedding.BatchSize = embeddingBatchSize
+	}
+	if answerProvider != "" {
+		cfg.Answer.Provider = answerProvider
+	}
+	if answerBaseURL != "" {
+		cfg.Answer.BaseURL = answerBaseURL
+	}
+	if answerAPIKey != "" {
+		cfg.Answer.APIKey = answerAPIKey
+	}
+	if answerAPIKeyEnv != "" {
+		cfg.Answer.APIKeyEnv = answerAPIKeyEnv
+	}
+	if answerModel != "" {
+		cfg.Answer.Model = answerModel
+	}
+	if answerTimeout > 0 {
+		cfg.Answer.Timeout = answerTimeout
+	}
+	if answerMaxTokens > 0 {
+		cfg.Answer.MaxTokens = answerMaxTokens
+	}
+	if answerTemperature != 0 {
+		cfg.Answer.Temperature = answerTemperature
 	}
 }
 
@@ -1024,6 +1109,66 @@ func newHybridSearchCmd() *cobra.Command {
 	return cmd
 }
 
+func newAnswerCmd() *cobra.Command {
+	var limit int
+	var contextOnly bool
+	var jsonOut bool
+	var maxTokens int
+	var temperature float64
+	cmd := &cobra.Command{
+		Use:   "answer <question>",
+		Short: "Answer a question using retrieved code-context evidence",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			var tempPtr *float64
+			if cmd.Flags().Changed("temperature") {
+				tempPtr = &temperature
+			}
+			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
+				Question:    strings.TrimSpace(strings.Join(args, " ")),
+				Limit:       limit,
+				ContextOnly: contextOnly,
+				MaxTokens:   maxTokens,
+				Temperature: tempPtr,
+			})
+			if err != nil {
+				if errors.Is(err, engine.ErrCapabilityUnsupported) {
+					return fmt.Errorf("%w (configure --answer-provider or use --context-only)", err)
+				}
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+			fmt.Println(result.Summary)
+			if result.Answer != "" {
+				fmt.Println()
+				fmt.Println(result.Answer)
+			}
+			if len(result.Context) > 0 {
+				fmt.Println()
+				fmt.Println("Sources:")
+				fmt.Println(formatAnswerContextPlain(result.Context))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 8, "max retrieved context items")
+	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
+	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0, "override answer max completion tokens")
+	cmd.Flags().Float64Var(&temperature, "temperature", 0, "override answer sampling temperature")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer result")
+	return cmd
+}
+
 func newFindDefCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "find-def <name>",
@@ -1289,6 +1434,21 @@ func newStatusCmd() *cobra.Command {
 				fmt.Println()
 			} else {
 				fmt.Println("Embedding:     disabled")
+			}
+			if status.Answer != nil && status.Answer.Enabled {
+				fmt.Printf("Answer:        %s model=%s", status.Answer.Provider, status.Answer.Model)
+				if status.Answer.MaxTokens > 0 {
+					fmt.Printf(" max_tokens=%d", status.Answer.MaxTokens)
+				}
+				if status.Answer.Temperature != 0 {
+					fmt.Printf(" temperature=%.2f", status.Answer.Temperature)
+				}
+				if status.Answer.BaseURL != "" {
+					fmt.Printf(" base_url=%s", status.Answer.BaseURL)
+				}
+				fmt.Println()
+			} else {
+				fmt.Println("Answer:        disabled")
 			}
 			if status.Index != nil {
 				fmt.Printf("Index version: %s\n", status.Index.IndexVersion)
@@ -2797,6 +2957,51 @@ func formatSearchHitsPlain(hits []store.SearchHit) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatAnswerContextPlain(items []store.AnswerContext) string {
+	if len(items) == 0 {
+		return "No answer context found"
+	}
+	var b strings.Builder
+	for i, item := range items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = formatTargetRefPlain(item.Target)
+		}
+		fmt.Fprintf(&b, "%d. %.4f  %s", i+1, item.Score, title)
+		if item.Source != "" {
+			fmt.Fprintf(&b, "  [%s]", item.Source)
+		}
+		b.WriteByte('\n')
+		if content := strings.TrimSpace(item.Content); content != "" {
+			fmt.Fprintf(&b, "   %s\n", content)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatTargetRefPlain(target store.TargetRef) string {
+	switch {
+	case target.Path != "" && target.Name != "" && target.Line > 0:
+		return fmt.Sprintf("%s:%d %s", target.Path, target.Line, target.Name)
+	case target.Path != "" && target.Line > 0:
+		return fmt.Sprintf("%s:%d", target.Path, target.Line)
+	case target.Path != "" && target.Name != "":
+		return target.Path + " " + target.Name
+	case target.Path != "":
+		return target.Path
+	case target.Method != "" && target.RoutePath != "":
+		return strings.TrimSpace(target.Method + " " + target.RoutePath)
+	case target.Name != "":
+		return target.Name
+	case target.Value != "":
+		return target.Value
+	case target.Kind != "":
+		return string(target.Kind)
+	default:
+		return "unknown"
+	}
 }
 
 func formatSearchHitFusionDetails(metadata map[string]string) string {
