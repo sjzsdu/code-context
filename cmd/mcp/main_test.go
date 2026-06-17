@@ -147,6 +147,14 @@ func TestRunEmbeddingPlanToolDisabled(t *testing.T) {
 		t.Fatalf("expected disabled embedding plan, got:\n%s", out)
 	}
 
+	out, err = runEmbeddingStatusTool(context.Background(), eng, FreshnessArgs{Limit: 2})
+	if err != nil {
+		t.Fatalf("run embedding status tool: %v", err)
+	}
+	if !strings.Contains(out, "\"enabled\": false") || !strings.Contains(out, "configure_embedding") {
+		t.Fatalf("expected disabled embedding lifecycle status, got:\n%s", out)
+	}
+
 	out, err = runEmbeddingBackfillTool(context.Background(), eng, EmbeddingBackfillArgs{Limit: 2})
 	if err != nil {
 		t.Fatalf("run embedding backfill tool: %v", err)

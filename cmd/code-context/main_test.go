@@ -132,6 +132,15 @@ func TestEmbeddingPlanCmdReportsDisabledProvider(t *testing.T) {
 		t.Fatalf("expected disabled embedding plan, got:\n%s", out)
 	}
 
+	cmd = newEmbeddingStatusCmd()
+	out, err = captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute embedding-status cmd: %v", err)
+	}
+	if !strings.Contains(out, "embedding disabled") || !strings.Contains(out, "Recommended actions:") {
+		t.Fatalf("expected disabled embedding lifecycle status, got:\n%s", out)
+	}
+
 	cmd = newEmbeddingBackfillCmd()
 	out, err = captureStdout(func() error { return cmd.Execute() })
 	if err != nil {

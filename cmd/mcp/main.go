@@ -300,12 +300,13 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 2. Use code_context_explore for a query before broad grep/read.
 3. Use code_context_search for symbols, code_context_context for a symbol profile, and code_context_snapshot for focused LLM context.
 4. Use code_context_hybrid_search when status reports hybrid_search and you want text + vector + graph fusion.
-5. Use code_context_embedding_namespaces to inspect cached model/dimension namespaces before changing embedding models.
-6. Use code_context_embedding_prune as a dry-run first before deleting stale embedding namespaces.
-7. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
-8. Use code_context_callers and code_context_callees for lightweight call graph navigation.
-9. If status or a result reports stale/pending files, read those files directly before editing.
-10. Prefer the recommended next tool calls in each response.`), nil, nil
+5. Use code_context_embedding_status for embedding lifecycle recommendations.
+6. Use code_context_embedding_namespaces to inspect cached model/dimension namespaces before changing embedding models.
+7. Use code_context_embedding_prune as a dry-run first before deleting stale embedding namespaces.
+8. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
+9. Use code_context_callers and code_context_callees for lightweight call graph navigation.
+10. If status or a result reports stale/pending files, read those files directly before editing.
+11. Prefer the recommended next tool calls in each response.`), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, provider capabilities, and service metadata"},
@@ -345,6 +346,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			out, err := marshalIndentedJSON(report)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_embedding_status", Description: "Summarize embedding configuration, cache coverage, namespaces, and lifecycle actions"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args FreshnessArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runEmbeddingStatusTool(ctx, eng, args)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -683,6 +693,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		output, err := runHybridSearchTool(ctx, eng, args)
 		if err != nil {
 			return nil, nil, fmt.Errorf("hybrid_search failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "embedding_status",
+		Description: "Summarize embedding configuration, cache coverage, namespaces, and lifecycle actions",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args FreshnessArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runEmbeddingStatusTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("embedding_status failed: %w", err)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
@@ -1292,6 +1313,18 @@ func runVectorSearchTool(ctx context.Context, eng *engine.Engine, args VectorSea
 		return "", err
 	}
 	return marshalIndentedJSON(map[string]any{"results": hits, "count": len(hits)})
+}
+
+func runEmbeddingStatusTool(ctx context.Context, eng *engine.Engine, args FreshnessArgs) (string, error) {
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 25
+	}
+	report, err := eng.EmbeddingLifecycle(ctx, limit)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(report)
 }
 
 func runEmbeddingPlanTool(ctx context.Context, eng *engine.Engine, args FreshnessArgs) (string, error) {

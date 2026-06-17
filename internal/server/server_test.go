@@ -476,6 +476,22 @@ func TestEmbeddingPlanEndpoint(t *testing.T) {
 		t.Fatalf("expected disabled summary, got %+v", payload)
 	}
 
+	resp, err = http.Get(ts.URL + "/api/embedding-status?limit=2")
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var lifecycle engine.EmbeddingLifecycleReport
+	if err := json.NewDecoder(resp.Body).Decode(&lifecycle); err != nil {
+		t.Fatalf("failed to decode lifecycle response: %v", err)
+	}
+	if lifecycle.Embedding == nil || lifecycle.Embedding.Enabled || len(lifecycle.RecommendedActions) == 0 || lifecycle.RecommendedActions[0].Type != "configure_embedding" {
+		t.Fatalf("expected disabled lifecycle recommendation, got %+v", lifecycle)
+	}
+
 	resp, err = http.Post(ts.URL+"/api/embedding-backfill?limit=2", "application/json", nil)
 	if err != nil {
 		t.Fatalf("backfill request failed: %v", err)

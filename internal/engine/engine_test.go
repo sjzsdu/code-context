@@ -245,6 +245,19 @@ func TestEmbeddingPlanReportsMissingAndCachedChunks(t *testing.T) {
 	if inventory.Namespaces[0].InputKinds[store.EmbeddingInputSymbol] == 0 {
 		t.Fatalf("namespace input kind counts = %+v, want symbol chunks", inventory.Namespaces[0].InputKinds)
 	}
+	lifecycle, err := eng.EmbeddingLifecycle(ctx, 10)
+	if err != nil {
+		t.Fatalf("embedding lifecycle: %v", err)
+	}
+	if lifecycle.Embedding == nil || !lifecycle.Embedding.Enabled || lifecycle.CurrentNamespace == nil {
+		t.Fatalf("lifecycle = %+v, want enabled embedding and current namespace", lifecycle)
+	}
+	if lifecycle.CurrentNamespace.Model != "fake" || lifecycle.CurrentNamespace.Dimensions != 1 || len(lifecycle.PruneCandidates) != 0 {
+		t.Fatalf("lifecycle current/prune = current:%+v prune:%+v", lifecycle.CurrentNamespace, lifecycle.PruneCandidates)
+	}
+	if len(lifecycle.RecommendedActions) == 0 || lifecycle.RecommendedActions[0].Type != "healthy" {
+		t.Fatalf("lifecycle recommendations = %+v, want healthy", lifecycle.RecommendedActions)
+	}
 	pruneDryRun, err := eng.PruneEmbeddingNamespace(ctx, EmbeddingPruneOptions{Model: "fake", Dimensions: 1})
 	if err != nil {
 		t.Fatalf("prune dry run: %v", err)

@@ -2692,6 +2692,29 @@ type EmbeddingPruneResult struct {
 	Summary          string                    `json:"summary"`
 }
 
+type EmbeddingLifecycleReport struct {
+	Embedding          *api.EmbeddingStatus               `json:"embedding,omitempty"`
+	Plan               *EmbeddingPlan                     `json:"plan,omitempty"`
+	Namespaces         *EmbeddingNamespaceReport          `json:"namespaces,omitempty"`
+	CurrentNamespace   *store.EmbeddingNamespace          `json:"current_namespace,omitempty"`
+	PruneCandidates    []EmbeddingLifecyclePruneCandidate `json:"prune_candidates,omitempty"`
+	RecommendedActions []EmbeddingLifecycleRecommendation `json:"recommended_actions,omitempty"`
+	Summary            string                             `json:"summary"`
+}
+
+type EmbeddingLifecyclePruneCandidate struct {
+	Namespace store.EmbeddingNamespace `json:"namespace"`
+	Reason    string                   `json:"reason,omitempty"`
+	Command   string                   `json:"command,omitempty"`
+}
+
+type EmbeddingLifecycleRecommendation struct {
+	Type        string `json:"type"`
+	Summary     string `json:"summary"`
+	Command     string `json:"command,omitempty"`
+	Destructive bool   `json:"destructive,omitempty"`
+}
+
 func (e *Engine) EmbeddingNamespaces(ctx context.Context) (*EmbeddingNamespaceReport, error) {
 	report := &EmbeddingNamespaceReport{}
 	inspector, ok := e.store.(store.EmbeddingCacheInspector)
@@ -2714,6 +2737,45 @@ func (e *Engine) EmbeddingNamespaces(ctx context.Context) (*EmbeddingNamespaceRe
 	} else {
 		report.Summary = fmt.Sprintf("found %d embedding namespaces with %d cached chunks", report.TotalNamespaces, report.TotalChunks)
 	}
+	return report, nil
+}
+
+func (e *Engine) EmbeddingLifecycle(ctx context.Context, limit int) (*EmbeddingLifecycleReport, error) {
+	report := &EmbeddingLifecycleReport{
+		Embedding: e.embeddingStatus(),
+	}
+
+	namespaces, err := e.EmbeddingNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report.Namespaces = namespaces
+
+	plan, err := e.EmbeddingPlan(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	report.Plan = plan
+
+	if namespaces != nil {
+		for _, ns := range namespaces.Namespaces {
+			if e.isCurrentEmbeddingNamespace(ns.Model, ns.Dimensions) {
+				current := ns
+				if report.CurrentNamespace == nil {
+					report.CurrentNamespace = &current
+				}
+				continue
+			}
+			report.PruneCandidates = append(report.PruneCandidates, EmbeddingLifecyclePruneCandidate{
+				Namespace: ns,
+				Reason:    "namespace does not match the currently configured embedding model/dimensions",
+				Command:   fmt.Sprintf("code-context embedding-prune --model %s --dimensions %d", ns.Model, ns.Dimensions),
+			})
+		}
+	}
+
+	report.RecommendedActions = e.embeddingLifecycleRecommendations(report)
+	report.Summary = embeddingLifecycleSummary(report)
 	return report, nil
 }
 
@@ -2783,6 +2845,89 @@ func (e *Engine) isCurrentEmbeddingNamespace(model string, dimensions int) bool 
 		return false
 	}
 	return info.Dimensions <= 0 || info.Dimensions == dimensions
+}
+
+func (e *Engine) embeddingLifecycleRecommendations(report *EmbeddingLifecycleReport) []EmbeddingLifecycleRecommendation {
+	recs := make([]EmbeddingLifecycleRecommendation, 0)
+	if report == nil {
+		return recs
+	}
+	embedding := report.Embedding
+	plan := report.Plan
+	namespaces := report.Namespaces
+
+	if embedding == nil || !embedding.Enabled {
+		recs = append(recs, EmbeddingLifecycleRecommendation{
+			Type:    "configure_embedding",
+			Summary: "embedding provider is disabled; configure one before vector search, hybrid vector fusion, or backfill",
+		})
+		if namespaces != nil && namespaces.TotalNamespaces > 0 {
+			recs = append(recs, EmbeddingLifecycleRecommendation{
+				Type:    "review_cached_namespaces",
+				Summary: fmt.Sprintf("embedding is disabled but %d cached namespaces remain available for inspection or cleanup", namespaces.TotalNamespaces),
+				Command: "code-context embedding-namespaces",
+			})
+		}
+		return recs
+	}
+
+	if plan != nil && !plan.CacheSupported {
+		recs = append(recs, EmbeddingLifecycleRecommendation{
+			Type:    "enable_embedding_cache",
+			Summary: "active store does not support embedding cache; choose a backend with EmbeddingCache support before backfill",
+		})
+		return recs
+	}
+
+	if plan != nil && plan.BackfillRequired {
+		recs = append(recs, EmbeddingLifecycleRecommendation{
+			Type:    "backfill",
+			Summary: fmt.Sprintf("backfill %d missing, %d stale, and %d error chunks for %s/%d", plan.MissingChunks, plan.StaleChunks, plan.ErrorChunks, plan.Model, plan.Dimensions),
+			Command: "code-context embedding-backfill --apply",
+		})
+	}
+
+	if len(report.PruneCandidates) > 0 {
+		recs = append(recs, EmbeddingLifecycleRecommendation{
+			Type:        "prune",
+			Summary:     fmt.Sprintf("review %d old embedding namespaces that do not match the current model", len(report.PruneCandidates)),
+			Command:     "code-context embedding-namespaces",
+			Destructive: true,
+		})
+	}
+
+	if len(recs) == 0 {
+		recs = append(recs, EmbeddingLifecycleRecommendation{
+			Type:    "healthy",
+			Summary: "embedding cache lifecycle looks healthy",
+		})
+	}
+	return recs
+}
+
+func embeddingLifecycleSummary(report *EmbeddingLifecycleReport) string {
+	if report == nil {
+		return "embedding lifecycle status unavailable"
+	}
+	if report.Embedding == nil || !report.Embedding.Enabled {
+		if report.Namespaces != nil && report.Namespaces.TotalNamespaces > 0 {
+			return fmt.Sprintf("embedding disabled; %d cached namespaces remain", report.Namespaces.TotalNamespaces)
+		}
+		return "embedding disabled; no cached namespaces found"
+	}
+	if report.Plan != nil && !report.Plan.CacheSupported {
+		return "embedding enabled but active store does not support embedding cache"
+	}
+	if report.Plan != nil && report.Plan.BackfillRequired {
+		return fmt.Sprintf("embedding backfill required for namespace %s/%d", report.Plan.Model, report.Plan.Dimensions)
+	}
+	if len(report.PruneCandidates) > 0 {
+		return fmt.Sprintf("embedding cache is current; %d old namespaces can be reviewed for pruning", len(report.PruneCandidates))
+	}
+	if report.Plan != nil {
+		return fmt.Sprintf("embedding cache lifecycle healthy for namespace %s/%d", report.Plan.Model, report.Plan.Dimensions)
+	}
+	return "embedding cache lifecycle healthy"
 }
 
 func (e *Engine) BackfillEmbeddings(ctx context.Context, opts EmbeddingBackfillOptions) (*EmbeddingBackfillResult, error) {

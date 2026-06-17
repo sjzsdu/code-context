@@ -83,6 +83,7 @@ code-context doc-coverage
 # Check and repair index health
 code-context doctor
 code-context freshness
+code-context embedding-status
 code-context embedding-plan
 code-context embedding-namespaces
 code-context embedding-prune --model text-embedding-old --dimensions 768
@@ -229,6 +230,7 @@ code-context index
 code-context map
 code-context snapshot
 code-context search Snapshot
+code-context embedding-status
 code-context embedding-plan
 code-context embedding-namespaces
 code-context embedding-prune --model text-embedding-old --dimensions 768
@@ -269,6 +271,16 @@ provider for query text or a raw vector supplied with `--vector`.
 ```bash
 code-context vector-search "handler health check" --limit 10
 code-context vector-search --vector 0.1,0.2,0.3 --model text-embedding-test --dimensions 3 --json
+```
+
+### `embedding-status` — Summarize embedding lifecycle state
+
+Combines embedding configuration, current model cache coverage, cached namespaces, prune candidates,
+and recommended next actions. `embedding-lifecycle` is an alias.
+
+```bash
+code-context embedding-status
+code-context embedding-status --json --limit 100
 ```
 
 ### `embedding-plan` — Inspect embedding cache coverage
@@ -631,7 +643,10 @@ code-context owns only the chunking, caching, storage, and retrieval glue. When 
 vectors by model + dimensions + chunk hash. Helix stores those vectors in `CodeContextEmbeddingChunk`
 nodes and exposes them through `VectorSearcher`; the engine-level hybrid fusion layer combines
 provider text, vector, and graph signals without requiring Helix-specific call sites.
-Use `embedding-namespaces`, `/api/embedding-namespaces`, or MCP
+Use `embedding-status`, `/api/embedding-status`, or MCP
+`embedding_status`/`code_context_embedding_status` for a read-only lifecycle summary that combines
+configuration, plan coverage, cached namespaces, prune candidates, and recommended next actions. Use
+`embedding-namespaces`, `/api/embedding-namespaces`, or MCP
 `embedding_namespaces`/`code_context_embedding_namespaces` to inventory cached model/dimension
 namespaces before switching models or planning future cache cleanup. Use `embedding-prune`,
 `POST /api/embedding-prune`, or MCP `embedding_prune`/`code_context_embedding_prune` to delete a
@@ -682,6 +697,8 @@ Start the server with `code-context serve`, then:
 | GET | `/api/symbol-impact` | `name` | Return symbol-level callers, callees, docs, routes, tests, and risk |
 | GET | `/api/stats` | — | Index statistics with version metadata |
 | GET | `/api/status` | — | Service/workflow status including provider capabilities and watch metadata |
+| GET | `/api/embedding-status` | `limit?` | Embedding lifecycle summary with recommendations |
+| GET | `/api/embedding-lifecycle` | `limit?` | Alias for `/api/embedding-status` |
 | GET | `/api/embedding-plan` | `limit?` | Embedding cache coverage and backfill plan for the configured model |
 | POST | `/api/embedding-backfill` | `apply?`, `limit?` | Dry-run or apply missing/stale embedding backfill |
 | GET | `/api/embedding-namespaces` | — | List cached embedding model/dimension namespaces |
@@ -748,6 +765,7 @@ Add to your AI client config:
 | `search` | Search symbols by name | `query` |
 | `vector_search` | Provider-backed vector search | `query_text?`, `vector?`, `model?`, `dimensions?`, `filter?`, `limit?`, `offset?` |
 | `hybrid_search` | Provider-neutral text/vector/graph fusion | `query?`, `vector?`, `model?`, `dimensions?`, `filter?`, weights, `expand_from?`, `limit?` |
+| `embedding_status` | Embedding lifecycle summary and recommendations | `limit?` |
 | `embedding_namespaces` | Cached embedding model/dimension namespace inventory | - |
 | `embedding_prune` | Dry-run or delete a cached embedding namespace | `model`, `dimensions`, `apply?`, `force_current?` |
 | `find_def` | Find where a symbol is defined | `name` |
@@ -762,6 +780,7 @@ Add to your AI client config:
 | `docs_for` | Find documentation references for a file, symbol, or module | `query` |
 | `doc_drift` | Report broken documentation references | - |
 | `stats` | Show index statistics | - |
+| `code_context_embedding_status` | Embedding lifecycle summary and recommendations | `limit?` |
 | `code_context_embedding_plan` | Embedding cache coverage and backfill plan | `limit?` |
 | `code_context_embedding_backfill` | Dry-run or apply missing/stale embedding backfill | `apply?`, `limit?` |
 | `code_context_embedding_namespaces` | Cached embedding model/dimension namespace inventory | - |
@@ -799,6 +818,7 @@ code-context:index
 
 # Then search
 code-context:search "Server"
+code-context:embedding_status
 code-context:embedding_namespaces
 code-context:vector_search '{"query_text":"health handler","limit":5}'
 code-context:hybrid_search '{"query":"health handler","limit":5}'

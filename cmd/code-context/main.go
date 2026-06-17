@@ -107,6 +107,7 @@ func main() {
 		newDocCoverageCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
+		newEmbeddingStatusCmd(),
 		newEmbeddingPlanCmd(),
 		newEmbeddingBackfillCmd(),
 		newEmbeddingNamespacesCmd(),
@@ -1395,6 +1396,98 @@ func newEmbeddingPlanCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 50, "max pending chunks to print, 0 for all")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON plan")
 	return cmd
+}
+
+func newEmbeddingStatusCmd() *cobra.Command {
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:     "embedding-status",
+		Aliases: []string{"embedding-lifecycle"},
+		Short:   "Summarize embedding configuration, cache coverage, namespaces, and lifecycle actions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.EmbeddingLifecycle(context.Background(), limit)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
+			}
+			printEmbeddingLifecycle(report)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 25, "max pending chunks to include in the embedded plan, 0 for all")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON lifecycle report")
+	return cmd
+}
+
+func printEmbeddingLifecycle(report *engine.EmbeddingLifecycleReport) {
+	if report == nil {
+		fmt.Println("embedding lifecycle status unavailable")
+		return
+	}
+	fmt.Println(report.Summary)
+	if report.Embedding != nil && report.Embedding.Enabled {
+		fmt.Printf("Embedding:     %s model=%s", report.Embedding.Provider, report.Embedding.Model)
+		if report.Embedding.Dimensions > 0 {
+			fmt.Printf(" dimensions=%d", report.Embedding.Dimensions)
+		}
+		if report.Embedding.BaseURL != "" {
+			fmt.Printf(" base_url=%s", report.Embedding.BaseURL)
+		}
+		fmt.Println()
+	} else {
+		fmt.Println("Embedding:     disabled")
+	}
+	if report.Plan != nil {
+		fmt.Printf("Cache support: %t\n", report.Plan.CacheSupported)
+		if report.Plan.CacheSupported {
+			fmt.Printf("Coverage:      %d/%d cached, %d missing, %d stale, %d errors\n",
+				report.Plan.CachedChunks,
+				report.Plan.TotalChunks,
+				report.Plan.MissingChunks,
+				report.Plan.StaleChunks,
+				report.Plan.ErrorChunks,
+			)
+		}
+	}
+	if report.Namespaces != nil {
+		fmt.Printf("Namespaces:    %d (%d cached chunks)\n", report.Namespaces.TotalNamespaces, report.Namespaces.TotalChunks)
+	}
+	if report.CurrentNamespace != nil {
+		fmt.Printf("Current:       %s/%d chunks=%d\n", report.CurrentNamespace.Model, report.CurrentNamespace.Dimensions, report.CurrentNamespace.Chunks)
+	}
+	if len(report.PruneCandidates) > 0 {
+		fmt.Println("Prune candidates:")
+		for _, candidate := range report.PruneCandidates {
+			ns := candidate.Namespace
+			fmt.Printf("  %s/%d chunks=%d\n", ns.Model, ns.Dimensions, ns.Chunks)
+			if candidate.Command != "" {
+				fmt.Printf("    dry-run: %s\n", candidate.Command)
+			}
+		}
+	}
+	if len(report.RecommendedActions) > 0 {
+		fmt.Println("Recommended actions:")
+		for _, rec := range report.RecommendedActions {
+			prefix := rec.Type
+			if rec.Destructive {
+				prefix += "!"
+			}
+			fmt.Printf("  [%s] %s\n", prefix, rec.Summary)
+			if rec.Command != "" {
+				fmt.Printf("    %s\n", rec.Command)
+			}
+		}
+	}
 }
 
 func newEmbeddingBackfillCmd() *cobra.Command {

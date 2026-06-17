@@ -47,6 +47,7 @@ code-context map
 code-context search "Handler"
 
 # 4. Check embedding cache coverage when embeddings are configured
+code-context embedding-status
 code-context embedding-plan
 code-context embedding-namespaces
 code-context embedding-prune --model text-embedding-old --dimensions 768  # dry run
@@ -128,7 +129,9 @@ provider-neutral interfaces. SQLite and Helix implement the provider-neutral emb
 stores vectors in model+dimension-namespaced chunk properties so different embedding spaces are not
 mixed in one vector index. Use `vector-search`, `/api/vector`, or MCP `vector_search`/
 `code_context_vector_search` to call `VectorSearcher`; query-text search additionally requires a
-configured `Embedder`. Use `embedding-plan`, `/api/embedding-plan`, or MCP
+configured `Embedder`. Use `embedding-status`, `/api/embedding-status`, or MCP
+`embedding_status`/`code_context_embedding_status` for a read-only lifecycle summary with provider
+configuration, coverage, namespaces, prune candidates, and recommended next actions. Use `embedding-plan`, `/api/embedding-plan`, or MCP
 `code_context_embedding_plan` to inspect cache coverage and plan model backfills without calling the
 embedding provider; use `embedding-backfill`, `POST /api/embedding-backfill?apply=true`, or MCP
 `code_context_embedding_backfill` to fill missing/stale chunks, noting that backfill is dry-run by
@@ -501,6 +504,8 @@ Start server: `code-context serve --port 9090`
 |---|---|---|---|
 | GET | `/api/stats` | — | Index stats with version metadata |
 | GET | `/api/status` | — | Workflow/service status including provider capabilities and watch metadata |
+| GET | `/api/embedding-status` | `limit?` | Embedding lifecycle summary with recommendations |
+| GET | `/api/embedding-lifecycle` | `limit?` | Alias for `/api/embedding-status` |
 | GET | `/api/embedding-plan` | `limit?` | Embedding cache coverage and backfill plan |
 | POST | `/api/embedding-backfill` | `apply?`, `limit?` | Dry-run or apply embedding backfill |
 | GET | `/api/embedding-namespaces` | — | Cached embedding model/dimension namespace inventory |
@@ -522,6 +527,7 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 - `POST /api/graph/traverse` — provider-backed graph traversal with `GraphTraversalQuery`
 - `GET /api/stats` — index stats with version metadata
 - `GET /api/status` — workflow/service status with provider capabilities and watch metadata
+- `GET /api/embedding-status` — embedding lifecycle summary with recommendations
 - `GET /api/embedding-plan` — embedding cache coverage and backfill plan
 - `POST /api/embedding-backfill?apply=true` — apply missing/stale embedding backfill
 - `GET /api/embedding-namespaces` — cached embedding model/dimension namespace inventory
@@ -584,6 +590,7 @@ go build -o code-context-mcp ./cmd/mcp
 | `imports` | Show file imports | `file` |
 | `importers` | Find importing files | `source` |
 | `stats` | Index statistics | - |
+| `code_context_embedding_status` | Embedding lifecycle summary and recommendations | `limit?` |
 | `code_context_embedding_plan` | Embedding cache coverage and backfill plan | `limit?` |
 | `code_context_embedding_backfill` | Dry-run or apply missing/stale embedding backfill | `apply?`, `limit?` |
 | `code_context_embedding_namespaces` | Cached embedding model/dimension namespace inventory | - |
