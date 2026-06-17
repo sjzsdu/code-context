@@ -438,6 +438,7 @@ type AnswerMessage struct {
 }
 
 type AnswerContext struct {
+	Citation string            `json:"citation,omitempty"`
 	Target   TargetRef         `json:"target,omitempty"`
 	Source   SearchSource      `json:"source,omitempty"`
 	Score    float64           `json:"score,omitempty"`

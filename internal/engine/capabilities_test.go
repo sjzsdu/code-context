@@ -151,12 +151,24 @@ func TestAnswerContextOnlyUsesHybridRetrieval(t *testing.T) {
 	if len(result.Context) != 1 || !strings.Contains(result.Context[0].Content, "text evidence") {
 		t.Fatalf("context = %#v", result.Context)
 	}
+	if result.Context[0].Citation != "[1]" {
+		t.Fatalf("citation = %q, want [1]", result.Context[0].Citation)
+	}
+	if len(result.Sources) != 1 || result.Sources[0].Citation != "[1]" || result.Sources[0].Title == "" {
+		t.Fatalf("sources = %#v", result.Sources)
+	}
 }
 
 func TestAnswerDelegatesToProvider(t *testing.T) {
 	answerer := &fakeAnswerer{}
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
-	result, err := eng.Answer(context.Background(), AnswerOptions{Question: "hello", Limit: 3, MaxTokens: 128})
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:     "hello",
+		SystemPrompt: "custom system prompt",
+		Messages:     []store.AnswerMessage{{Role: "assistant", Content: "prior"}},
+		Limit:        3,
+		MaxTokens:    128,
+	})
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
@@ -166,8 +178,14 @@ func TestAnswerDelegatesToProvider(t *testing.T) {
 	if answerer.request.Question != "hello" || answerer.request.MaxTokens != 128 {
 		t.Fatalf("request = %#v", answerer.request)
 	}
+	if answerer.request.SystemPrompt != "custom system prompt" || len(answerer.request.Messages) != 1 {
+		t.Fatalf("request prompt/messages = %#v", answerer.request)
+	}
 	if len(answerer.request.Context) != 1 {
 		t.Fatalf("request context = %#v", answerer.request.Context)
+	}
+	if answerer.request.Context[0].Citation != "[1]" {
+		t.Fatalf("request context citation = %#v", answerer.request.Context)
 	}
 }
 

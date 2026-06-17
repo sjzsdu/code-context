@@ -105,12 +105,14 @@ type HybridSearchArgs struct {
 }
 
 type AnswerArgs struct {
-	Query       string   `json:"query,omitempty"`
-	Question    string   `json:"question,omitempty"`
-	Limit       int      `json:"limit,omitempty"`
-	ContextOnly bool     `json:"context_only,omitempty"`
-	MaxTokens   int      `json:"max_tokens,omitempty"`
-	Temperature *float64 `json:"temperature,omitempty"`
+	Query        string                `json:"query,omitempty"`
+	Question     string                `json:"question,omitempty"`
+	SystemPrompt string                `json:"system_prompt,omitempty"`
+	Messages     []store.AnswerMessage `json:"messages,omitempty"`
+	Limit        int                   `json:"limit,omitempty"`
+	ContextOnly  bool                  `json:"context_only,omitempty"`
+	MaxTokens    int                   `json:"max_tokens,omitempty"`
+	Temperature  *float64              `json:"temperature,omitempty"`
 }
 
 type SearchArgs struct {
@@ -1490,11 +1492,13 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 		return "", fmt.Errorf("missing required parameter: question or query")
 	}
 	result, err := eng.Answer(ctx, engine.AnswerOptions{
-		Question:    question,
-		Limit:       args.Limit,
-		ContextOnly: args.ContextOnly,
-		MaxTokens:   args.MaxTokens,
-		Temperature: args.Temperature,
+		Question:     question,
+		SystemPrompt: strings.TrimSpace(args.SystemPrompt),
+		Messages:     args.Messages,
+		Limit:        args.Limit,
+		ContextOnly:  args.ContextOnly,
+		MaxTokens:    args.MaxTokens,
+		Temperature:  args.Temperature,
 	})
 	if err != nil {
 		return "", err

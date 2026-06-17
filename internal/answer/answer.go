@@ -220,7 +220,7 @@ func (a *openAICompatible) Answer(ctx context.Context, req store.AnswerRequest) 
 func buildMessages(req store.AnswerRequest) []openAIChatMessage {
 	systemPrompt := strings.TrimSpace(req.SystemPrompt)
 	if systemPrompt == "" {
-		systemPrompt = "Answer using the supplied code-context evidence. Cite sources with [n] when possible. If the evidence is insufficient, say what is missing instead of inventing."
+		systemPrompt = "Answer using the supplied code-context evidence. Cite sources with the provided labels such as [1]. If the evidence is insufficient, say what is missing instead of inventing."
 	}
 	messages := []openAIChatMessage{{Role: "system", Content: systemPrompt}}
 	for _, msg := range req.Messages {
@@ -250,8 +250,9 @@ func buildUserPrompt(req store.AnswerRequest) string {
 	b.WriteString("Context:\n")
 	remaining := maxContextChars
 	for i, item := range req.Context {
+		citation := answerContextCitation(i+1, item.Citation)
 		if remaining <= 0 {
-			fmt.Fprintf(&b, "\n[%d] ... context truncated ...\n", i+1)
+			fmt.Fprintf(&b, "\n%s ... context truncated ...\n", citation)
 			break
 		}
 		content := strings.TrimSpace(item.Content)
@@ -267,7 +268,8 @@ func buildUserPrompt(req store.AnswerRequest) string {
 		if title == "" {
 			title = answerContextTargetLabel(item.Target)
 		}
-		fmt.Fprintf(&b, "\n[%d] %s\n", i+1, title)
+		fmt.Fprintf(&b, "\n%s %s\n", citation, title)
+		fmt.Fprintf(&b, "Citation: %s\n", citation)
 		if item.Target.Kind != "" || item.Target.Path != "" || item.Target.Name != "" || item.Target.Value != "" {
 			fmt.Fprintf(&b, "Target: %s\n", answerContextTargetLabel(item.Target))
 		}
@@ -277,6 +279,17 @@ func buildUserPrompt(req store.AnswerRequest) string {
 		fmt.Fprintf(&b, "Content:\n%s\n", content)
 	}
 	return b.String()
+}
+
+func answerContextCitation(rank int, citation string) string {
+	citation = strings.TrimSpace(citation)
+	if citation != "" {
+		return citation
+	}
+	if rank <= 0 {
+		rank = 1
+	}
+	return fmt.Sprintf("[%d]", rank)
 }
 
 func answerContextTargetLabel(target store.TargetRef) string {

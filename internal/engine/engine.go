@@ -582,12 +582,23 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 }
 
 type AnswerOptions struct {
-	Query       string   `json:"query,omitempty"`
-	Question    string   `json:"question,omitempty"`
-	Limit       int      `json:"limit,omitempty"`
-	ContextOnly bool     `json:"context_only,omitempty"`
-	MaxTokens   int      `json:"max_tokens,omitempty"`
-	Temperature *float64 `json:"temperature,omitempty"`
+	Query        string                `json:"query,omitempty"`
+	Question     string                `json:"question,omitempty"`
+	SystemPrompt string                `json:"system_prompt,omitempty"`
+	Messages     []store.AnswerMessage `json:"messages,omitempty"`
+	Limit        int                   `json:"limit,omitempty"`
+	ContextOnly  bool                  `json:"context_only,omitempty"`
+	MaxTokens    int                   `json:"max_tokens,omitempty"`
+	Temperature  *float64              `json:"temperature,omitempty"`
+}
+
+type AnswerSource struct {
+	Citation string             `json:"citation"`
+	Title    string             `json:"title,omitempty"`
+	Target   store.TargetRef    `json:"target,omitempty"`
+	Source   store.SearchSource `json:"source,omitempty"`
+	Score    float64            `json:"score,omitempty"`
+	Metadata map[string]string  `json:"metadata,omitempty"`
 }
 
 type AnswerResult struct {
@@ -597,6 +608,7 @@ type AnswerResult struct {
 	Model       string                `json:"model,omitempty"`
 	ContextOnly bool                  `json:"context_only,omitempty"`
 	Context     []store.AnswerContext `json:"context,omitempty"`
+	Sources     []AnswerSource        `json:"sources,omitempty"`
 	Hits        []store.SearchHit     `json:"hits,omitempty"`
 	Usage       *store.AnswerUsage    `json:"usage,omitempty"`
 	Summary     string                `json:"summary"`
@@ -619,6 +631,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 		Question:    question,
 		ContextOnly: opts.ContextOnly,
 		Context:     contextItems,
+		Sources:     answerSourcesFromContext(contextItems),
 		Hits:        hits,
 		Summary:     fmt.Sprintf("Prepared %d retrieved context items for question %q", len(contextItems), question),
 	}
@@ -631,10 +644,12 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	}
 	info := e.answerer.AnswerModel()
 	response, err := e.answerer.Answer(ctx, store.AnswerRequest{
-		Question:    question,
-		Context:     contextItems,
-		MaxTokens:   opts.MaxTokens,
-		Temperature: opts.Temperature,
+		Question:     question,
+		SystemPrompt: strings.TrimSpace(opts.SystemPrompt),
+		Messages:     opts.Messages,
+		Context:      contextItems,
+		MaxTokens:    opts.MaxTokens,
+		Temperature:  opts.Temperature,
 	})
 	if err != nil {
 		return nil, err
@@ -671,11 +686,13 @@ func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) 
 		if content == "" {
 			content = answerTargetLabel(hit.Target)
 		}
-		metadata := map[string]string{"rank": fmt.Sprint(i + 1)}
+		citation := answerCitationLabel(i + 1)
+		metadata := map[string]string{"rank": fmt.Sprint(i + 1), "citation": citation}
 		for k, v := range hit.Metadata {
 			metadata[k] = v
 		}
 		contextItems = append(contextItems, store.AnswerContext{
+			Citation: citation,
 			Target:   hit.Target,
 			Source:   hit.Source,
 			Score:    hit.Score,
@@ -686,6 +703,36 @@ func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) 
 		})
 	}
 	return contextItems, hits, nil
+}
+
+func answerCitationLabel(rank int) string {
+	if rank <= 0 {
+		rank = 1
+	}
+	return fmt.Sprintf("[%d]", rank)
+}
+
+func answerSourcesFromContext(items []store.AnswerContext) []AnswerSource {
+	sources := make([]AnswerSource, 0, len(items))
+	for i, item := range items {
+		citation := strings.TrimSpace(item.Citation)
+		if citation == "" {
+			citation = answerCitationLabel(i + 1)
+		}
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			title = answerTargetLabel(item.Target)
+		}
+		sources = append(sources, AnswerSource{
+			Citation: citation,
+			Title:    title,
+			Target:   item.Target,
+			Source:   item.Source,
+			Score:    item.Score,
+			Metadata: item.Metadata,
+		})
+	}
+	return sources
 }
 
 func answerContentFromHighlights(highlights []store.SearchHighlight) string {

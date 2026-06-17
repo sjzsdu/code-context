@@ -1115,6 +1115,7 @@ func newAnswerCmd() *cobra.Command {
 	var jsonOut bool
 	var maxTokens int
 	var temperature float64
+	var systemPrompt string
 	cmd := &cobra.Command{
 		Use:   "answer <question>",
 		Short: "Answer a question using retrieved code-context evidence",
@@ -1131,11 +1132,12 @@ func newAnswerCmd() *cobra.Command {
 				tempPtr = &temperature
 			}
 			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
-				Question:    strings.TrimSpace(strings.Join(args, " ")),
-				Limit:       limit,
-				ContextOnly: contextOnly,
-				MaxTokens:   maxTokens,
-				Temperature: tempPtr,
+				Question:     strings.TrimSpace(strings.Join(args, " ")),
+				SystemPrompt: strings.TrimSpace(systemPrompt),
+				Limit:        limit,
+				ContextOnly:  contextOnly,
+				MaxTokens:    maxTokens,
+				Temperature:  tempPtr,
 			})
 			if err != nil {
 				if errors.Is(err, engine.ErrCapabilityUnsupported) {
@@ -1163,6 +1165,7 @@ func newAnswerCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 8, "max retrieved context items")
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
+	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0, "override answer max completion tokens")
 	cmd.Flags().Float64Var(&temperature, "temperature", 0, "override answer sampling temperature")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer result")
@@ -2965,11 +2968,15 @@ func formatAnswerContextPlain(items []store.AnswerContext) string {
 	}
 	var b strings.Builder
 	for i, item := range items {
+		citation := strings.TrimSpace(item.Citation)
+		if citation == "" {
+			citation = fmt.Sprintf("[%d]", i+1)
+		}
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
 			title = formatTargetRefPlain(item.Target)
 		}
-		fmt.Fprintf(&b, "%d. %.4f  %s", i+1, item.Score, title)
+		fmt.Fprintf(&b, "%s %.4f  %s", citation, item.Score, title)
 		if item.Source != "" {
 			fmt.Fprintf(&b, "  [%s]", item.Source)
 		}

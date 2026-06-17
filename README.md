@@ -363,11 +363,14 @@ code-context hybrid-search "handler health check" --text-weight 0.5 --vector-wei
 
 Builds answer context from hybrid retrieval, then optionally calls the configured `Answerer`.
 The provider is disabled by default, so `--context-only` is the safe way to preview the retrieved
-evidence without any external model call.
+evidence without any external model call. Results include a provider-neutral `sources` list with
+stable citation labels (`[1]`, `[2]`, ...), and `--system-prompt` can override the default answer
+instruction without changing retrieval.
 
 ```bash
 code-context answer "Where is status served?" --context-only
 code-context answer "Where is status served?" --answer-provider openai-compatible --answer-base-url http://localhost:11434/v1 --answer-model qwen2.5-coder
+code-context answer "Where is status served?" --system-prompt "Answer briefly and cite sources."
 ```
 
 ### `find-def <name>` — Find definition of a symbol
@@ -677,9 +680,12 @@ when query text is provided, they first use the configured `Embedder` to produce
 Answer/RAG support is also provider-neutral. `answer`, `POST /api/answer`, and MCP
 `answer`/`code_context_answer` first build context from `SearchHybrid`, then call the configured
 `Answerer` only when `answer.provider` is enabled. Use `--context-only` or JSON
-`{"context_only": true}` to inspect retrieved evidence without any external model call. The built-in
-`openai-compatible` answer adapter posts to `{base_url}/chat/completions`; additional answer
-providers can implement `store.Answerer` without changing retrieval or storage call sites.
+`{"context_only": true}` to inspect retrieved evidence without any external model call. Answer
+results include provider-neutral citation/source metadata, and requests can override
+`system_prompt` or pass prior `messages` for provider-specific conversation style while keeping
+retrieval backend-neutral. The built-in `openai-compatible` answer adapter posts to
+`{base_url}/chat/completions`; additional answer providers can implement `store.Answerer` without
+changing retrieval or storage call sites.
 
 Embedding support starts as provider-neutral plumbing rather than a full RAG framework dependency.
 The built-in `openai-compatible` adapter posts batches to `{base_url}/embeddings`, preserves source
@@ -713,7 +719,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?` | Build RAG context and optionally call the configured answer provider |
+| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

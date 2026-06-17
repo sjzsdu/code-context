@@ -53,7 +53,8 @@ func TestOpenAICompatibleAnswerer(t *testing.T) {
 		}
 		if !strings.Contains(body.Messages[1].Content, "Where is status handled?") ||
 			!strings.Contains(body.Messages[1].Content, "internal/server/server.go:79") ||
-			!strings.Contains(body.Messages[1].Content, "handleStatus") {
+			!strings.Contains(body.Messages[1].Content, "handleStatus") ||
+			!strings.Contains(body.Messages[1].Content, "Citation: [src-1]") {
 			t.Fatalf("user prompt = %s", body.Messages[1].Content)
 		}
 		return jsonResponse(`{
@@ -80,10 +81,11 @@ func TestOpenAICompatibleAnswerer(t *testing.T) {
 		MaxTokens:   256,
 		Temperature: &temperature,
 		Context: []store.AnswerContext{{
-			Target:  store.TargetRef{Kind: store.TargetFile, Path: "internal/server/server.go", Line: 79, Name: "handleStatus"},
-			Source:  store.SearchSourceText,
-			Score:   0.8,
-			Content: "mux.HandleFunc(\"/api/status\", s.handleStatus)",
+			Citation: "[src-1]",
+			Target:   store.TargetRef{Kind: store.TargetFile, Path: "internal/server/server.go", Line: 79, Name: "handleStatus"},
+			Source:   store.SearchSourceText,
+			Score:    0.8,
+			Content:  "mux.HandleFunc(\"/api/status\", s.handleStatus)",
 		}},
 	})
 	if err != nil {
@@ -100,6 +102,29 @@ func TestOpenAICompatibleAnswerer(t *testing.T) {
 	}
 	if resp.Metadata["finish_reason"] != "stop" {
 		t.Fatalf("metadata = %#v", resp.Metadata)
+	}
+}
+
+func TestBuildMessagesUsesCustomSystemPromptAndMessages(t *testing.T) {
+	messages := buildMessages(store.AnswerRequest{
+		Question:     "What changed?",
+		SystemPrompt: "Custom system prompt",
+		Messages: []store.AnswerMessage{
+			{Role: "assistant", Content: "Prior context"},
+		},
+		Context: []store.AnswerContext{{Citation: "[1]", Content: "Evidence"}},
+	})
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v", messages)
+	}
+	if messages[0].Role != "system" || messages[0].Content != "Custom system prompt" {
+		t.Fatalf("system message = %#v", messages[0])
+	}
+	if messages[1].Role != "assistant" || messages[1].Content != "Prior context" {
+		t.Fatalf("prior message = %#v", messages[1])
+	}
+	if !strings.Contains(messages[2].Content, "Citation: [1]") {
+		t.Fatalf("user message = %s", messages[2].Content)
 	}
 }
 

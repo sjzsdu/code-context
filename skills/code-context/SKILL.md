@@ -166,7 +166,9 @@ treat the field as additive and not backend-specific.
 Answer/RAG support follows the same provider-neutral rule: `answer`, `POST /api/answer`, and MCP
 `answer`/`code_context_answer` build context from hybrid retrieval first, then call a configured
 `Answerer` only when `answer.provider` is enabled. Use `--context-only` or JSON
-`{"context_only": true}` to inspect evidence without any external model call.
+`{"context_only": true}` to inspect evidence without any external model call. Answer results expose
+stable citation/source metadata (`[1]`, `[2]`, ...), and callers can override `system_prompt` or pass
+prior `messages` without coupling to a specific backend.
 
 ## Recommended Dogfood Workflow
 
@@ -478,7 +480,7 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/text` | `q`, `file?`, `limit?` | Text search |
 | POST | `/api/vector` | JSON `VectorSearchQuery` | Provider-backed vector search |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` | Build answer context and optionally call configured `Answerer` |
+| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
 
 ### Symbol Endpoints
 
