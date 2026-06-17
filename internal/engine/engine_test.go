@@ -181,3 +181,46 @@ func TestSnapshotAndContextIncludeHybridHits(t *testing.T) {
 		t.Fatalf("context hybrid hits = %#v, want non-empty", symbolContext.HybridHits)
 	}
 }
+
+func TestEmbeddingPlanReportsMissingAndCachedChunks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer eng.Close()
+	ctx := context.Background()
+	if _, err := eng.Index(ctx, false); err != nil {
+		t.Fatalf("index without embeddings: %v", err)
+	}
+
+	eng.embedder = fakeEmbedder{}
+	missing, err := eng.EmbeddingPlan(ctx, 10)
+	if err != nil {
+		t.Fatalf("embedding plan missing: %v", err)
+	}
+	if !missing.Enabled || !missing.CacheSupported || missing.TotalChunks == 0 || missing.MissingChunks == 0 || !missing.BackfillRequired {
+		t.Fatalf("missing plan = %+v, want pending backfill", missing)
+	}
+	if len(missing.Items) == 0 || missing.Items[0].Status != "missing" {
+		t.Fatalf("missing items = %+v, want missing item", missing.Items)
+	}
+
+	eng.indexer.SetEmbedder(fakeEmbedder{})
+	if _, err := eng.Index(ctx, false); err != nil {
+		t.Fatalf("index with embeddings: %v", err)
+	}
+	cached, err := eng.EmbeddingPlan(ctx, 10)
+	if err != nil {
+		t.Fatalf("embedding plan cached: %v", err)
+	}
+	if cached.BackfillRequired || cached.CachedChunks != cached.TotalChunks || cached.MissingChunks != 0 {
+		t.Fatalf("cached plan = %+v, want complete cache", cached)
+	}
+	if len(cached.Namespaces) != 1 || cached.Namespaces[0].Model != "fake" || cached.Namespaces[0].Dimensions != 1 {
+		t.Fatalf("namespaces = %+v, want fake/1", cached.Namespaces)
+	}
+}

@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/symbol-impact", s.handleSymbolImpact)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/embedding-plan", s.handleEmbeddingPlan)
 	mux.HandleFunc("/api/freshness", s.handleFreshness)
 	mux.HandleFunc("/api/doctor", s.handleDoctor)
 	mux.HandleFunc("/api/rebuild", s.handleRebuild)
@@ -385,6 +386,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status)
+}
+
+func (s *Server) handleEmbeddingPlan(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 0 {
+		limit = 0
+	}
+	plan, err := s.eng.EmbeddingPlan(r.Context(), limit)
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, plan)
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {

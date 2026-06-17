@@ -46,23 +46,26 @@ code-context map
 # 3. Search symbols
 code-context search "Handler"
 
-# 4. Search provider-backed vectors when Helix + embeddings are configured
+# 4. Check embedding cache coverage when embeddings are configured
+code-context embedding-plan
+
+# 5. Search provider-backed vectors when Helix + embeddings are configured
 code-context vector-search "handler health check"
 
-# 5. Fuse text/vector/graph when advanced capabilities are available
+# 6. Fuse text/vector/graph when advanced capabilities are available
 code-context hybrid-search "handler health check"
 
-# 6. Get detailed context
+# 7. Get detailed context
 code-context context Engine
 
-# 7. Explore graph relationships
+# 8. Explore graph relationships
 code-context graph neighbors Engine
 
-# 8. Generate project-wide or focused LLM context
+# 9. Generate project-wide or focused LLM context
 code-context snapshot
 code-context snapshot "authentication"
 
-# 9. Open the interactive visual graph
+# 10. Open the interactive visual graph
 code-context graph html > graph.html
 ```
 
@@ -121,7 +124,9 @@ provider-neutral interfaces. SQLite and Helix implement the provider-neutral emb
 stores vectors in model+dimension-namespaced chunk properties so different embedding spaces are not
 mixed in one vector index. Use `vector-search`, `/api/vector`, or MCP `vector_search`/
 `code_context_vector_search` to call `VectorSearcher`; query-text search additionally requires a
-configured `Embedder`. Use `hybrid-search`, `/api/hybrid`, or MCP `hybrid_search`/
+configured `Embedder`. Use `embedding-plan`, `/api/embedding-plan`, or MCP
+`code_context_embedding_plan` to inspect cache coverage and plan model backfills without calling the
+embedding provider. Use `hybrid-search`, `/api/hybrid`, or MCP `hybrid_search`/
 `code_context_hybrid_search` to fuse text, vector, and graph signals while degrading to the
 capabilities present in the selected backend. The engine fallback normalizes each source's scores
 per query before applying weights, and stores raw score, normalized score, rank, contribution, and
@@ -485,6 +490,7 @@ Start server: `code-context serve --port 9090`
 |---|---|---|---|
 | GET | `/api/stats` | — | Index stats with version metadata |
 | GET | `/api/status` | — | Workflow/service status including provider capabilities and watch metadata |
+| GET | `/api/embedding-plan` | `limit?` | Embedding cache coverage and backfill plan |
 | POST | `/api/index` | `incremental?` | Re-index |
 
 ## MCP Server
@@ -502,6 +508,7 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 - `POST /api/graph/traverse` — provider-backed graph traversal with `GraphTraversalQuery`
 - `GET /api/stats` — index stats with version metadata
 - `GET /api/status` — workflow/service status with provider capabilities and watch metadata
+- `GET /api/embedding-plan` — embedding cache coverage and backfill plan
 - `POST /api/index?incremental=true` — trigger refresh
 
 ### MCP Server
@@ -560,6 +567,7 @@ go build -o code-context-mcp ./cmd/mcp
 | `imports` | Show file imports | `file` |
 | `importers` | Find importing files | `source` |
 | `stats` | Index statistics | - |
+| `code_context_embedding_plan` | Embedding cache coverage and backfill plan | `limit?` |
 | `map` | Project architecture with graph analysis | - |
 | `graph` | Export repository or focused graph JSON | `focus?` |
 | `graph_path` | Find a file-level path through the graph | `from`, `to` |

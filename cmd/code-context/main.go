@@ -106,6 +106,7 @@ func main() {
 		newDocCoverageCmd(),
 		newStatsCmd(),
 		newStatusCmd(),
+		newEmbeddingPlanCmd(),
 		newFreshnessCmd(),
 		newDoctorCmd(),
 		newCICmd(),
@@ -1334,6 +1335,62 @@ func newStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newEmbeddingPlanCmd() *cobra.Command {
+	var limit int
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "embedding-plan",
+		Short: "Show embedding cache coverage and backfill plan for the configured model",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			plan, err := eng.EmbeddingPlan(context.Background(), limit)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(plan)
+			}
+			fmt.Println(plan.Summary)
+			if plan.Enabled {
+				fmt.Printf("Embedding:     %s model=%s", plan.Provider, plan.Model)
+				if plan.Dimensions > 0 {
+					fmt.Printf(" dimensions=%d", plan.Dimensions)
+				}
+				fmt.Println()
+			} else {
+				fmt.Println("Embedding:     disabled")
+			}
+			fmt.Printf("Cache support: %t\n", plan.CacheSupported)
+			if plan.CacheSupported {
+				fmt.Printf("Chunks:        %d total, %d cached, %d missing, %d stale, %d errors\n", plan.TotalChunks, plan.CachedChunks, plan.MissingChunks, plan.StaleChunks, plan.ErrorChunks)
+			}
+			for _, item := range plan.Items {
+				location := item.Path
+				if item.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, item.Line)
+				}
+				if item.Name != "" {
+					location += " " + item.Name
+				}
+				fmt.Printf("  %s [%s %s] %s\n", location, item.Kind, item.Status, item.Reason)
+			}
+			if plan.Truncated {
+				fmt.Printf("  ... truncated at %d items\n", len(plan.Items))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "max pending chunks to print, 0 for all")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON plan")
+	return cmd
 }
 
 func newFreshnessCmd() *cobra.Command {

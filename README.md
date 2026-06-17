@@ -83,6 +83,7 @@ code-context doc-coverage
 # Check and repair index health
 code-context doctor
 code-context freshness
+code-context embedding-plan
 code-context rebuild
 
 # Show index stats
@@ -225,6 +226,7 @@ code-context index
 code-context map
 code-context snapshot
 code-context search Snapshot
+code-context embedding-plan
 code-context vector-search Snapshot
 code-context hybrid-search Snapshot
 code-context context Snapshot
@@ -262,6 +264,17 @@ provider for query text or a raw vector supplied with `--vector`.
 ```bash
 code-context vector-search "handler health check" --limit 10
 code-context vector-search --vector 0.1,0.2,0.3 --model text-embedding-test --dimensions 3 --json
+```
+
+### `embedding-plan` — Inspect embedding cache coverage
+
+Computes the expected symbol/document embedding chunks for the currently configured embedding
+model namespace without calling the embedding provider. Use it before or after switching models to
+see how many chunks are already cached and how many need a normal `index`/`rebuild` backfill.
+
+```bash
+code-context embedding-plan
+code-context embedding-plan --json --limit 100
 ```
 
 ### `hybrid-search [query]` — Fuse text, vector, and graph signals
@@ -625,6 +638,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/symbol-impact` | `name` | Return symbol-level callers, callees, docs, routes, tests, and risk |
 | GET | `/api/stats` | — | Index statistics with version metadata |
 | GET | `/api/status` | — | Service/workflow status including provider capabilities and watch metadata |
+| GET | `/api/embedding-plan` | `limit?` | Embedding cache coverage and backfill plan for the configured model |
 | GET | `/api/freshness` | `limit?` | Report indexed files/documents that differ from the filesystem |
 | GET | `/api/doctor` | — | Check database schema, index freshness, and service health |
 | POST | `/api/index` | `incremental?` | Trigger indexing |
@@ -699,6 +713,7 @@ Add to your AI client config:
 | `docs_for` | Find documentation references for a file, symbol, or module | `query` |
 | `doc_drift` | Report broken documentation references | - |
 | `stats` | Show index statistics | - |
+| `code_context_embedding_plan` | Embedding cache coverage and backfill plan | `limit?` |
 | `code_context_freshness` | Report indexed files/documents that differ from the filesystem | `limit?` |
 | `code_context_doctor` | Check database schema, index freshness, and service health | - |
 | `map` | Show project architecture overview with graph analysis | - |

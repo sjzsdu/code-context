@@ -135,6 +135,19 @@ func TestRunVectorSearchToolUnsupported(t *testing.T) {
 	}
 }
 
+func TestRunEmbeddingPlanToolDisabled(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runEmbeddingPlanTool(context.Background(), eng, FreshnessArgs{Limit: 2})
+	if err != nil {
+		t.Fatalf("run embedding plan tool: %v", err)
+	}
+	if !strings.Contains(out, "\"enabled\": false") || !strings.Contains(out, "embedding provider is disabled") {
+		t.Fatalf("expected disabled embedding plan, got:\n%s", out)
+	}
+}
+
 func TestRunHybridSearchTool(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()

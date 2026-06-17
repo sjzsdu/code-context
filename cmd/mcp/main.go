@@ -337,6 +337,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(out), nil, nil
 		})
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_embedding_plan", Description: "Show embedding cache coverage and backfill plan for the configured model"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args FreshnessArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runEmbeddingPlanTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_search", Description: "Search symbols by name in the indexed codebase"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, any, error) {
 			if args.Query == "" {
@@ -1220,6 +1229,18 @@ func runVectorSearchTool(ctx context.Context, eng *engine.Engine, args VectorSea
 		return "", err
 	}
 	return marshalIndentedJSON(map[string]any{"results": hits, "count": len(hits)})
+}
+
+func runEmbeddingPlanTool(ctx context.Context, eng *engine.Engine, args FreshnessArgs) (string, error) {
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	plan, err := eng.EmbeddingPlan(ctx, limit)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(plan)
 }
 
 func runHybridSearchTool(ctx context.Context, eng *engine.Engine, args HybridSearchArgs) (string, error) {

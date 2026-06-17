@@ -2608,6 +2608,181 @@ func (e *Engine) embeddingStatus() *api.EmbeddingStatus {
 	}
 }
 
+type EmbeddingPlan struct {
+	Enabled          bool                     `json:"enabled"`
+	CacheSupported   bool                     `json:"cache_supported"`
+	Provider         string                   `json:"provider,omitempty"`
+	Model            string                   `json:"model,omitempty"`
+	Dimensions       int                      `json:"dimensions,omitempty"`
+	TotalChunks      int                      `json:"total_chunks"`
+	CachedChunks     int                      `json:"cached_chunks"`
+	MissingChunks    int                      `json:"missing_chunks"`
+	StaleChunks      int                      `json:"stale_chunks,omitempty"`
+	ErrorChunks      int                      `json:"error_chunks,omitempty"`
+	BackfillRequired bool                     `json:"backfill_required"`
+	Summary          string                   `json:"summary"`
+	Items            []EmbeddingPlanItem      `json:"items,omitempty"`
+	Truncated        bool                     `json:"truncated,omitempty"`
+	Namespaces       []EmbeddingPlanNamespace `json:"namespaces,omitempty"`
+}
+
+type EmbeddingPlanNamespace struct {
+	Model      string `json:"model"`
+	Dimensions int    `json:"dimensions"`
+	Chunks     int    `json:"chunks"`
+}
+
+type EmbeddingPlanItem struct {
+	Key         string                   `json:"key,omitempty"`
+	Status      string                   `json:"status"`
+	Reason      string                   `json:"reason,omitempty"`
+	Kind        store.EmbeddingInputKind `json:"kind,omitempty"`
+	Path        string                   `json:"path,omitempty"`
+	Name        string                   `json:"name,omitempty"`
+	Line        int                      `json:"line,omitempty"`
+	ContentHash string                   `json:"content_hash,omitempty"`
+}
+
+func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, error) {
+	plan := &EmbeddingPlan{}
+	if e.embedder == nil {
+		plan.Summary = "embedding provider is disabled; no embedding backfill plan is available"
+		return plan, nil
+	}
+	info := e.embedder.EmbeddingModel()
+	plan.Enabled = true
+	plan.Provider = info.Provider
+	plan.Model = strings.TrimSpace(info.Model)
+	plan.Dimensions = info.Dimensions
+	cache, ok := e.store.(store.EmbeddingCache)
+	if !ok {
+		plan.Summary = "active store does not implement embedding cache; embeddings cannot be planned"
+		return plan, nil
+	}
+	plan.CacheSupported = true
+	if plan.Model == "" {
+		return nil, fmt.Errorf("embedding model is required")
+	}
+
+	chunks, err := e.embeddingPlanChunks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	plan.TotalChunks = len(chunks)
+	namespaceCounts := map[string]*EmbeddingPlanNamespace{}
+	addItem := func(item EmbeddingPlanItem) {
+		if limit <= 0 || len(plan.Items) < limit {
+			plan.Items = append(plan.Items, item)
+		} else {
+			plan.Truncated = true
+		}
+	}
+	for _, chunk := range chunks {
+		select {
+		case <-ctx.Done():
+			return plan, ctx.Err()
+		default:
+		}
+		key := embeddingpkg.CacheKey(plan.Model, plan.Dimensions, chunk.Text)
+		entry, err := cache.GetEmbedding(ctx, key)
+		status := "cached"
+		reason := ""
+		if err != nil {
+			status = "error"
+			reason = err.Error()
+			plan.ErrorChunks++
+		} else if entry == nil || len(entry.Values) == 0 {
+			status = "missing"
+			reason = "embedding cache entry not found for current model namespace"
+			plan.MissingChunks++
+		} else if entry.ContentHash != "" && entry.ContentHash != chunk.ContentHash {
+			status = "stale"
+			reason = "cached embedding content hash differs from current chunk"
+			plan.StaleChunks++
+		} else {
+			plan.CachedChunks++
+			nsKey := fmt.Sprintf("%s\x00%d", entry.Model, entry.Dimensions)
+			ns := namespaceCounts[nsKey]
+			if ns == nil {
+				ns = &EmbeddingPlanNamespace{Model: entry.Model, Dimensions: entry.Dimensions}
+				namespaceCounts[nsKey] = ns
+			}
+			ns.Chunks++
+		}
+		if status != "cached" {
+			addItem(EmbeddingPlanItem{
+				Key:         key,
+				Status:      status,
+				Reason:      reason,
+				Kind:        chunk.Kind,
+				Path:        chunk.Target.Path,
+				Name:        chunk.Target.Name,
+				Line:        chunk.Target.Line,
+				ContentHash: chunk.ContentHash,
+			})
+		}
+	}
+	plan.BackfillRequired = plan.MissingChunks > 0 || plan.StaleChunks > 0 || plan.ErrorChunks > 0
+	namespaces := make([]EmbeddingPlanNamespace, 0, len(namespaceCounts))
+	for _, ns := range namespaceCounts {
+		namespaces = append(namespaces, *ns)
+	}
+	sort.Slice(namespaces, func(i, j int) bool {
+		if namespaces[i].Model != namespaces[j].Model {
+			return namespaces[i].Model < namespaces[j].Model
+		}
+		return namespaces[i].Dimensions < namespaces[j].Dimensions
+	})
+	plan.Namespaces = namespaces
+	if plan.BackfillRequired {
+		plan.Summary = fmt.Sprintf("embedding backfill required for %d/%d chunks in namespace %s/%d (%d missing, %d stale, %d errors)", plan.MissingChunks+plan.StaleChunks+plan.ErrorChunks, plan.TotalChunks, plan.Model, plan.Dimensions, plan.MissingChunks, plan.StaleChunks, plan.ErrorChunks)
+	} else {
+		plan.Summary = fmt.Sprintf("embedding cache is complete for %d chunks in namespace %s/%d", plan.TotalChunks, plan.Model, plan.Dimensions)
+	}
+	return plan, nil
+}
+
+func (e *Engine) embeddingPlanChunks(ctx context.Context) ([]embeddingpkg.Chunk, error) {
+	files, err := e.store.ListFiles(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	chunks := make([]embeddingpkg.Chunk, 0)
+	for _, f := range files {
+		select {
+		case <-ctx.Done():
+			return chunks, ctx.Err()
+		default:
+		}
+		content, err := os.ReadFile(filepath.Join(e.root, f.Path))
+		if err != nil {
+			continue
+		}
+		syms, err := e.store.GetFileSymbols(ctx, f.Path)
+		if err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, embeddingpkg.BuildSymbolChunks("", f.Path, content, syms)...)
+	}
+	docs, err := e.store.ListDocuments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, doc := range docs {
+		select {
+		case <-ctx.Done():
+			return chunks, ctx.Err()
+		default:
+		}
+		content, err := os.ReadFile(filepath.Join(e.root, doc.Path))
+		if err != nil {
+			continue
+		}
+		chunks = append(chunks, embeddingpkg.BuildDocumentChunks("", doc, content)...)
+	}
+	return chunks, nil
+}
+
 func capabilityNames(caps []store.Capability) []string {
 	names := make([]string, 0, len(caps))
 	for _, cap := range caps {

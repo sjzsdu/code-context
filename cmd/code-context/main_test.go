@@ -110,6 +110,29 @@ func TestStatusCmdIncludesWorkflowMetadata(t *testing.T) {
 	}
 }
 
+func TestEmbeddingPlanCmdReportsDisabledProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	prevRoot, prevDB, prevStoreBackend := root, dbPath, storeBackend
+	prevEmbeddingProvider := embeddingProvider
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	storeBackend = ""
+	embeddingProvider = ""
+	defer func() {
+		root, dbPath, storeBackend = prevRoot, prevDB, prevStoreBackend
+		embeddingProvider = prevEmbeddingProvider
+	}()
+
+	cmd := newEmbeddingPlanCmd()
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute embedding-plan cmd: %v", err)
+	}
+	if !strings.Contains(out, "embedding provider is disabled") || !strings.Contains(out, "Embedding:     disabled") {
+		t.Fatalf("expected disabled embedding plan, got:\n%s", out)
+	}
+}
+
 func TestGraphCmd(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-graph-test-*")
 	if err != nil {

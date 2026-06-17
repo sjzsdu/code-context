@@ -454,6 +454,29 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestEmbeddingPlanEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Get(ts.URL + "/api/embedding-plan?limit=2")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload engine.EmbeddingPlan
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Enabled {
+		t.Fatalf("expected disabled embedding plan for default test server, got %+v", payload)
+	}
+	if !strings.Contains(payload.Summary, "disabled") {
+		t.Fatalf("expected disabled summary, got %+v", payload)
+	}
+}
+
 func TestGraphEndpoint(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
