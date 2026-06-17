@@ -123,7 +123,10 @@ mixed in one vector index. Use `vector-search`, `/api/vector`, or MCP `vector_se
 `code_context_vector_search` to call `VectorSearcher`; query-text search additionally requires a
 configured `Embedder`. Use `hybrid-search`, `/api/hybrid`, or MCP `hybrid_search`/
 `code_context_hybrid_search` to fuse text, vector, and graph signals while degrading to the
-capabilities present in the selected backend.
+capabilities present in the selected backend. Query-focused `context`, `snapshot`, HTTP responses,
+and agent `code_context_explore`/`code_context_context`/`code_context_snapshot` also expose
+best-effort `hybrid_hits` as optional evidence; consumers should treat the field as additive and
+not backend-specific.
 
 ## Recommended Dogfood Workflow
 
@@ -254,6 +257,8 @@ paths from the start target.
 When the active backend supports `GraphTraverser`, higher-level outputs such as `explain`,
 `context`, `impact`, `route-context`, `snapshot`, and matching MCP tools include best-effort
 provider graph traversal summaries; SQLite/local fallback output simply omits those optional fields.
+Focused `context`/`snapshot` output and agent `explore` additionally surface hybrid retrieval hits
+when text/vector/graph signals are available, while still falling back to local text evidence.
 
 Graph exports are versioned as `graph-export.v2` and include a richer repository graph with:
 

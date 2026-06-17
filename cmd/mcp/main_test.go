@@ -148,6 +148,24 @@ func TestRunHybridSearchTool(t *testing.T) {
 	}
 }
 
+func TestFormatHybridHitsMarkdown(t *testing.T) {
+	out := formatHybridHitsMarkdown([]store.SearchHit{{
+		Target: store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "Foo", Line: 3},
+		Score:  0.9,
+		Source: store.SearchSourceHybrid,
+		Metadata: map[string]string{
+			"sources": "text,vector",
+		},
+		Evidence: "func Foo() {}",
+	}})
+	if !strings.Contains(out, "## Hybrid Retrieval (1)") ||
+		!strings.Contains(out, "`a.go:3`") ||
+		!strings.Contains(out, "sources: text,vector") ||
+		!strings.Contains(out, "func Foo() {}") {
+		t.Fatalf("unexpected hybrid markdown:\n%s", out)
+	}
+}
+
 func TestRunHybridSearchToolRequiresSignal(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()

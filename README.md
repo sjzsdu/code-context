@@ -560,7 +560,10 @@ provider graph traversal summaries when the backend supports `GraphTraverser`; S
 fallbacks simply omit those optional fields. `/api/text` and search callers use text search when
 available and keep the local grep fallback for backends without the capability. `hybrid-search`,
 `/api/hybrid`, and MCP `hybrid_search`/`code_context_hybrid_search` fuse text, vector, and graph
-signals when available and degrade to the supported subset. `vector-search`,
+signals when available and degrade to the supported subset. Query-focused `context`, `snapshot`,
+HTTP responses, and agent `code_context_explore`/`code_context_context`/`code_context_snapshot`
+also surface best-effort hybrid retrieval hints as optional `hybrid_hits` so callers can use the
+extra evidence without coupling to any specific backend. `vector-search`,
 `/api/vector`, and MCP `vector_search`/`code_context_vector_search` call `VectorSearcher` directly;
 when query text is provided, they first use the configured `Embedder` to produce the query vector.
 

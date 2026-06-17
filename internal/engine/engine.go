@@ -1101,6 +1101,26 @@ func hybridTargetDisplay(target store.TargetRef) string {
 	}
 }
 
+func (e *Engine) bestEffortHybridSearch(ctx context.Context, query string, limit int, expandFrom []store.TargetRef) []store.SearchHit {
+	query = strings.TrimSpace(query)
+	if query == "" && len(expandFrom) == 0 {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	hits, err := e.SearchHybrid(ctx, store.HybridSearchQuery{
+		Query:          query,
+		Limit:          limit,
+		ExpandFrom:     expandFrom,
+		ExpandMaxDepth: 1,
+	})
+	if err != nil {
+		return nil
+	}
+	return hits
+}
+
 func (e *Engine) bestEffortGraphTraversal(ctx context.Context, query store.GraphTraversalQuery) *store.GraphTraversalResult {
 	result, err := e.TraverseGraph(ctx, query)
 	if err != nil {
@@ -1133,20 +1153,24 @@ func (e *Engine) graphTraversalForSymbol(ctx context.Context, sym api.Symbol, de
 		return nil
 	}
 	return e.bestEffortGraphTraversal(ctx, store.GraphTraversalQuery{
-		Start: store.TargetRef{
-			Kind:    store.TargetSymbol,
-			Path:    sym.FilePath,
-			Name:    name,
-			Type:    string(sym.Kind),
-			Line:    sym.Line,
-			EndLine: sym.EndLine,
-		},
+		Start:        symbolTargetRef(sym),
 		EdgeKinds:    []store.GraphEdgeKind{store.GraphEdgeCalls, store.GraphEdgeRoutes, store.GraphEdgeDocuments, store.GraphEdgeReferences},
 		Direction:    store.GraphBoth,
 		MaxDepth:     graphTraversalDepth(depth),
 		Limit:        50,
 		IncludePaths: true,
 	})
+}
+
+func symbolTargetRef(sym api.Symbol) store.TargetRef {
+	return store.TargetRef{
+		Kind:    store.TargetSymbol,
+		Path:    sym.FilePath,
+		Name:    strings.TrimSpace(sym.Name),
+		Type:    string(sym.Kind),
+		Line:    sym.Line,
+		EndLine: sym.EndLine,
+	}
 }
 
 func (e *Engine) graphTraversalForRoute(ctx context.Context, route api.Route, depth int) *store.GraphTraversalResult {
@@ -3022,6 +3046,7 @@ type SymbolContext struct {
 	Definition       api.Symbol                  `json:"definition"`
 	Methods          []api.Symbol                `json:"methods,omitempty"`
 	Related          []api.Symbol                `json:"related"`
+	HybridHits       []store.SearchHit           `json:"hybrid_hits,omitempty"`
 	RelatedFiles     []string                    `json:"related_files,omitempty"`
 	RecommendedFiles []string                    `json:"recommended_files,omitempty"`
 	GraphSummary     string                      `json:"graph_summary,omitempty"`
@@ -3033,6 +3058,7 @@ type Snapshot struct {
 	Query            string             `json:"query"`
 	Files            []FileSummary      `json:"files"`
 	Symbols          []api.Symbol       `json:"symbols"`
+	HybridHits       []store.SearchHit  `json:"hybrid_hits,omitempty"`
 	Summary          string             `json:"summary"`
 	RecommendedFiles []string           `json:"recommended_files,omitempty"`
 	Analysis         *api.GraphAnalysis `json:"analysis,omitempty"`
@@ -3077,44 +3103,52 @@ func (e *Engine) Snapshot(ctx context.Context, query string, maxFiles int) (*Sna
 	if err != nil {
 		return nil, err
 	}
+	hybridHits := e.bestEffortHybridSearch(ctx, query, maxFiles*4, nil)
 
-	fileMap := make(map[string]bool)
+	symbolFileMap := make(map[string]bool)
 	var resultSyms []api.Symbol
 	for _, s := range syms {
-		if !fileMap[s.FilePath] {
-			fileMap[s.FilePath] = true
+		if !symbolFileMap[s.FilePath] {
+			symbolFileMap[s.FilePath] = true
 			resultSyms = append(resultSyms, s)
 		}
 	}
 
 	var files []FileSummary
-	count := 0
-	for _, s := range resultSyms {
-		if count >= maxFiles {
-			break
+	fileMap := make(map[string]bool)
+	addFileSummary := func(filePath string) {
+		filePath = strings.TrimSpace(filePath)
+		if filePath == "" || fileMap[filePath] || len(files) >= maxFiles {
+			return
 		}
-		fs, err := e.Explain(ctx, s.FilePath)
+		fs, err := e.Explain(ctx, filePath)
 		if err != nil {
-			continue
+			return
 		}
 		files = append(files, *fs)
-		count++
+		fileMap[filePath] = true
+	}
+	for _, s := range resultSyms {
+		if len(files) >= maxFiles {
+			break
+		}
+		addFileSummary(s.FilePath)
+	}
+
+	for _, hit := range hybridHits {
+		if len(files) >= maxFiles {
+			break
+		}
+		addFileSummary(hit.Target.Path)
 	}
 
 	textResults, err := e.search.SearchText(ctx, query, "", 10)
 	if err == nil {
 		for _, r := range textResults {
-			if !fileMap[r.FilePath] {
-				fileMap[r.FilePath] = true
-				fs, err := e.Explain(ctx, r.FilePath)
-				if err != nil {
-					continue
-				}
-				files = append(files, *fs)
-				if len(files) >= maxFiles {
-					break
-				}
+			if len(files) >= maxFiles {
+				break
 			}
+			addFileSummary(r.FilePath)
 		}
 	}
 
@@ -3135,6 +3169,7 @@ func (e *Engine) Snapshot(ctx context.Context, query string, maxFiles int) (*Sna
 		Query:            query,
 		Files:            files,
 		Symbols:          resultSyms,
+		HybridHits:       hybridHits,
 		Summary:          summary,
 		RecommendedFiles: recommendedFiles,
 		Analysis:         analysis,
@@ -3186,6 +3221,18 @@ func (e *Engine) Context(ctx context.Context, name string) (*SymbolContext, erro
 	result.GraphSummary = fmt.Sprintf("%s. Definition file: %s", graphSummary, def.FilePath)
 	result.GraphTraversal = e.graphTraversalForSymbol(ctx, def, 2)
 	result.Analysis = analysis
+	result.HybridHits = e.bestEffortHybridSearch(ctx, name, 8, []store.TargetRef{symbolTargetRef(def)})
+	for _, hit := range result.HybridHits {
+		if hit.Target.Path == "" || hit.Target.Path == def.FilePath {
+			continue
+		}
+		if !containsString(result.RelatedFiles, hit.Target.Path) {
+			result.RelatedFiles = append(result.RelatedFiles, hit.Target.Path)
+		}
+		if !containsString(result.RecommendedFiles, hit.Target.Path) {
+			result.RecommendedFiles = append(result.RecommendedFiles, hit.Target.Path)
+		}
+	}
 	return result, nil
 }
 

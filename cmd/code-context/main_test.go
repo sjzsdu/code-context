@@ -684,6 +684,9 @@ func TestContextCmdIncludesGraphGuidance(t *testing.T) {
 	if !strings.Contains(out, "Graph:") {
 		t.Fatalf("expected graph summary in context output, got:\n%s", out)
 	}
+	if !strings.Contains(out, "Hybrid retrieval") {
+		t.Fatalf("expected hybrid retrieval in context output, got:\n%s", out)
+	}
 	if !strings.Contains(out, "Related files:") {
 		t.Fatalf("expected related files in context output, got:\n%s", out)
 	}
@@ -741,6 +744,9 @@ func TestSnapshotCmdIncludesGraphGuidance(t *testing.T) {
 	}
 	if !strings.Contains(out, "Recommended next files:") {
 		t.Fatalf("expected recommended files in snapshot output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Hybrid retrieval") {
+		t.Fatalf("expected hybrid retrieval in snapshot output, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Graph analysis:") {
 		t.Fatalf("expected graph analysis in snapshot output, got:\n%s", out)

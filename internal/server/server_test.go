@@ -826,6 +826,9 @@ func TestContextEndpoint(t *testing.T) {
 	if _, ok := payload["related_files"]; !ok {
 		t.Fatalf("expected related_files in context response, got: %v", payload)
 	}
+	if hits, ok := payload["hybrid_hits"].([]interface{}); !ok || len(hits) == 0 {
+		t.Fatalf("expected hybrid_hits in context response, got: %v", payload)
+	}
 	analysis, ok := payload["analysis"].(map[string]interface{})
 	if !ok || analysis == nil {
 		t.Fatalf("expected analysis in context response, got: %v", payload)
@@ -880,6 +883,9 @@ func TestSnapshotEndpoint(t *testing.T) {
 	}
 	if _, ok := payload["recommended_files"]; !ok {
 		t.Fatalf("expected recommended_files in snapshot response, got: %v", payload)
+	}
+	if hits, ok := payload["hybrid_hits"].([]interface{}); !ok || len(hits) == 0 {
+		t.Fatalf("expected hybrid_hits in snapshot response, got: %v", payload)
 	}
 	analysis, ok := payload["analysis"].(map[string]interface{})
 	if !ok || analysis == nil {

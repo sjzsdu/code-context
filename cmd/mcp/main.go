@@ -356,7 +356,8 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			}
 			syms, _ := eng.SearchSymbolsHybrid(ctx, args.Query, nil, 10)
 			texts, _ := eng.SearchText(ctx, args.Query, "", 8)
-			out := "# Explore: " + args.Query + "\n\n## Symbols\n" + search.FormatSymbols(syms) + "\n## Text Matches\n"
+			hybridHits, _ := eng.SearchHybrid(ctx, store.HybridSearchQuery{Query: args.Query, Limit: 8})
+			out := "# Explore: " + args.Query + "\n" + formatHybridHitsMarkdown(hybridHits) + "\n## Symbols\n" + search.FormatSymbols(syms) + "\n## Text Matches\n"
 			for _, m := range texts {
 				out += fmt.Sprintf("- `%s:%d` %s\n", m.FilePath, m.Line, strings.TrimSpace(m.Content))
 			}
@@ -415,6 +416,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 					out += fmt.Sprintf("- `%s` at `%s:%d`\n", m.Name, m.FilePath, m.Line)
 				}
 			}
+			if len(c.Related) > 0 {
+				out += "\n## Related Symbols\n"
+				n := 10
+				if len(c.Related) < n {
+					n = len(c.Related)
+				}
+				out += search.FormatSymbols(c.Related[:n])
+			}
+			out += formatHybridHitsMarkdown(c.HybridHits)
 			out += recommendedCalls("code_context_callers", "code_context_callees", "code_context_snapshot")
 			return textResult(withStaleWarning(ctx, eng, out)), nil, nil
 		})
@@ -433,6 +443,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			out := fmt.Sprintf("# Snapshot: %s\n\n%s\n", s.Query, s.Summary)
+			out += formatHybridHitsMarkdown(s.HybridHits)
 			for _, f := range s.Files {
 				out += fmt.Sprintf("\n## `%s`\nLanguage: %s\n", f.Path, f.Language)
 			}
@@ -923,6 +934,7 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 			}
 			output += search.FormatSymbols(c.Related[:n])
 		}
+		output += formatHybridHitsMarkdown(c.HybridHits)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: output}},
 		}, nil, nil
@@ -953,6 +965,7 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 			return nil, nil, fmt.Errorf("snapshot failed: %w", err)
 		}
 		output := fmt.Sprintf("Query: %s\nSummary: %s\n\n", s.Query, s.Summary)
+		output += formatHybridHitsMarkdown(s.HybridHits)
 		for _, f := range s.Files {
 			output += fmt.Sprintf("--- %s ---\n", f.Path)
 			output += fmt.Sprintf("Language: %s\n", f.Language)
@@ -1344,6 +1357,71 @@ func recommendedCalls(names ...string) string {
 		out += fmt.Sprintf("%d. %s\n", i+1, name)
 	}
 	return out
+}
+
+func formatHybridHitsMarkdown(hits []store.SearchHit) string {
+	if len(hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n## Hybrid Retrieval (%d)\n", len(hits))
+	for i, hit := range hits {
+		target := hit.Target
+		location := target.Path
+		if target.Line > 0 {
+			location = fmt.Sprintf("%s:%d", location, target.Line)
+		}
+		if location == "" {
+			switch {
+			case target.RoutePath != "":
+				location = target.RoutePath
+			case target.Value != "":
+				location = target.Value
+			case target.Name != "":
+				location = target.Name
+			case target.Kind != "":
+				location = string(target.Kind)
+			default:
+				location = "unknown"
+			}
+		}
+		label := target.Name
+		if label == "" {
+			label = target.RoutePath
+		}
+		if label == "" {
+			label = target.Value
+		}
+		sources := ""
+		if hit.Metadata != nil {
+			sources = strings.TrimSpace(hit.Metadata["sources"])
+		}
+		if sources == "" && hit.Source != "" {
+			sources = string(hit.Source)
+		}
+		fmt.Fprintf(&b, "%d. `%s`", i+1, location)
+		if label != "" && label != location && label != target.Path {
+			fmt.Fprintf(&b, " — **%s**", label)
+		}
+		details := make([]string, 0, 3)
+		if target.Kind != "" {
+			details = append(details, string(target.Kind))
+		}
+		if hit.Score > 0 {
+			details = append(details, fmt.Sprintf("score %.4f", hit.Score))
+		}
+		if sources != "" {
+			details = append(details, "sources: "+sources)
+		}
+		if len(details) > 0 {
+			fmt.Fprintf(&b, " (%s)", strings.Join(details, ", "))
+		}
+		b.WriteByte('\n')
+		if evidence := strings.TrimSpace(hit.Evidence); evidence != "" {
+			fmt.Fprintf(&b, "   - %s\n", evidence)
+		}
+	}
+	return b.String()
 }
 
 func formatCallsMarkdown(title string, calls []api.CallEdge) string {

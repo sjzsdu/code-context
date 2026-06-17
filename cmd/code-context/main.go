@@ -2002,6 +2002,9 @@ func newContextCmd() *cobra.Command {
 				n := min(len(c.Related), 10)
 				fmt.Println(search.FormatSymbols(c.Related[:n]))
 			}
+			if len(c.HybridHits) > 0 {
+				fmt.Printf("\nHybrid retrieval (%d):\n%s\n", len(c.HybridHits), formatSearchHitsPlain(c.HybridHits))
+			}
 			if c.GraphSummary != "" {
 				fmt.Printf("\nGraph: %s\n", c.GraphSummary)
 			}
@@ -2048,6 +2051,9 @@ func newSnapshotCmd() *cobra.Command {
 			fmt.Printf("Summary: %s\n", s.Summary)
 			if len(s.RecommendedFiles) > 0 {
 				fmt.Printf("Recommended next files: %s\n", strings.Join(s.RecommendedFiles, ", "))
+			}
+			if len(s.HybridHits) > 0 {
+				fmt.Printf("Hybrid retrieval (%d):\n%s\n", len(s.HybridHits), formatSearchHitsPlain(s.HybridHits))
 			}
 			fmt.Println()
 

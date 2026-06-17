@@ -149,3 +149,35 @@ func TestImpactAutoDetectsFileAndSymbol(t *testing.T) {
 		t.Fatalf("unexpected symbol dependents: %+v", symbolImpact.SymbolImpact.Dependents)
 	}
 }
+
+func TestSnapshotAndContextIncludeHybridHits(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer eng.Close()
+	ctx := context.Background()
+	if _, err := eng.Index(ctx, false); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	snapshot, err := eng.Snapshot(ctx, "Foo", 2)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.HybridHits) == 0 {
+		t.Fatalf("snapshot hybrid hits = %#v, want non-empty", snapshot.HybridHits)
+	}
+
+	symbolContext, err := eng.Context(ctx, "Foo")
+	if err != nil {
+		t.Fatalf("context: %v", err)
+	}
+	if len(symbolContext.HybridHits) == 0 {
+		t.Fatalf("context hybrid hits = %#v, want non-empty", symbolContext.HybridHits)
+	}
+}
