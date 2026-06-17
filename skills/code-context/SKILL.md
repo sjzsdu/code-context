@@ -49,17 +49,20 @@ code-context search "Handler"
 # 4. Search provider-backed vectors when Helix + embeddings are configured
 code-context vector-search "handler health check"
 
-# 5. Get detailed context
+# 5. Fuse text/vector/graph when advanced capabilities are available
+code-context hybrid-search "handler health check"
+
+# 6. Get detailed context
 code-context context Engine
 
-# 6. Explore graph relationships
+# 7. Explore graph relationships
 code-context graph neighbors Engine
 
-# 7. Generate project-wide or focused LLM context
+# 8. Generate project-wide or focused LLM context
 code-context snapshot
 code-context snapshot "authentication"
 
-# 8. Open the interactive visual graph
+# 9. Open the interactive visual graph
 code-context graph html > graph.html
 ```
 
@@ -101,8 +104,10 @@ If no Helix URL is configured, the Helix Go SDK uses its local default endpoint 
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
-The smoke also verifies `status` capabilities, `/api/text`, `/api/vector` validation, and `/api/graph/traverse` through
-`serve`, so keep `CODE_CONTEXT_HELIX_SMOKE_PORT` free or set it to an available port.
+The smoke starts a deterministic local OpenAI-compatible fake embedding server and verifies `status`
+capabilities, `/api/text`, real `/api/vector` query-text results, `/api/hybrid` vector fusion, and
+`/api/graph/traverse` through `serve`; keep `CODE_CONTEXT_HELIX_SMOKE_PORT` and
+`CODE_CONTEXT_HELIX_EMBEDDING_PORT` free or set them to available ports.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
 `internal/store/capabilities.go`; do not leak Helix SDK types into engine, search, graph, CLI, or MCP callers.
 The Helix backend implements `TextSearcher` with BM25 over symbol `search_text` and document
@@ -116,7 +121,9 @@ provider-neutral interfaces. SQLite and Helix implement the provider-neutral emb
 stores vectors in model+dimension-namespaced chunk properties so different embedding spaces are not
 mixed in one vector index. Use `vector-search`, `/api/vector`, or MCP `vector_search`/
 `code_context_vector_search` to call `VectorSearcher`; query-text search additionally requires a
-configured `Embedder`.
+configured `Embedder`. Use `hybrid-search`, `/api/hybrid`, or MCP `hybrid_search`/
+`code_context_hybrid_search` to fuse text, vector, and graph signals while degrading to the
+capabilities present in the selected backend.
 
 ## Recommended Dogfood Workflow
 

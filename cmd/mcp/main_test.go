@@ -135,6 +135,29 @@ func TestRunVectorSearchToolUnsupported(t *testing.T) {
 	}
 }
 
+func TestRunHybridSearchTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runHybridSearchTool(context.Background(), eng, HybridSearchArgs{Query: "Foo", Limit: 5})
+	if err != nil {
+		t.Fatalf("run hybrid search tool: %v", err)
+	}
+	if !strings.Contains(out, "\"results\"") || !strings.Contains(out, "Foo") {
+		t.Fatalf("expected hybrid results, got:\n%s", out)
+	}
+}
+
+func TestRunHybridSearchToolRequiresSignal(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	_, err := runHybridSearchTool(context.Background(), eng, HybridSearchArgs{})
+	if err == nil || !strings.Contains(err.Error(), "query, vector, or expand_from") {
+		t.Fatalf("expected missing hybrid query error, got %v", err)
+	}
+}
+
 func TestRunImpactToolForFileAndSymbol(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()

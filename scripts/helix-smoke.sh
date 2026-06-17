@@ -6,14 +6,20 @@ HELIX_URL="${HELIX_URL:-http://localhost:6969}"
 HELIX_PROJECT_ID="${HELIX_PROJECT_ID:-code-context-helix-smoke}"
 SMOKE_DIR="${CODE_CONTEXT_HELIX_SMOKE_DIR:-}"
 HTTP_PORT="${CODE_CONTEXT_HELIX_SMOKE_PORT:-19090}"
+EMBEDDING_PORT="${CODE_CONTEXT_HELIX_EMBEDDING_PORT:-19091}"
 KEEP_SMOKE_DIR="${KEEP_SMOKE_DIR:-0}"
 SERVER_PID=""
+EMBEDDING_PID=""
 CLEAN_SMOKE_DIR=0
 
 cleanup() {
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$EMBEDDING_PID" ]] && kill -0 "$EMBEDDING_PID" 2>/dev/null; then
+    kill "$EMBEDDING_PID" 2>/dev/null || true
+    wait "$EMBEDDING_PID" 2>/dev/null || true
   fi
   if [[ "$CLEAN_SMOKE_DIR" == "1" ]]; then
     rm -rf "$SMOKE_DIR"
@@ -76,13 +82,105 @@ EOF
 
 cd "$ROOT_DIR"
 
+cat > "$SMOKE_DIR/fake-embedding.py" <<'PY'
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+def base_vector(text):
+    t = (text or "").lower()
+    if "healthmessage" in t:
+        return [1.0, 0.0, 0.0]
+    if "healthhandler" in t:
+        return [0.85, 0.15, 0.0]
+    if "health" in t:
+        return [0.75, 0.25, 0.0]
+    return [0.0, 0.0, 1.0]
+
+
+def with_dimensions(values, dimensions):
+    dimensions = dimensions or 3
+    values = list(values[:dimensions])
+    while len(values) < dimensions:
+        values.append(0.0)
+    return values
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        if not self.path.endswith("/embeddings"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = json.loads(self.rfile.read(length) or b"{}")
+        inputs = body.get("input", [])
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        dimensions = int(body.get("dimensions") or 3)
+        model = body.get("model") or "smoke-embedding"
+        data = [
+            {"index": i, "embedding": with_dimensions(base_vector(text), dimensions)}
+            for i, text in enumerate(inputs)
+        ]
+        payload = {
+            "model": model,
+            "data": data,
+            "usage": {"prompt_tokens": len(inputs), "total_tokens": len(inputs)},
+        }
+        raw = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        return
+
+
+HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+
 run_code_context() {
   go run ./cmd/code-context \
     --root "$FIXTURE" \
     --store-backend helix \
     --helix-url "$HELIX_URL" \
     --helix-project-id "$HELIX_PROJECT_ID" \
+    --embedding-provider openai-compatible \
+    --embedding-base-url "http://127.0.0.1:${EMBEDDING_PORT}/v1" \
+    --embedding-model smoke-embedding \
+    --embedding-dimensions 3 \
     "$@"
+}
+
+wait_for_embedding() {
+  local url="http://127.0.0.1:${EMBEDDING_PORT}/health"
+  for _ in {1..60}; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "$EMBEDDING_PID" ]] && ! kill -0 "$EMBEDDING_PID" 2>/dev/null; then
+      echo "fake embedding server exited before becoming ready" >&2
+      cat "$SMOKE_DIR/fake-embedding.log" >&2 || true
+      return 1
+    fi
+    sleep 0.25
+  done
+  echo "timed out waiting for fake embedding server on port ${EMBEDDING_PORT}" >&2
+  cat "$SMOKE_DIR/fake-embedding.log" >&2 || true
+  return 1
 }
 
 wait_for_http() {
@@ -106,7 +204,12 @@ wait_for_http() {
 echo "Helix smoke fixture: $FIXTURE"
 echo "Helix URL: $HELIX_URL"
 echo "Helix project id: $HELIX_PROJECT_ID"
+echo "Fake embedding URL: http://127.0.0.1:${EMBEDDING_PORT}/v1"
 echo "WARNING: use a fresh/dedicated Helix instance if it was initialized by older code-context versions with unscoped unique path indexes."
+
+python3 "$SMOKE_DIR/fake-embedding.py" "$EMBEDDING_PORT" >"$SMOKE_DIR/fake-embedding.log" 2>&1 &
+EMBEDDING_PID=$!
+wait_for_embedding
 
 run_code_context rebuild --verbose
 
@@ -119,13 +222,26 @@ status="$(run_code_context status)"
 printf '%s\n' "$status"
 grep -q "Capabilities:.*text_search" <<<"$status"
 grep -q "Capabilities:.*graph_traversal" <<<"$status"
+grep -q "Capabilities:.*hybrid_search" <<<"$status"
 grep -q "Capabilities:.*vector_search" <<<"$status"
 grep -q "Capabilities:.*embedding_cache" <<<"$status"
+grep -q "Embedding:.*openai-compatible.*smoke-embedding" <<<"$status"
 
 search="$(run_code_context search Health)"
 printf '%s\n' "$search"
 grep -q "HealthHandler" <<<"$search"
 grep -q "HealthMessage" <<<"$search"
+
+vector_cli="$(run_code_context vector-search HealthMessage --json --limit 5)"
+printf '%s\n' "$vector_cli"
+grep -q '"source": "vector"' <<<"$vector_cli"
+grep -q "HealthMessage" <<<"$vector_cli"
+
+hybrid_cli="$(run_code_context hybrid-search HealthMessage --json --limit 5)"
+printf '%s\n' "$hybrid_cli"
+grep -q '"source": "hybrid"' <<<"$hybrid_cli"
+grep -q '"hybrid_vector_score"' <<<"$hybrid_cli"
+grep -q "HealthMessage" <<<"$hybrid_cli"
 
 routes="$(run_code_context routes)"
 printf '%s\n' "$routes"
@@ -167,6 +283,17 @@ vector_api_status="$(curl -sS -o "$SMOKE_DIR/vector-api.out" -w "%{http_code}" -
 cat "$SMOKE_DIR/vector-api.out"
 [[ "$vector_api_status" == "400" ]]
 grep -q "missing 'vector' or 'query_text'" "$SMOKE_DIR/vector-api.out"
+
+vector_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/vector" -H 'Content-Type: application/json' --data '{"query_text":"HealthMessage","limit":5}')"
+printf '%s\n' "$vector_api"
+grep -q '"source":"vector"' <<<"$vector_api"
+grep -q "HealthMessage" <<<"$vector_api"
+
+hybrid_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/hybrid" -H 'Content-Type: application/json' --data '{"query":"HealthMessage","limit":5}')"
+printf '%s\n' "$hybrid_api"
+grep -q '"source":"hybrid"' <<<"$hybrid_api"
+grep -q '"hybrid_vector_score"' <<<"$hybrid_api"
+grep -q "HealthMessage" <<<"$hybrid_api"
 
 traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"target":"text:Health","edge_kinds":["similar"],"filter":{"target_kinds":["symbol"]},"include_paths":true,"direction":"outbound","limit":10}')"
 printf '%s\n' "$traverse_api"

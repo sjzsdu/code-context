@@ -80,6 +80,21 @@ type VectorSearchArgs struct {
 	Offset     int                `json:"offset,omitempty"`
 }
 
+type HybridSearchArgs struct {
+	Query          string             `json:"query,omitempty"`
+	Vector         []float32          `json:"vector,omitempty"`
+	Model          string             `json:"model,omitempty"`
+	Dimensions     int                `json:"dimensions,omitempty"`
+	Filter         store.SearchFilter `json:"filter,omitempty"`
+	Limit          int                `json:"limit,omitempty"`
+	Offset         int                `json:"offset,omitempty"`
+	TextWeight     float64            `json:"text_weight,omitempty"`
+	VectorWeight   float64            `json:"vector_weight,omitempty"`
+	GraphWeight    float64            `json:"graph_weight,omitempty"`
+	ExpandFrom     []store.TargetRef  `json:"expand_from,omitempty"`
+	ExpandMaxDepth int                `json:"expand_max_depth,omitempty"`
+}
+
 type SearchArgs struct {
 	Query string `json:"query"`
 }
@@ -272,10 +287,11 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 1. Start with code_context_status to verify freshness.
 2. Use code_context_explore for a query before broad grep/read.
 3. Use code_context_search for symbols, code_context_context for a symbol profile, and code_context_snapshot for focused LLM context.
-4. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
-5. Use code_context_callers and code_context_callees for lightweight call graph navigation.
-6. If status or a result reports stale/pending files, read those files directly before editing.
-7. Prefer the recommended next tool calls in each response.`), nil, nil
+4. Use code_context_hybrid_search when status reports hybrid_search and you want text + vector + graph fusion.
+5. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
+6. Use code_context_callers and code_context_callees for lightweight call graph navigation.
+7. If status or a result reports stale/pending files, read those files directly before editing.
+8. Prefer the recommended next tool calls in each response.`), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, provider capabilities, and service metadata"},
@@ -355,6 +371,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 				return nil, nil, err
 			}
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_graph_traverse", "code_context_snapshot"))), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_hybrid_search", Description: "Fuse provider text, vector, and graph search results"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args HybridSearchArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runHybridSearchTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_context", "code_context_graph_traverse"))), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callers", Description: "Show functions/methods that call a symbol name"},
@@ -586,6 +611,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		output, err := runVectorSearchTool(ctx, eng, args)
 		if err != nil {
 			return nil, nil, fmt.Errorf("vector_search failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "hybrid_search",
+		Description: "Fuse provider text, vector, and graph search results",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args HybridSearchArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runHybridSearchTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("hybrid_search failed: %w", err)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
@@ -1167,6 +1203,31 @@ func runVectorSearchTool(ctx context.Context, eng *engine.Engine, args VectorSea
 	} else {
 		return "", fmt.Errorf("missing required parameter: query_text or vector")
 	}
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(map[string]any{"results": hits, "count": len(hits)})
+}
+
+func runHybridSearchTool(ctx context.Context, eng *engine.Engine, args HybridSearchArgs) (string, error) {
+	query := store.HybridSearchQuery{
+		Query:          strings.TrimSpace(args.Query),
+		Vector:         args.Vector,
+		Model:          strings.TrimSpace(args.Model),
+		Dimensions:     args.Dimensions,
+		Filter:         args.Filter,
+		Limit:          args.Limit,
+		Offset:         args.Offset,
+		TextWeight:     args.TextWeight,
+		VectorWeight:   args.VectorWeight,
+		GraphWeight:    args.GraphWeight,
+		ExpandFrom:     args.ExpandFrom,
+		ExpandMaxDepth: args.ExpandMaxDepth,
+	}
+	if query.Query == "" && len(query.Vector) == 0 && len(query.ExpandFrom) == 0 {
+		return "", fmt.Errorf("missing required parameter: query, vector, or expand_from")
+	}
+	hits, err := eng.SearchHybrid(ctx, query)
 	if err != nil {
 		return "", err
 	}

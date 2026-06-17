@@ -241,6 +241,53 @@ func TestParseFloat32List(t *testing.T) {
 	}
 }
 
+func TestHybridSearchCmdUsesTextFallback(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "cli-hybrid-search-test-*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.go"), []byte("package main\nfunc Foo() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	prevRoot, prevDB, prevStoreBackend := root, dbPath, storeBackend
+	prevEmbeddingProvider, prevEmbeddingModel, prevEmbeddingDimensions := embeddingProvider, embeddingModel, embeddingDimensions
+	root = tmpDir
+	dbPath = filepath.Join(tmpDir, "index.db")
+	storeBackend = ""
+	embeddingProvider = ""
+	embeddingModel = ""
+	embeddingDimensions = 0
+	defer func() {
+		root, dbPath, storeBackend = prevRoot, prevDB, prevStoreBackend
+		embeddingProvider, embeddingModel, embeddingDimensions = prevEmbeddingProvider, prevEmbeddingModel, prevEmbeddingDimensions
+	}()
+
+	eng, err := engine.New(root, dbPath)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if _, err := eng.Index(context.Background(), false); err != nil {
+		eng.Close()
+		t.Fatalf("index repo: %v", err)
+	}
+	if err := eng.Close(); err != nil {
+		t.Fatalf("close engine: %v", err)
+	}
+
+	cmd := newHybridSearchCmd()
+	cmd.SetArgs([]string{"Foo", "--limit", "5"})
+	out, err := captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute hybrid-search cmd: %v", err)
+	}
+	if !strings.Contains(out, "Foo") || !strings.Contains(out, "results") {
+		t.Fatalf("expected hybrid search output, got:\n%s", out)
+	}
+}
+
 func TestGraphPathCmd(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "cli-graph-path-test-*")
 	if err != nil {

@@ -90,6 +90,7 @@ func main() {
 		newIndexCmd(),
 		newSearchCmd(),
 		newVectorSearchCmd(),
+		newHybridSearchCmd(),
 		newFindDefCmd(),
 		newGitFilesCmd(),
 		newGitDiffCmd(),
@@ -914,6 +915,105 @@ func newVectorSearchCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&metadata, "metadata", nil, "metadata filter as key=value; supports model/embedding_model and dimensions/embedding_dimensions")
 	cmd.Flags().IntVar(&limit, "limit", 10, "max results")
 	cmd.Flags().IntVar(&offset, "offset", 0, "skip the first N vector hits")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON results")
+	return cmd
+}
+
+func newHybridSearchCmd() *cobra.Command {
+	var vectorValue string
+	var model string
+	var dimensions int
+	var limit int
+	var offset int
+	var filePattern string
+	var targetKinds []string
+	var metadata []string
+	var expandTargets []string
+	var expandDepth int
+	var textWeight float64
+	var vectorWeight float64
+	var graphWeight float64
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "hybrid-search [query]",
+		Short: "Fuse provider text, vector, and graph search results",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+
+			queryText := ""
+			if len(args) > 0 {
+				queryText = strings.TrimSpace(args[0])
+			}
+			filter, err := searchFilterFromFlags(filePattern, targetKinds, metadata)
+			if err != nil {
+				return err
+			}
+			query := store.HybridSearchQuery{
+				Query:          queryText,
+				Model:          strings.TrimSpace(model),
+				Dimensions:     dimensions,
+				Filter:         filter,
+				Limit:          limit,
+				Offset:         offset,
+				TextWeight:     textWeight,
+				VectorWeight:   vectorWeight,
+				GraphWeight:    graphWeight,
+				ExpandMaxDepth: expandDepth,
+			}
+			if query.Model == "" {
+				query.Model = strings.TrimSpace(embeddingModel)
+			}
+			if query.Dimensions <= 0 {
+				query.Dimensions = embeddingDimensions
+			}
+			if strings.TrimSpace(vectorValue) != "" {
+				query.Vector, err = parseFloat32List(vectorValue)
+				if err != nil {
+					return err
+				}
+			}
+			for _, target := range expandTargets {
+				target = strings.TrimSpace(target)
+				if target != "" {
+					query.ExpandFrom = append(query.ExpandFrom, store.ParseTargetRef(target))
+				}
+			}
+			if query.Query == "" && len(query.Vector) == 0 && len(query.ExpandFrom) == 0 {
+				return fmt.Errorf("query text, --vector, or --expand-from is required")
+			}
+
+			hits, err := eng.SearchHybrid(context.Background(), query)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(map[string]any{"results": hits, "count": len(hits)})
+			}
+			fmt.Println(formatSearchHitsPlain(hits))
+			fmt.Printf("\n%d results\n", len(hits))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&vectorValue, "vector", "", "raw query vector as comma-separated float32 values")
+	cmd.Flags().StringVar(&model, "model", "", "embedding model namespace; defaults to configured embedding model")
+	cmd.Flags().IntVar(&dimensions, "dimensions", 0, "embedding dimensions namespace; defaults to configured/provider dimensions")
+	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "filter target kinds; repeat or comma-separate (symbol,document,file,text)")
+	cmd.Flags().StringVar(&filePattern, "file-pattern", "", "filter hits whose path matches this substring or glob")
+	cmd.Flags().StringArrayVar(&metadata, "metadata", nil, "metadata filter as key=value")
+	cmd.Flags().StringArrayVar(&expandTargets, "expand-from", nil, "graph expansion start target; repeat for multiple targets")
+	cmd.Flags().IntVar(&expandDepth, "expand-depth", 1, "max graph expansion depth")
+	cmd.Flags().Float64Var(&textWeight, "text-weight", 0, "text score weight; defaults with other weights when all are zero")
+	cmd.Flags().Float64Var(&vectorWeight, "vector-weight", 0, "vector score weight; defaults with other weights when all are zero")
+	cmd.Flags().Float64Var(&graphWeight, "graph-weight", 0, "graph score weight; defaults with other weights when all are zero")
+	cmd.Flags().IntVar(&limit, "limit", 10, "max results")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip the first N fused hits")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON results")
 	return cmd
 }

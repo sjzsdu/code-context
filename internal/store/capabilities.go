@@ -140,6 +140,8 @@ type VectorSearchQuery struct {
 type HybridSearchQuery struct {
 	Query          string       `json:"query"`
 	Vector         []float32    `json:"vector,omitempty"`
+	Model          string       `json:"model,omitempty"`
+	Dimensions     int          `json:"dimensions,omitempty"`
 	Filter         SearchFilter `json:"filter,omitempty"`
 	Limit          int          `json:"limit,omitempty"`
 	Offset         int          `json:"offset,omitempty"`

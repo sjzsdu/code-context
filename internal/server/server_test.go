@@ -189,6 +189,43 @@ func TestVectorSearchEndpointRequiresVectorOrQueryText(t *testing.T) {
 	}
 }
 
+func TestHybridSearchEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(ts.URL+"/api/hybrid", "application/json", strings.NewReader(`{"query":"Foo","limit":5}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if _, ok := payload["results"]; !ok {
+		t.Fatalf("expected 'results' in response, got: %v", payload)
+	}
+}
+
+func TestHybridSearchEndpointRequiresSignal(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(ts.URL+"/api/hybrid", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400, got %d: %s", resp.StatusCode, string(body))
+	}
+}
+
 func TestSearchMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

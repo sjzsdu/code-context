@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	embeddingpkg "github.com/sjzsdu/code-context/internal/embedding"
@@ -135,6 +136,43 @@ func TestSearchVectorTextRequiresEmbedder(t *testing.T) {
 	}
 }
 
+func TestSearchHybridFusesTextAndVector(t *testing.T) {
+	hybridStore := &fakeHybridStore{}
+	eng := &Engine{store: hybridStore, embedder: fakeEmbedder{}}
+	hits, err := eng.SearchHybrid(context.Background(), store.HybridSearchQuery{Query: "hello", Limit: 5})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %#v, want one fused hit", hits)
+	}
+	if hits[0].Source != store.SearchSourceHybrid || hits[0].Target.Name != "Result" {
+		t.Fatalf("unexpected hit: %#v", hits[0])
+	}
+	if !strings.Contains(hits[0].Metadata["sources"], "text") || !strings.Contains(hits[0].Metadata["sources"], "vector") {
+		t.Fatalf("metadata = %#v, want text and vector sources", hits[0].Metadata)
+	}
+	if hybridStore.vectorQuery.QueryText != "hello" || hybridStore.vectorQuery.Model != "fake" || hybridStore.vectorQuery.Dimensions != 1 {
+		t.Fatalf("vector query = %#v", hybridStore.vectorQuery)
+	}
+}
+
+func TestSearchHybridRequiresSignal(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}}
+	_, err := eng.SearchHybrid(context.Background(), store.HybridSearchQuery{})
+	if err == nil || !strings.Contains(err.Error(), "requires query") {
+		t.Fatalf("SearchHybrid error = %v, want missing query/vector/expand_from", err)
+	}
+}
+
+func TestCapabilityNamesIncludesHybridForAdvancedProvider(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}}
+	got := eng.capabilityNames()
+	if !containsString(got, string(store.CapabilityHybridSearch)) {
+		t.Fatalf("capabilities = %#v, want hybrid_search", got)
+	}
+}
+
 func TestTraverseGraphUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))
@@ -198,5 +236,31 @@ func (s *fakeVectorStore) SearchVector(_ context.Context, query store.VectorSear
 		Target: store.TargetRef{Kind: store.TargetSymbol, Name: "Result"},
 		Score:  1,
 		Source: store.SearchSourceVector,
+	}}, nil
+}
+
+type fakeHybridStore struct {
+	store.Store
+	textQuery   store.TextSearchQuery
+	vectorQuery store.VectorSearchQuery
+}
+
+func (s *fakeHybridStore) SearchText(_ context.Context, query store.TextSearchQuery) ([]store.SearchHit, error) {
+	s.textQuery = query
+	return []store.SearchHit{{
+		Target:   store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "Result", Line: 3},
+		Score:    0.8,
+		Source:   store.SearchSourceText,
+		Evidence: "text evidence",
+	}}, nil
+}
+
+func (s *fakeHybridStore) SearchVector(_ context.Context, query store.VectorSearchQuery) ([]store.SearchHit, error) {
+	s.vectorQuery = query
+	return []store.SearchHit{{
+		Target:   store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "Result", Line: 3},
+		Score:    0.9,
+		Source:   store.SearchSourceVector,
+		Evidence: "vector evidence",
 	}}, nil
 }

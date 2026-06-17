@@ -623,6 +623,484 @@ func (e *Engine) SearchVectorText(ctx context.Context, text string, query store.
 	return e.SearchVector(ctx, query)
 }
 
+func (e *Engine) SearchHybrid(ctx context.Context, query store.HybridSearchQuery) ([]store.SearchHit, error) {
+	if hybrid, ok := e.store.(store.HybridSearcher); ok {
+		return hybrid.SearchHybrid(ctx, query)
+	}
+	return e.searchHybridFallback(ctx, query)
+}
+
+func (e *Engine) searchHybridFallback(ctx context.Context, query store.HybridSearchQuery) ([]store.SearchHit, error) {
+	query.Query = strings.TrimSpace(query.Query)
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	searchLimit := limit * 4
+	if searchLimit < 20 {
+		searchLimit = 20
+	}
+
+	textWeight, vectorWeight, graphWeight := hybridWeights(query)
+	candidates := newHybridCandidates()
+	hadSearchPath := false
+
+	if query.Query != "" && textWeight > 0 {
+		textHits, err := e.hybridTextHits(ctx, query.Query, query.Filter, searchLimit)
+		if err != nil {
+			return nil, err
+		}
+		hadSearchPath = true
+		for _, hit := range textHits {
+			candidates.add(hit, store.SearchSourceText, hit.Score, textWeight)
+		}
+	}
+
+	if vectorWeight > 0 && (len(query.Vector) > 0 || (query.Query != "" && e.embedder != nil)) {
+		vectorQuery := store.VectorSearchQuery{
+			Vector:     query.Vector,
+			QueryText:  query.Query,
+			Model:      query.Model,
+			Dimensions: query.Dimensions,
+			Filter:     query.Filter,
+			Limit:      searchLimit,
+		}
+		var (
+			vectorHits []store.SearchHit
+			err        error
+		)
+		if len(query.Vector) > 0 {
+			vectorHits, err = e.SearchVector(ctx, vectorQuery)
+		} else {
+			vectorHits, err = e.SearchVectorText(ctx, query.Query, vectorQuery)
+		}
+		if err != nil {
+			if !(errors.Is(err, ErrCapabilityUnsupported) && query.Query != "") {
+				return nil, err
+			}
+		} else {
+			hadSearchPath = true
+			for _, hit := range vectorHits {
+				candidates.add(hit, store.SearchSourceVector, hit.Score, vectorWeight)
+			}
+		}
+	}
+
+	if graphWeight > 0 {
+		graphHits, used, err := e.hybridGraphHits(ctx, query, candidates.topTargets(3), searchLimit)
+		if err != nil {
+			if !errors.Is(err, ErrCapabilityUnsupported) {
+				return nil, err
+			}
+		} else if used {
+			hadSearchPath = true
+			for _, hit := range graphHits {
+				candidates.add(hit, store.SearchSourceGraph, hit.Score, graphWeight)
+			}
+		}
+	}
+
+	if !hadSearchPath && query.Query == "" && len(query.Vector) == 0 && len(query.ExpandFrom) == 0 {
+		return nil, fmt.Errorf("hybrid search requires query, vector, or expand_from")
+	}
+
+	hits := candidates.results()
+	if query.Offset > 0 {
+		if query.Offset >= len(hits) {
+			return nil, nil
+		}
+		hits = hits[query.Offset:]
+	}
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
+func (e *Engine) hybridTextHits(ctx context.Context, query string, filter store.SearchFilter, limit int) ([]store.SearchHit, error) {
+	if advanced, ok := e.store.(store.TextSearcher); ok {
+		return advanced.SearchText(ctx, store.TextSearchQuery{
+			Query:  query,
+			Filter: filter,
+			Limit:  limit,
+		})
+	}
+	matches, err := e.search.SearchText(ctx, query, filter.FilePattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]store.SearchHit, 0, len(matches))
+	for _, match := range matches {
+		target := store.TargetRef{
+			Kind: store.TargetText,
+			Path: match.FilePath,
+			Line: match.Line,
+		}
+		if match.Kind != "" {
+			target.Kind = store.TargetKind(match.Kind)
+		}
+		if !hybridTargetFilterAllows(filter, target) {
+			continue
+		}
+		hits = append(hits, store.SearchHit{
+			Target:   target,
+			Score:    1,
+			Source:   store.SearchSourceText,
+			Evidence: strings.TrimSpace(match.Content),
+			Highlights: []store.SearchHighlight{{
+				Line:    match.Line,
+				Snippet: strings.TrimSpace(match.Content),
+			}},
+			Metadata: map[string]string{"backend": "local"},
+		})
+	}
+	return hits, nil
+}
+
+func (e *Engine) hybridGraphHits(ctx context.Context, query store.HybridSearchQuery, candidateTargets []store.TargetRef, limit int) ([]store.SearchHit, bool, error) {
+	if _, ok := e.store.(store.GraphTraverser); !ok {
+		return nil, false, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityGraphTraversal)
+	}
+	depth := query.ExpandMaxDepth
+	if depth <= 0 {
+		depth = 1
+	}
+	if depth > 2 {
+		depth = 2
+	}
+
+	starts := make([]store.TargetRef, 0, len(query.ExpandFrom)+len(candidateTargets)+1)
+	seen := map[string]struct{}{}
+	addStart := func(target store.TargetRef) {
+		if target.Kind == "" {
+			target = store.ParseTargetRef(hybridTargetDisplay(target))
+		}
+		if target.Kind == "" {
+			return
+		}
+		key := hybridTargetKey(target)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		starts = append(starts, target)
+	}
+	for _, target := range query.ExpandFrom {
+		addStart(target)
+	}
+	if len(query.ExpandFrom) == 0 {
+		if query.Query != "" {
+			addStart(store.TargetRef{Kind: store.TargetText, Value: query.Query})
+		}
+		for _, target := range candidateTargets {
+			addStart(target)
+			if len(starts) >= 3 {
+				break
+			}
+		}
+	}
+	if len(starts) == 0 {
+		return nil, false, nil
+	}
+
+	hits := make([]store.SearchHit, 0, limit)
+	for _, start := range starts {
+		result, err := e.TraverseGraph(ctx, store.GraphTraversalQuery{
+			Start:        start,
+			Direction:    store.GraphOutbound,
+			MaxDepth:     depth,
+			Limit:        limit,
+			Filter:       query.Filter,
+			IncludePaths: false,
+		})
+		if err != nil {
+			return nil, true, err
+		}
+		if result == nil {
+			continue
+		}
+		for _, node := range result.Nodes {
+			if node.Root {
+				continue
+			}
+			if !hybridTargetFilterAllows(query.Filter, node.Target) {
+				continue
+			}
+			score := node.Score
+			if score <= 0 {
+				score = 1 / float64(node.Depth+1)
+			}
+			hits = append(hits, store.SearchHit{
+				Target:   node.Target,
+				Score:    score,
+				Source:   store.SearchSourceGraph,
+				Evidence: fmt.Sprintf("graph expansion from %s", hybridTargetDisplay(start)),
+				Metadata: map[string]string{
+					"backend":     "graph",
+					"graph_start": hybridTargetDisplay(start),
+					"graph_depth": fmt.Sprint(node.Depth),
+				},
+			})
+			if len(hits) >= limit {
+				return hits, true, nil
+			}
+		}
+	}
+	return hits, true, nil
+}
+
+func hybridWeights(query store.HybridSearchQuery) (float64, float64, float64) {
+	textWeight := query.TextWeight
+	vectorWeight := query.VectorWeight
+	graphWeight := query.GraphWeight
+	if textWeight <= 0 && vectorWeight <= 0 && graphWeight <= 0 {
+		return 0.45, 0.45, 0.10
+	}
+	if textWeight < 0 {
+		textWeight = 0
+	}
+	if vectorWeight < 0 {
+		vectorWeight = 0
+	}
+	if graphWeight < 0 {
+		graphWeight = 0
+	}
+	return textWeight, vectorWeight, graphWeight
+}
+
+type hybridCandidates struct {
+	entries map[string]*hybridCandidate
+	order   int
+}
+
+type hybridCandidate struct {
+	hit     store.SearchHit
+	score   float64
+	weights float64
+	scores  map[store.SearchSource]float64
+	order   int
+}
+
+func newHybridCandidates() *hybridCandidates {
+	return &hybridCandidates{entries: map[string]*hybridCandidate{}}
+}
+
+func (c *hybridCandidates) add(hit store.SearchHit, source store.SearchSource, rawScore float64, weight float64) {
+	if hit.Target.Kind == "" && hit.Target.Path == "" && hit.Target.Name == "" && hit.Target.Value == "" && hit.Target.RoutePath == "" {
+		return
+	}
+	if weight <= 0 {
+		return
+	}
+	if rawScore <= 0 {
+		rawScore = 1
+	}
+	key := hybridTargetKey(hit.Target)
+	entry, ok := c.entries[key]
+	if !ok {
+		entry = &hybridCandidate{
+			hit:    hit,
+			scores: map[store.SearchSource]float64{},
+			order:  c.order,
+		}
+		entry.hit.Source = store.SearchSourceHybrid
+		if entry.hit.Metadata == nil {
+			entry.hit.Metadata = map[string]string{}
+		}
+		c.order++
+		c.entries[key] = entry
+	} else {
+		entry.hit.Target = mergeHybridTarget(entry.hit.Target, hit.Target)
+		if entry.hit.Evidence == "" {
+			entry.hit.Evidence = hit.Evidence
+		}
+		if len(entry.hit.Highlights) == 0 {
+			entry.hit.Highlights = hit.Highlights
+		}
+		if entry.hit.Metadata == nil {
+			entry.hit.Metadata = map[string]string{}
+		}
+		for k, v := range hit.Metadata {
+			if _, exists := entry.hit.Metadata[k]; !exists {
+				entry.hit.Metadata[k] = v
+			}
+		}
+	}
+	entry.score += weight * rawScore
+	entry.weights += weight
+	if rawScore > entry.scores[source] {
+		entry.scores[source] = rawScore
+	}
+}
+
+func (c *hybridCandidates) results() []store.SearchHit {
+	items := make([]*hybridCandidate, 0, len(c.entries))
+	for _, entry := range c.entries {
+		if entry.weights > 0 {
+			entry.hit.Score = entry.score
+		}
+		sources := make([]string, 0, len(entry.scores))
+		for source, score := range entry.scores {
+			if source == "" {
+				continue
+			}
+			sources = append(sources, string(source))
+			entry.hit.Metadata["hybrid_"+string(source)+"_score"] = fmt.Sprintf("%.4f", score)
+		}
+		sort.Strings(sources)
+		entry.hit.Metadata["sources"] = strings.Join(sources, ",")
+		items = append(items, entry)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].hit.Score != items[j].hit.Score {
+			return items[i].hit.Score > items[j].hit.Score
+		}
+		return items[i].order < items[j].order
+	})
+	out := make([]store.SearchHit, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.hit)
+	}
+	return out
+}
+
+func (c *hybridCandidates) topTargets(limit int) []store.TargetRef {
+	results := c.results()
+	if limit <= 0 || limit > len(results) {
+		limit = len(results)
+	}
+	targets := make([]store.TargetRef, 0, limit)
+	for i := 0; i < limit; i++ {
+		targets = append(targets, results[i].Target)
+	}
+	return targets
+}
+
+func hybridTargetFilterAllows(filter store.SearchFilter, target store.TargetRef) bool {
+	if len(filter.TargetKinds) > 0 {
+		ok := false
+		for _, kind := range filter.TargetKinds {
+			if target.Kind == kind {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if filter.FilePattern != "" && target.Path != "" {
+		matched, _ := filepath.Match(filter.FilePattern, target.Path)
+		if !matched && !strings.Contains(target.Path, filter.FilePattern) {
+			return false
+		}
+	}
+	for key, value := range filter.Metadata {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "kind", "target_kind":
+			if string(target.Kind) != value {
+				return false
+			}
+		case "type":
+			if target.Type != value {
+				return false
+			}
+		case "name":
+			if target.Name != value {
+				return false
+			}
+		case "path":
+			if target.Path != value {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func mergeHybridTarget(a, b store.TargetRef) store.TargetRef {
+	if a.ProjectID == "" {
+		a.ProjectID = b.ProjectID
+	}
+	if a.Kind == "" {
+		a.Kind = b.Kind
+	}
+	if a.Path == "" {
+		a.Path = b.Path
+	}
+	if a.Name == "" {
+		a.Name = b.Name
+	}
+	if a.Type == "" {
+		a.Type = b.Type
+	}
+	if a.Line == 0 {
+		a.Line = b.Line
+	}
+	if a.EndLine == 0 {
+		a.EndLine = b.EndLine
+	}
+	if a.Method == "" {
+		a.Method = b.Method
+	}
+	if a.RoutePath == "" {
+		a.RoutePath = b.RoutePath
+	}
+	if a.Value == "" {
+		a.Value = b.Value
+	}
+	return a
+}
+
+func hybridTargetKey(target store.TargetRef) string {
+	return strings.Join([]string{
+		string(target.Kind),
+		target.ProjectID,
+		target.Path,
+		target.Name,
+		target.Type,
+		fmt.Sprint(target.Line),
+		target.Method,
+		target.RoutePath,
+		target.Value,
+	}, "\x00")
+}
+
+func hybridTargetDisplay(target store.TargetRef) string {
+	switch {
+	case target.Kind == store.TargetText && target.Value != "":
+		return "text:" + target.Value
+	case target.Kind == store.TargetRoute && target.RoutePath != "":
+		if target.Method != "" {
+			return strings.TrimSpace(target.Method + " " + target.RoutePath)
+		}
+		return target.RoutePath
+	case target.Kind == store.TargetSymbol && target.Name != "":
+		if target.Path != "" {
+			if target.Line > 0 {
+				return fmt.Sprintf("symbol:%s@%s:%d", target.Name, target.Path, target.Line)
+			}
+			return fmt.Sprintf("symbol:%s@%s", target.Name, target.Path)
+		}
+		return "symbol:" + target.Name
+	case target.Path != "":
+		if target.Line > 0 {
+			return fmt.Sprintf("%s:%d", target.Path, target.Line)
+		}
+		return target.Path
+	case target.Name != "":
+		return target.Name
+	case target.Value != "":
+		return target.Value
+	default:
+		return ""
+	}
+}
+
 func (e *Engine) bestEffortGraphTraversal(ctx context.Context, query store.GraphTraversalQuery) *store.GraphTraversalResult {
 	result, err := e.TraverseGraph(ctx, query)
 	if err != nil {
@@ -2005,12 +2483,31 @@ func (e *Engine) capabilityNames() []string {
 			}
 		}
 	}
+	if e.canSearchHybrid() {
+		seen[string(store.CapabilityHybridSearch)] = struct{}{}
+	}
 	names := make([]string, 0, len(seen))
 	for name := range seen {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (e *Engine) canSearchHybrid() bool {
+	if _, ok := e.store.(store.HybridSearcher); ok {
+		return true
+	}
+	if _, ok := e.store.(store.TextSearcher); ok {
+		return true
+	}
+	if _, ok := e.store.(store.VectorSearcher); ok {
+		return true
+	}
+	if _, ok := e.store.(store.GraphTraverser); ok {
+		return true
+	}
+	return false
 }
 
 func (e *Engine) embeddingStatus() *api.EmbeddingStatus {

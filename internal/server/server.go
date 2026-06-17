@@ -43,6 +43,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/text", s.handleTextSearch)
 	mux.HandleFunc("/api/vector", s.handleVectorSearch)
 	mux.HandleFunc("/api/vector-search", s.handleVectorSearch)
+	mux.HandleFunc("/api/hybrid", s.handleHybridSearch)
+	mux.HandleFunc("/api/hybrid-search", s.handleHybridSearch)
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
 	mux.HandleFunc("/api/callers", s.handleCallers)
@@ -218,6 +220,32 @@ func (s *Server) handleVectorSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("missing 'vector' or 'query_text'"), http.StatusBadRequest)
 		return
 	}
+	if err != nil {
+		if errors.Is(err, engine.ErrCapabilityUnsupported) {
+			writeError(w, err, http.StatusNotImplemented)
+			return
+		}
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"results": results, "count": len(results)})
+}
+
+func (s *Server) handleHybridSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("POST only"), http.StatusMethodNotAllowed)
+		return
+	}
+	var query store.HybridSearchQuery
+	if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
+		writeError(w, fmt.Errorf("decode hybrid search query: %w", err), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(query.Query) == "" && len(query.Vector) == 0 && len(query.ExpandFrom) == 0 {
+		writeError(w, fmt.Errorf("missing 'query', 'vector', or 'expand_from'"), http.StatusBadRequest)
+		return
+	}
+	results, err := s.eng.SearchHybrid(r.Context(), query)
 	if err != nil {
 		if errors.Is(err, engine.ErrCapabilityUnsupported) {
 			writeError(w, err, http.StatusNotImplemented)
