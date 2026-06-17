@@ -286,6 +286,9 @@ func TestHybridSearchCmdUsesTextFallback(t *testing.T) {
 	if !strings.Contains(out, "Foo") || !strings.Contains(out, "results") {
 		t.Fatalf("expected hybrid search output, got:\n%s", out)
 	}
+	if !strings.Contains(out, "sources: text") || !strings.Contains(out, "fusion: weighted_normalized_sum") {
+		t.Fatalf("expected hybrid fusion details, got:\n%s", out)
+	}
 }
 
 func TestGraphPathCmd(t *testing.T) {

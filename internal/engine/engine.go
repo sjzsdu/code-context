@@ -651,9 +651,7 @@ func (e *Engine) searchHybridFallback(ctx context.Context, query store.HybridSea
 			return nil, err
 		}
 		hadSearchPath = true
-		for _, hit := range textHits {
-			candidates.add(hit, store.SearchSourceText, hit.Score, textWeight)
-		}
+		candidates.addSourceHits(textHits, store.SearchSourceText, textWeight)
 	}
 
 	if vectorWeight > 0 && (len(query.Vector) > 0 || (query.Query != "" && e.embedder != nil)) {
@@ -680,9 +678,7 @@ func (e *Engine) searchHybridFallback(ctx context.Context, query store.HybridSea
 			}
 		} else {
 			hadSearchPath = true
-			for _, hit := range vectorHits {
-				candidates.add(hit, store.SearchSourceVector, hit.Score, vectorWeight)
-			}
+			candidates.addSourceHits(vectorHits, store.SearchSourceVector, vectorWeight)
 		}
 	}
 
@@ -694,9 +690,7 @@ func (e *Engine) searchHybridFallback(ctx context.Context, query store.HybridSea
 			}
 		} else if used {
 			hadSearchPath = true
-			for _, hit := range graphHits {
-				candidates.add(hit, store.SearchSourceGraph, hit.Score, graphWeight)
-			}
+			candidates.addSourceHits(graphHits, store.SearchSourceGraph, graphWeight)
 		}
 	}
 
@@ -874,34 +868,81 @@ type hybridCandidates struct {
 }
 
 type hybridCandidate struct {
-	hit     store.SearchHit
-	score   float64
-	weights float64
-	scores  map[store.SearchSource]float64
-	order   int
+	hit              store.SearchHit
+	score            float64
+	scores           map[store.SearchSource]float64
+	normalizedScores map[store.SearchSource]float64
+	contributions    map[store.SearchSource]float64
+	weights          map[store.SearchSource]float64
+	ranks            map[store.SearchSource]int
+	order            int
 }
 
 func newHybridCandidates() *hybridCandidates {
 	return &hybridCandidates{entries: map[string]*hybridCandidate{}}
 }
 
-func (c *hybridCandidates) add(hit store.SearchHit, source store.SearchSource, rawScore float64, weight float64) {
-	if hit.Target.Kind == "" && hit.Target.Path == "" && hit.Target.Name == "" && hit.Target.Value == "" && hit.Target.RoutePath == "" {
+func (c *hybridCandidates) addSourceHits(hits []store.SearchHit, source store.SearchSource, weight float64) {
+	if weight <= 0 {
+		return
+	}
+	maxScore := 0.0
+	for _, hit := range hits {
+		if !hybridHitHasTarget(hit) {
+			continue
+		}
+		score := hybridSourceRawScore(hit.Score)
+		if score > maxScore {
+			maxScore = score
+		}
+	}
+	if maxScore <= 0 {
+		maxScore = 1
+	}
+	for i, hit := range hits {
+		rawScore := hybridSourceRawScore(hit.Score)
+		normalizedScore := rawScore / maxScore
+		if normalizedScore < 0 {
+			normalizedScore = 0
+		}
+		c.add(hit, source, rawScore, normalizedScore, weight, i+1)
+	}
+}
+
+func hybridSourceRawScore(score float64) float64 {
+	if score < 0 {
+		return 0
+	}
+	if score == 0 {
+		return 1
+	}
+	return score
+}
+
+func (c *hybridCandidates) add(hit store.SearchHit, source store.SearchSource, rawScore, normalizedScore, weight float64, rank int) {
+	if !hybridHitHasTarget(hit) {
 		return
 	}
 	if weight <= 0 {
 		return
 	}
-	if rawScore <= 0 {
-		rawScore = 1
+	if rawScore < 0 {
+		rawScore = 0
+	}
+	if normalizedScore < 0 {
+		normalizedScore = 0
 	}
 	key := hybridTargetKey(hit.Target)
 	entry, ok := c.entries[key]
 	if !ok {
 		entry = &hybridCandidate{
-			hit:    hit,
-			scores: map[store.SearchSource]float64{},
-			order:  c.order,
+			hit:              hit,
+			scores:           map[store.SearchSource]float64{},
+			normalizedScores: map[store.SearchSource]float64{},
+			contributions:    map[store.SearchSource]float64{},
+			weights:          map[store.SearchSource]float64{},
+			ranks:            map[store.SearchSource]int{},
+			order:            c.order,
 		}
 		entry.hit.Source = store.SearchSourceHybrid
 		if entry.hit.Metadata == nil {
@@ -926,19 +967,29 @@ func (c *hybridCandidates) add(hit store.SearchHit, source store.SearchSource, r
 			}
 		}
 	}
-	entry.score += weight * rawScore
-	entry.weights += weight
+	contribution := weight * normalizedScore
+	if contribution > entry.contributions[source] {
+		entry.score += contribution - entry.contributions[source]
+		entry.contributions[source] = contribution
+		entry.normalizedScores[source] = normalizedScore
+		entry.weights[source] = weight
+	}
+	if rank > 0 && (entry.ranks[source] == 0 || rank < entry.ranks[source]) {
+		entry.ranks[source] = rank
+	}
 	if rawScore > entry.scores[source] {
 		entry.scores[source] = rawScore
 	}
 }
 
+func hybridHitHasTarget(hit store.SearchHit) bool {
+	return hit.Target.Kind != "" || hit.Target.Path != "" || hit.Target.Name != "" || hit.Target.Value != "" || hit.Target.RoutePath != ""
+}
+
 func (c *hybridCandidates) results() []store.SearchHit {
 	items := make([]*hybridCandidate, 0, len(c.entries))
 	for _, entry := range c.entries {
-		if entry.weights > 0 {
-			entry.hit.Score = entry.score
-		}
+		entry.hit.Score = entry.score
 		sources := make([]string, 0, len(entry.scores))
 		for source, score := range entry.scores {
 			if source == "" {
@@ -946,9 +997,17 @@ func (c *hybridCandidates) results() []store.SearchHit {
 			}
 			sources = append(sources, string(source))
 			entry.hit.Metadata["hybrid_"+string(source)+"_score"] = fmt.Sprintf("%.4f", score)
+			entry.hit.Metadata["hybrid_"+string(source)+"_normalized_score"] = fmt.Sprintf("%.4f", entry.normalizedScores[source])
+			entry.hit.Metadata["hybrid_"+string(source)+"_weight"] = fmt.Sprintf("%.4f", entry.weights[source])
+			entry.hit.Metadata["hybrid_"+string(source)+"_contribution"] = fmt.Sprintf("%.4f", entry.contributions[source])
+			if rank := entry.ranks[source]; rank > 0 {
+				entry.hit.Metadata["hybrid_"+string(source)+"_rank"] = fmt.Sprint(rank)
+			}
 		}
 		sort.Strings(sources)
 		entry.hit.Metadata["sources"] = strings.Join(sources, ",")
+		entry.hit.Metadata["hybrid_score"] = fmt.Sprintf("%.4f", entry.hit.Score)
+		entry.hit.Metadata["hybrid_fusion"] = "weighted_normalized_sum"
 		items = append(items, entry)
 	}
 	sort.SliceStable(items, func(i, j int) bool {

@@ -1420,8 +1420,46 @@ func formatHybridHitsMarkdown(hits []store.SearchHit) string {
 		if evidence := strings.TrimSpace(hit.Evidence); evidence != "" {
 			fmt.Fprintf(&b, "   - %s\n", evidence)
 		}
+		if ranking := formatHybridRankingMetadata(hit.Metadata); ranking != "" {
+			fmt.Fprintf(&b, "   - ranking: %s\n", ranking)
+		}
 	}
 	return b.String()
+}
+
+func formatHybridRankingMetadata(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	sources := strings.TrimSpace(metadata["sources"])
+	if sources == "" {
+		return ""
+	}
+	parts := make([]string, 0, 1+len(strings.Split(sources, ",")))
+	if fusion := strings.TrimSpace(metadata["hybrid_fusion"]); fusion != "" {
+		parts = append(parts, "fusion="+fusion)
+	}
+	for _, source := range strings.Split(sources, ",") {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		prefix := "hybrid_" + source + "_"
+		sourceParts := []string{source}
+		if rank := strings.TrimSpace(metadata[prefix+"rank"]); rank != "" {
+			sourceParts = append(sourceParts, "rank="+rank)
+		}
+		if contribution := strings.TrimSpace(metadata[prefix+"contribution"]); contribution != "" {
+			sourceParts = append(sourceParts, "contribution="+contribution)
+		}
+		if normalized := strings.TrimSpace(metadata[prefix+"normalized_score"]); normalized != "" {
+			sourceParts = append(sourceParts, "normalized="+normalized)
+		}
+		if len(sourceParts) > 1 {
+			parts = append(parts, strings.Join(sourceParts, " "))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func formatCallsMarkdown(title string, calls []api.CallEdge) string {

@@ -154,14 +154,23 @@ func TestFormatHybridHitsMarkdown(t *testing.T) {
 		Score:  0.9,
 		Source: store.SearchSourceHybrid,
 		Metadata: map[string]string{
-			"sources": "text,vector",
+			"sources":                        "text,vector",
+			"hybrid_fusion":                  "weighted_normalized_sum",
+			"hybrid_text_rank":               "2",
+			"hybrid_text_contribution":       "0.0450",
+			"hybrid_text_normalized_score":   "0.1000",
+			"hybrid_vector_rank":             "1",
+			"hybrid_vector_contribution":     "0.4500",
+			"hybrid_vector_normalized_score": "1.0000",
 		},
 		Evidence: "func Foo() {}",
 	}})
 	if !strings.Contains(out, "## Hybrid Retrieval (1)") ||
 		!strings.Contains(out, "`a.go:3`") ||
 		!strings.Contains(out, "sources: text,vector") ||
-		!strings.Contains(out, "func Foo() {}") {
+		!strings.Contains(out, "func Foo() {}") ||
+		!strings.Contains(out, "ranking: fusion=weighted_normalized_sum") ||
+		!strings.Contains(out, "text rank=2 contribution=0.0450 normalized=0.1000") {
 		t.Fatalf("unexpected hybrid markdown:\n%s", out)
 	}
 }

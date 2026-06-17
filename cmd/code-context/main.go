@@ -2456,8 +2456,46 @@ func formatSearchHitsPlain(hits []store.SearchHit) string {
 		if strings.TrimSpace(hit.Evidence) != "" {
 			fmt.Fprintf(&b, "   %s\n", strings.TrimSpace(hit.Evidence))
 		}
+		if details := formatSearchHitFusionDetails(hit.Metadata); details != "" {
+			fmt.Fprintf(&b, "   %s\n", details)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatSearchHitFusionDetails(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	sources := strings.TrimSpace(metadata["sources"])
+	if sources == "" {
+		return ""
+	}
+	parts := []string{"sources: " + sources}
+	if fusion := strings.TrimSpace(metadata["hybrid_fusion"]); fusion != "" {
+		parts = append(parts, "fusion: "+fusion)
+	}
+	for _, source := range strings.Split(sources, ",") {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		prefix := "hybrid_" + source + "_"
+		sourceParts := []string{source}
+		if rank := strings.TrimSpace(metadata[prefix+"rank"]); rank != "" {
+			sourceParts = append(sourceParts, "rank "+rank)
+		}
+		if contribution := strings.TrimSpace(metadata[prefix+"contribution"]); contribution != "" {
+			sourceParts = append(sourceParts, "contribution "+contribution)
+		}
+		if normalized := strings.TrimSpace(metadata[prefix+"normalized_score"]); normalized != "" {
+			sourceParts = append(sourceParts, "normalized "+normalized)
+		}
+		if len(sourceParts) > 1 {
+			parts = append(parts, strings.Join(sourceParts, " "))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func newTestImpactCmd() *cobra.Command {

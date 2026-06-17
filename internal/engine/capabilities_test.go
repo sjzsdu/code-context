@@ -152,8 +152,41 @@ func TestSearchHybridFusesTextAndVector(t *testing.T) {
 	if !strings.Contains(hits[0].Metadata["sources"], "text") || !strings.Contains(hits[0].Metadata["sources"], "vector") {
 		t.Fatalf("metadata = %#v, want text and vector sources", hits[0].Metadata)
 	}
+	if hits[0].Metadata["hybrid_fusion"] != "weighted_normalized_sum" {
+		t.Fatalf("metadata = %#v, want weighted normalized fusion", hits[0].Metadata)
+	}
+	if hits[0].Metadata["hybrid_text_normalized_score"] != "1.0000" || hits[0].Metadata["hybrid_vector_normalized_score"] != "1.0000" {
+		t.Fatalf("metadata = %#v, want normalized source scores", hits[0].Metadata)
+	}
 	if hybridStore.vectorQuery.QueryText != "hello" || hybridStore.vectorQuery.Model != "fake" || hybridStore.vectorQuery.Dimensions != 1 {
 		t.Fatalf("vector query = %#v", hybridStore.vectorQuery)
+	}
+}
+
+func TestSearchHybridNormalizesSourceScoreScales(t *testing.T) {
+	hybridStore := &fakeHybridRankStore{}
+	eng := &Engine{store: hybridStore, embedder: fakeEmbedder{}}
+	hits, err := eng.SearchHybrid(context.Background(), store.HybridSearchQuery{Query: "hello", Limit: 5})
+	if err != nil {
+		t.Fatalf("SearchHybrid: %v", err)
+	}
+	if len(hits) < 2 {
+		t.Fatalf("hits = %#v, want at least two hits", hits)
+	}
+	if hits[0].Target.Name != "SemanticMatch" {
+		t.Fatalf("top hit = %#v, want SemanticMatch after score normalization", hits[0])
+	}
+	if hits[0].Metadata["hybrid_text_score"] != "10.0000" ||
+		hits[0].Metadata["hybrid_text_normalized_score"] != "0.1000" ||
+		hits[0].Metadata["hybrid_text_rank"] != "2" {
+		t.Fatalf("text metadata = %#v, want raw score, normalized score, and rank", hits[0].Metadata)
+	}
+	if hits[0].Metadata["hybrid_vector_normalized_score"] != "1.0000" ||
+		hits[0].Metadata["hybrid_vector_rank"] != "1" {
+		t.Fatalf("vector metadata = %#v, want normalized score and rank", hits[0].Metadata)
+	}
+	if hits[0].Score <= hits[1].Score {
+		t.Fatalf("scores = %.4f <= %.4f, want fused semantic match first", hits[0].Score, hits[1].Score)
 	}
 }
 
@@ -262,5 +295,35 @@ func (s *fakeHybridStore) SearchVector(_ context.Context, query store.VectorSear
 		Score:    0.9,
 		Source:   store.SearchSourceVector,
 		Evidence: "vector evidence",
+	}}, nil
+}
+
+type fakeHybridRankStore struct {
+	store.Store
+}
+
+func (s *fakeHybridRankStore) SearchText(_ context.Context, query store.TextSearchQuery) ([]store.SearchHit, error) {
+	return []store.SearchHit{
+		{
+			Target:   store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "LexicalMatch", Line: 3},
+			Score:    100,
+			Source:   store.SearchSourceText,
+			Evidence: "lexical evidence",
+		},
+		{
+			Target:   store.TargetRef{Kind: store.TargetSymbol, Path: "b.go", Name: "SemanticMatch", Line: 5},
+			Score:    10,
+			Source:   store.SearchSourceText,
+			Evidence: "weaker lexical evidence",
+		},
+	}, nil
+}
+
+func (s *fakeHybridRankStore) SearchVector(_ context.Context, query store.VectorSearchQuery) ([]store.SearchHit, error) {
+	return []store.SearchHit{{
+		Target:   store.TargetRef{Kind: store.TargetSymbol, Path: "b.go", Name: "SemanticMatch", Line: 5},
+		Score:    0.9,
+		Source:   store.SearchSourceVector,
+		Evidence: "semantic evidence",
 	}}, nil
 }

@@ -268,7 +268,9 @@ code-context vector-search --vector 0.1,0.2,0.3 --model text-embedding-test --di
 
 Uses provider-neutral `TextSearcher`, `VectorSearcher`, and `GraphTraverser` capabilities when
 available. Without embeddings it degrades to text/graph fusion; with Helix vectors and an embedding
-provider it also includes semantic vector hits.
+provider it also includes semantic vector hits. The engine fallback normalizes each source's scores
+per query before applying weights, then records raw score, normalized score, rank, contribution, and
+fusion metadata in each hit for explainable tuning.
 
 ```bash
 code-context hybrid-search "handler health check" --limit 10
@@ -563,7 +565,9 @@ available and keep the local grep fallback for backends without the capability. 
 signals when available and degrade to the supported subset. Query-focused `context`, `snapshot`,
 HTTP responses, and agent `code_context_explore`/`code_context_context`/`code_context_snapshot`
 also surface best-effort hybrid retrieval hints as optional `hybrid_hits` so callers can use the
-extra evidence without coupling to any specific backend. `vector-search`,
+extra evidence without coupling to any specific backend. Engine fallback fusion uses a weighted
+normalized sum and annotates each hit with source ranks/contributions (`hybrid_*` metadata), keeping
+ranking tuning transparent while remaining backend-neutral. `vector-search`,
 `/api/vector`, and MCP `vector_search`/`code_context_vector_search` call `VectorSearcher` directly;
 when query text is provided, they first use the configured `Embedder` to produce the query vector.
 
