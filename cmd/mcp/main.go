@@ -107,6 +107,7 @@ type HybridSearchArgs struct {
 type AnswerArgs struct {
 	Query          string                `json:"query,omitempty"`
 	Question       string                `json:"question,omitempty"`
+	Format         string                `json:"format,omitempty"`
 	SystemPrompt   string                `json:"system_prompt,omitempty"`
 	Messages       []store.AnswerMessage `json:"messages,omitempty"`
 	Filter         store.SearchFilter    `json:"filter,omitempty"`
@@ -518,6 +519,9 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
+			if strings.TrimSpace(args.Format) == "" {
+				args.Format = "markdown"
+			}
 			out, err := runAnswerTool(ctx, eng, args)
 			if err != nil {
 				return nil, nil, err
@@ -1515,7 +1519,14 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 	if err != nil {
 		return "", err
 	}
-	return marshalIndentedJSON(result)
+	switch strings.ToLower(strings.TrimSpace(args.Format)) {
+	case "", "json":
+		return marshalIndentedJSON(result)
+	case "markdown", "md":
+		return engine.FormatAnswerMarkdown(result), nil
+	default:
+		return "", fmt.Errorf("unsupported answer output format %q (supported: json, markdown)", args.Format)
+	}
 }
 
 func runGraphTool(ctx context.Context, eng *engine.Engine, args GraphArgs) (string, error) {

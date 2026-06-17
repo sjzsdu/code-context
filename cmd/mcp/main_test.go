@@ -193,6 +193,36 @@ func TestRunHybridSearchTool(t *testing.T) {
 	}
 }
 
+func TestRunAnswerToolMarkdownContextOnly(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{Question: "Foo", ContextOnly: true, Format: "markdown", Limit: 3})
+	if err != nil {
+		t.Fatalf("run answer tool: %v", err)
+	}
+	if !strings.Contains(out, "# Answer") ||
+		!strings.Contains(out, "**Question:** Foo") ||
+		!strings.Contains(out, "Context-only") ||
+		!strings.Contains(out, "## Sources") ||
+		!strings.Contains(out, "[1]") {
+		t.Fatalf("expected markdown answer context, got:\n%s", out)
+	}
+}
+
+func TestRunAnswerToolJSONContextOnly(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{Question: "Foo", ContextOnly: true, Format: "json", Limit: 3})
+	if err != nil {
+		t.Fatalf("run answer tool json: %v", err)
+	}
+	if !strings.Contains(out, "\"question\": \"Foo\"") || !strings.Contains(out, "\"sources\"") {
+		t.Fatalf("expected JSON answer context, got:\n%s", out)
+	}
+}
+
 func TestFormatHybridHitsMarkdown(t *testing.T) {
 	out := formatHybridHitsMarkdown([]store.SearchHit{{
 		Target: store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "Foo", Line: 3},

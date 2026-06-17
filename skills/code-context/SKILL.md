@@ -169,7 +169,9 @@ Answer/RAG support follows the same provider-neutral rule: `answer`, `POST /api/
 `{"context_only": true}` to inspect evidence without any external model call. Answer results expose
 stable citation/source metadata (`[1]`, `[2]`, ...), and callers can override `system_prompt` or pass
 prior `messages` without coupling to a specific backend. Answer retrieval can be scoped/tuned with
-provider-neutral `filter`, source weights, and graph `expand_from`/`expand_max_depth` controls.
+provider-neutral `filter`, source weights, and graph `expand_from`/`expand_max_depth` controls. Use
+CLI `--format markdown` or MCP `format: "markdown"` for agent-readable answers with a `Sources`
+section; use JSON for structured consumers.
 
 ## Recommended Dogfood Workflow
 

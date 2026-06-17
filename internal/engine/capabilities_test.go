@@ -226,6 +226,35 @@ func TestAnswerDelegatesToProvider(t *testing.T) {
 	}
 }
 
+func TestFormatAnswerMarkdown(t *testing.T) {
+	out := FormatAnswerMarkdown(&AnswerResult{
+		Question: "Where is Foo?",
+		Answer:   "Foo is in a.go [1].",
+		Summary:  "Answered question using one source",
+		Sources: []AnswerSource{{
+			Citation: "[1]",
+			Title:    "a.go:3 Foo",
+			Target:   store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "Foo", Line: 3},
+			Source:   store.SearchSourceHybrid,
+			Score:    0.9,
+		}},
+		Context: []store.AnswerContext{{
+			Citation: "[1]",
+			Content:  "func Foo() {}",
+		}},
+		Usage: &store.AnswerUsage{PromptTokens: 10, CompletionTokens: 4, TotalTokens: 14},
+	})
+	if !strings.Contains(out, "# Answer") ||
+		!strings.Contains(out, "**Question:** Where is Foo?") ||
+		!strings.Contains(out, "Foo is in a.go [1].") ||
+		!strings.Contains(out, "## Sources") ||
+		!strings.Contains(out, "- [1] `a.go:3 Foo` (hybrid, 0.9000)") ||
+		!strings.Contains(out, "func Foo() {}") ||
+		!strings.Contains(out, "prompt_tokens: 10") {
+		t.Fatalf("unexpected markdown:\n%s", out)
+	}
+}
+
 func TestSearchVectorUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))

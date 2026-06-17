@@ -393,6 +393,12 @@ grep -q '"sources":' <<<"$answer_context_cli"
 grep -q '"citation": "\[1\]"' <<<"$answer_context_cli"
 grep -q "HealthMessage" <<<"$answer_context_cli"
 
+answer_markdown_cli="$(run_code_context answer "Where is HealthMessage used?" --context-only --format markdown --limit 5)"
+printf '%s\n' "$answer_markdown_cli"
+grep -q "# Answer" <<<"$answer_markdown_cli"
+grep -q "## Sources" <<<"$answer_markdown_cli"
+grep -q "\[1\]" <<<"$answer_markdown_cli"
+
 answer_cli="$(run_code_context answer "Where is HealthMessage used?" --system-prompt "Answer from smoke evidence and cite sources." --json --limit 5)"
 printf '%s\n' "$answer_cli"
 grep -q '"model": "smoke-answer"' <<<"$answer_cli"

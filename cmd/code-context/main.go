@@ -1116,6 +1116,7 @@ func newAnswerCmd() *cobra.Command {
 	var maxTokens int
 	var temperature float64
 	var systemPrompt string
+	var format string
 	var filePattern string
 	var targetKinds []string
 	var metadata []string
@@ -1171,19 +1172,28 @@ func newAnswerCmd() *cobra.Command {
 				return err
 			}
 			if jsonOut {
+				format = "json"
+			}
+			switch strings.ToLower(strings.TrimSpace(format)) {
+			case "", "text":
+				fmt.Println(result.Summary)
+				if result.Answer != "" {
+					fmt.Println()
+					fmt.Println(result.Answer)
+				}
+				if len(result.Context) > 0 {
+					fmt.Println()
+					fmt.Println("Sources:")
+					fmt.Println(formatAnswerContextPlain(result.Context))
+				}
+			case "markdown", "md":
+				fmt.Println(engine.FormatAnswerMarkdown(result))
+			case "json":
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				return enc.Encode(result)
-			}
-			fmt.Println(result.Summary)
-			if result.Answer != "" {
-				fmt.Println()
-				fmt.Println(result.Answer)
-			}
-			if len(result.Context) > 0 {
-				fmt.Println()
-				fmt.Println("Sources:")
-				fmt.Println(formatAnswerContextPlain(result.Context))
+			default:
+				return fmt.Errorf("unsupported answer output format %q (supported: text, markdown, json)", format)
 			}
 			return nil
 		},
@@ -1201,6 +1211,7 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&graphWeight, "graph-weight", 0, "answer retrieval graph score weight; defaults with other weights when all are zero")
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0, "override answer max completion tokens")
 	cmd.Flags().Float64Var(&temperature, "temperature", 0, "override answer sampling temperature")
+	cmd.Flags().StringVar(&format, "format", "text", "answer output format (text|markdown|json)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer result")
 	return cmd
 }

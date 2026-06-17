@@ -620,6 +620,68 @@ type AnswerResult struct {
 	Summary     string                `json:"summary"`
 }
 
+func FormatAnswerMarkdown(result *AnswerResult) string {
+	if result == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# Answer\n")
+	if question := strings.TrimSpace(result.Question); question != "" {
+		fmt.Fprintf(&b, "\n**Question:** %s\n", question)
+	}
+	if summary := strings.TrimSpace(result.Summary); summary != "" {
+		fmt.Fprintf(&b, "\n> %s\n", summary)
+	}
+	if answer := strings.TrimSpace(result.Answer); answer != "" {
+		fmt.Fprintf(&b, "\n%s\n", answer)
+	} else if result.ContextOnly {
+		b.WriteString("\n_Context-only: answer provider was not called._\n")
+	} else {
+		b.WriteString("\n_No answer was generated._\n")
+	}
+
+	sources := result.Sources
+	if len(sources) == 0 {
+		sources = answerSourcesFromContext(result.Context)
+	}
+	if len(sources) > 0 {
+		b.WriteString("\n## Sources\n")
+		snippets := answerContextSnippetByCitation(result.Context)
+		for i, source := range sources {
+			citation := strings.TrimSpace(source.Citation)
+			if citation == "" {
+				citation = answerCitationLabel(i + 1)
+			}
+			title := strings.TrimSpace(source.Title)
+			if title == "" {
+				title = answerTargetLabel(source.Target)
+			}
+			fmt.Fprintf(&b, "- %s `%s`", citation, title)
+			if source.Source != "" {
+				fmt.Fprintf(&b, " (%s", source.Source)
+				if source.Score != 0 {
+					fmt.Fprintf(&b, ", %.4f", source.Score)
+				}
+				b.WriteString(")")
+			} else if source.Score != 0 {
+				fmt.Fprintf(&b, " (%.4f)", source.Score)
+			}
+			if snippet := snippets[citation]; snippet != "" {
+				fmt.Fprintf(&b, "\n  - %s", snippet)
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if result.Usage != nil && (result.Usage.PromptTokens > 0 || result.Usage.CompletionTokens > 0 || result.Usage.TotalTokens > 0) {
+		fmt.Fprintf(&b, "\n## Usage\n- prompt_tokens: %d\n- completion_tokens: %d\n- total_tokens: %d\n",
+			result.Usage.PromptTokens,
+			result.Usage.CompletionTokens,
+			result.Usage.TotalTokens,
+		)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult, error) {
 	question := answerQuestion(opts)
 	if question == "" {
@@ -759,6 +821,40 @@ func answerSourcesFromContext(items []store.AnswerContext) []AnswerSource {
 		})
 	}
 	return sources
+}
+
+func answerContextSnippetByCitation(items []store.AnswerContext) map[string]string {
+	out := map[string]string{}
+	for i, item := range items {
+		citation := strings.TrimSpace(item.Citation)
+		if citation == "" {
+			citation = answerCitationLabel(i + 1)
+		}
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
+			content = strings.TrimSpace(item.Evidence)
+		}
+		if content == "" {
+			continue
+		}
+		out[citation] = answerMarkdownSnippet(content, 180)
+	}
+	return out
+}
+
+func answerMarkdownSnippet(content string, max int) string {
+	fields := strings.Fields(strings.TrimSpace(content))
+	if len(fields) == 0 {
+		return ""
+	}
+	snippet := strings.Join(fields, " ")
+	if max > 0 && len(snippet) > max {
+		if max <= len("...") {
+			return snippet[:max]
+		}
+		snippet = snippet[:max-len("...")] + "..."
+	}
+	return snippet
 }
 
 func answerContentFromHighlights(highlights []store.SearchHighlight) string {
