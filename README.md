@@ -365,10 +365,13 @@ Builds answer context from hybrid retrieval, then optionally calls the configure
 The provider is disabled by default, so `--context-only` is the safe way to preview the retrieved
 evidence without any external model call. Results include a provider-neutral `sources` list with
 stable citation labels (`[1]`, `[2]`, ...), and `--system-prompt` can override the default answer
-instruction without changing retrieval.
+instruction without changing retrieval. Retrieval can be scoped/tuned with the same provider-neutral
+filter and fusion controls used by `hybrid-search` (`--target-kind`, `--file-pattern`,
+`--metadata`, `--text-weight`, `--vector-weight`, `--graph-weight`, `--expand-from`).
 
 ```bash
 code-context answer "Where is status served?" --context-only
+code-context answer "Where is status served?" --context-only --target-kind symbol --text-weight 0.7 --vector-weight 0.3
 code-context answer "Where is status served?" --answer-provider openai-compatible --answer-base-url http://localhost:11434/v1 --answer-model qwen2.5-coder
 code-context answer "Where is status served?" --system-prompt "Answer briefly and cite sources."
 ```
@@ -683,7 +686,9 @@ Answer/RAG support is also provider-neutral. `answer`, `POST /api/answer`, and M
 `{"context_only": true}` to inspect retrieved evidence without any external model call. Answer
 results include provider-neutral citation/source metadata, and requests can override
 `system_prompt` or pass prior `messages` for provider-specific conversation style while keeping
-retrieval backend-neutral. The built-in `openai-compatible` answer adapter posts to
+retrieval backend-neutral. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
+`graph_weight`, `expand_from`, and `expand_max_depth` so callers can scope and tune retrieval
+without dropping to backend-specific APIs. The built-in `openai-compatible` answer adapter posts to
 `{base_url}/chat/completions`; additional answer providers can implement `store.Answerer` without
 changing retrieval or storage call sites.
 
@@ -719,7 +724,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider |
+| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

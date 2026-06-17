@@ -159,6 +159,43 @@ func TestAnswerContextOnlyUsesHybridRetrieval(t *testing.T) {
 	}
 }
 
+func TestAnswerRetrievalOptionsPassThroughToHybridSearch(t *testing.T) {
+	hybridStore := &fakeHybridStore{}
+	eng := &Engine{store: hybridStore, embedder: fakeEmbedder{}}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:     "hello",
+		ContextOnly:  true,
+		Limit:        3,
+		TextWeight:   1,
+		VectorWeight: 0,
+		Filter: store.SearchFilter{
+			FilePattern: "a.go",
+			TargetKinds: []store.TargetKind{
+				store.TargetSymbol,
+			},
+			Metadata: map[string]string{"language": "go"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Answer with retrieval options: %v", err)
+	}
+	if len(result.Context) != 1 {
+		t.Fatalf("context = %#v", result.Context)
+	}
+	if hybridStore.textQuery.Query != "hello" || hybridStore.textQuery.Limit < 3 {
+		t.Fatalf("text query = %#v", hybridStore.textQuery)
+	}
+	if hybridStore.textQuery.Filter.FilePattern != "a.go" ||
+		len(hybridStore.textQuery.Filter.TargetKinds) != 1 ||
+		hybridStore.textQuery.Filter.TargetKinds[0] != store.TargetSymbol ||
+		hybridStore.textQuery.Filter.Metadata["language"] != "go" {
+		t.Fatalf("text query filter = %#v", hybridStore.textQuery.Filter)
+	}
+	if len(hybridStore.vectorQuery.Vector) != 0 {
+		t.Fatalf("vector query = %#v, want vector path skipped by weight", hybridStore.vectorQuery)
+	}
+}
+
 func TestAnswerDelegatesToProvider(t *testing.T) {
 	answerer := &fakeAnswerer{}
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}

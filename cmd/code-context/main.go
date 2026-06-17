@@ -1116,6 +1116,14 @@ func newAnswerCmd() *cobra.Command {
 	var maxTokens int
 	var temperature float64
 	var systemPrompt string
+	var filePattern string
+	var targetKinds []string
+	var metadata []string
+	var expandTargets []string
+	var expandDepth int
+	var textWeight float64
+	var vectorWeight float64
+	var graphWeight float64
 	cmd := &cobra.Command{
 		Use:   "answer <question>",
 		Short: "Answer a question using retrieved code-context evidence",
@@ -1131,13 +1139,30 @@ func newAnswerCmd() *cobra.Command {
 			if cmd.Flags().Changed("temperature") {
 				tempPtr = &temperature
 			}
+			filter, err := searchFilterFromFlags(filePattern, targetKinds, metadata)
+			if err != nil {
+				return err
+			}
+			var expandFrom []store.TargetRef
+			for _, target := range expandTargets {
+				target = strings.TrimSpace(target)
+				if target != "" {
+					expandFrom = append(expandFrom, store.ParseTargetRef(target))
+				}
+			}
 			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
-				Question:     strings.TrimSpace(strings.Join(args, " ")),
-				SystemPrompt: strings.TrimSpace(systemPrompt),
-				Limit:        limit,
-				ContextOnly:  contextOnly,
-				MaxTokens:    maxTokens,
-				Temperature:  tempPtr,
+				Question:       strings.TrimSpace(strings.Join(args, " ")),
+				SystemPrompt:   strings.TrimSpace(systemPrompt),
+				Filter:         filter,
+				Limit:          limit,
+				TextWeight:     textWeight,
+				VectorWeight:   vectorWeight,
+				GraphWeight:    graphWeight,
+				ExpandFrom:     expandFrom,
+				ExpandMaxDepth: expandDepth,
+				ContextOnly:    contextOnly,
+				MaxTokens:      maxTokens,
+				Temperature:    tempPtr,
 			})
 			if err != nil {
 				if errors.Is(err, engine.ErrCapabilityUnsupported) {
@@ -1166,6 +1191,14 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 8, "max retrieved context items")
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")
+	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "filter retrieval target kinds; repeat or comma-separate (symbol,document,file,text)")
+	cmd.Flags().StringVar(&filePattern, "file-pattern", "", "filter retrieval hits whose path matches this substring or glob")
+	cmd.Flags().StringArrayVar(&metadata, "metadata", nil, "retrieval metadata filter as key=value")
+	cmd.Flags().StringArrayVar(&expandTargets, "expand-from", nil, "graph expansion start target for answer retrieval; repeat for multiple targets")
+	cmd.Flags().IntVar(&expandDepth, "expand-depth", 1, "max graph expansion depth for answer retrieval")
+	cmd.Flags().Float64Var(&textWeight, "text-weight", 0, "answer retrieval text score weight; defaults with other weights when all are zero")
+	cmd.Flags().Float64Var(&vectorWeight, "vector-weight", 0, "answer retrieval vector score weight; defaults with other weights when all are zero")
+	cmd.Flags().Float64Var(&graphWeight, "graph-weight", 0, "answer retrieval graph score weight; defaults with other weights when all are zero")
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0, "override answer max completion tokens")
 	cmd.Flags().Float64Var(&temperature, "temperature", 0, "override answer sampling temperature")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer result")

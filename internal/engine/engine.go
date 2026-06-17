@@ -582,14 +582,20 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 }
 
 type AnswerOptions struct {
-	Query        string                `json:"query,omitempty"`
-	Question     string                `json:"question,omitempty"`
-	SystemPrompt string                `json:"system_prompt,omitempty"`
-	Messages     []store.AnswerMessage `json:"messages,omitempty"`
-	Limit        int                   `json:"limit,omitempty"`
-	ContextOnly  bool                  `json:"context_only,omitempty"`
-	MaxTokens    int                   `json:"max_tokens,omitempty"`
-	Temperature  *float64              `json:"temperature,omitempty"`
+	Query          string                `json:"query,omitempty"`
+	Question       string                `json:"question,omitempty"`
+	SystemPrompt   string                `json:"system_prompt,omitempty"`
+	Messages       []store.AnswerMessage `json:"messages,omitempty"`
+	Filter         store.SearchFilter    `json:"filter,omitempty"`
+	Limit          int                   `json:"limit,omitempty"`
+	TextWeight     float64               `json:"text_weight,omitempty"`
+	VectorWeight   float64               `json:"vector_weight,omitempty"`
+	GraphWeight    float64               `json:"graph_weight,omitempty"`
+	ExpandFrom     []store.TargetRef     `json:"expand_from,omitempty"`
+	ExpandMaxDepth int                   `json:"expand_max_depth,omitempty"`
+	ContextOnly    bool                  `json:"context_only,omitempty"`
+	MaxTokens      int                   `json:"max_tokens,omitempty"`
+	Temperature    *float64              `json:"temperature,omitempty"`
 }
 
 type AnswerSource struct {
@@ -615,15 +621,12 @@ type AnswerResult struct {
 }
 
 func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult, error) {
-	question := strings.TrimSpace(opts.Question)
-	if question == "" {
-		question = strings.TrimSpace(opts.Query)
-	}
+	question := answerQuestion(opts)
 	if question == "" {
 		return nil, fmt.Errorf("answer question is required")
 	}
 
-	contextItems, hits, err := e.AnswerContext(ctx, question, opts.Limit)
+	contextItems, hits, err := e.AnswerContextWithOptions(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -666,14 +669,29 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 }
 
 func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) ([]store.AnswerContext, []store.SearchHit, error) {
+	return e.AnswerContextWithOptions(ctx, AnswerOptions{Question: question, Limit: limit})
+}
+
+func (e *Engine) AnswerContextWithOptions(ctx context.Context, opts AnswerOptions) ([]store.AnswerContext, []store.SearchHit, error) {
+	question := answerQuestion(opts)
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return nil, nil, fmt.Errorf("answer question is required")
 	}
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 8
 	}
-	hits, err := e.SearchHybrid(ctx, store.HybridSearchQuery{Query: question, Limit: limit})
+	hits, err := e.SearchHybrid(ctx, store.HybridSearchQuery{
+		Query:          question,
+		Filter:         opts.Filter,
+		Limit:          limit,
+		TextWeight:     opts.TextWeight,
+		VectorWeight:   opts.VectorWeight,
+		GraphWeight:    opts.GraphWeight,
+		ExpandFrom:     opts.ExpandFrom,
+		ExpandMaxDepth: opts.ExpandMaxDepth,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -703,6 +721,14 @@ func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) 
 		})
 	}
 	return contextItems, hits, nil
+}
+
+func answerQuestion(opts AnswerOptions) string {
+	question := strings.TrimSpace(opts.Question)
+	if question == "" {
+		question = strings.TrimSpace(opts.Query)
+	}
+	return question
 }
 
 func answerCitationLabel(rank int) string {
