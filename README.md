@@ -599,7 +599,8 @@ HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/heli
 
 The smoke creates a small Go fixture, starts a deterministic local OpenAI-compatible fake embedding
 server, runs the Helix backend through `rebuild`, starts the HTTP server, and verifies `stats`,
-`status` capabilities, `search`, `routes`, `docs-for`, `/api/text`, real `/api/vector` query-text
+`status` capabilities, embedding lifecycle status, namespace inventory, prune dry-run/apply safety,
+`search`, `routes`, `docs-for`, `/api/text`, real `/api/vector` query-text
 results, `/api/hybrid` vector fusion, and `/api/graph/traverse` read paths. It only rebuilds the configured
 `HELIX_PROJECT_ID`; use a fresh instance if it was initialized by older code-context builds that
 created unscoped unique path indexes.

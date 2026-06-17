@@ -152,7 +152,10 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 PY
 
-run_code_context() {
+run_code_context_model() {
+  local model="$1"
+  local dimensions="$2"
+  shift 2
   go run ./cmd/code-context \
     --root "$FIXTURE" \
     --store-backend helix \
@@ -160,9 +163,17 @@ run_code_context() {
     --helix-project-id "$HELIX_PROJECT_ID" \
     --embedding-provider openai-compatible \
     --embedding-base-url "http://127.0.0.1:${EMBEDDING_PORT}/v1" \
-    --embedding-model smoke-embedding \
-    --embedding-dimensions 3 \
+    --embedding-model "$model" \
+    --embedding-dimensions "$dimensions" \
     "$@"
+}
+
+run_code_context() {
+  run_code_context_model smoke-embedding 3 "$@"
+}
+
+run_code_context_old_embedding() {
+  run_code_context_model smoke-embedding-old 3 "$@"
 }
 
 wait_for_embedding() {
@@ -227,6 +238,53 @@ grep -q "Capabilities:.*vector_search" <<<"$status"
 grep -q "Capabilities:.*embedding_cache" <<<"$status"
 grep -q "Embedding:.*openai-compatible.*smoke-embedding" <<<"$status"
 
+embedding_status="$(run_code_context embedding-status --json --limit 10)"
+printf '%s\n' "$embedding_status"
+grep -q '"enabled": true' <<<"$embedding_status"
+grep -q '"model": "smoke-embedding"' <<<"$embedding_status"
+grep -q '"type": "healthy"' <<<"$embedding_status"
+grep -q '"current_namespace"' <<<"$embedding_status"
+
+namespaces="$(run_code_context embedding-namespaces --json)"
+printf '%s\n' "$namespaces"
+grep -q '"model": "smoke-embedding"' <<<"$namespaces"
+grep -q '"total_namespaces": 1' <<<"$namespaces"
+
+old_backfill="$(run_code_context_old_embedding embedding-backfill --apply --json --limit 10)"
+printf '%s\n' "$old_backfill"
+grep -q '"model": "smoke-embedding-old"' <<<"$old_backfill"
+grep -q '"dry_run": false' <<<"$old_backfill"
+
+embedding_status_with_old="$(run_code_context embedding-status --json --limit 10)"
+printf '%s\n' "$embedding_status_with_old"
+grep -q '"model": "smoke-embedding-old"' <<<"$embedding_status_with_old"
+grep -q '"type": "prune"' <<<"$embedding_status_with_old"
+grep -q "code-context embedding-prune --model smoke-embedding-old --dimensions 3" <<<"$embedding_status_with_old"
+
+old_prune_dry_run="$(run_code_context embedding-prune --model smoke-embedding-old --dimensions 3 --json)"
+printf '%s\n' "$old_prune_dry_run"
+grep -q '"dry_run": true' <<<"$old_prune_dry_run"
+grep -q '"model": "smoke-embedding-old"' <<<"$old_prune_dry_run"
+grep -q '"matched_chunks":' <<<"$old_prune_dry_run"
+
+set +e
+current_prune_apply="$(run_code_context embedding-prune --model smoke-embedding --dimensions 3 --apply --json 2>&1)"
+current_prune_status=$?
+set -e
+printf '%s\n' "$current_prune_apply"
+[[ "$current_prune_status" != "0" ]]
+grep -q "refusing to prune current embedding namespace" <<<"$current_prune_apply"
+
+old_prune_apply="$(run_code_context embedding-prune --model smoke-embedding-old --dimensions 3 --apply --json)"
+printf '%s\n' "$old_prune_apply"
+grep -q '"dry_run": false' <<<"$old_prune_apply"
+grep -q '"deleted_chunks":' <<<"$old_prune_apply"
+
+embedding_status_after_prune="$(run_code_context embedding-status --json --limit 10)"
+printf '%s\n' "$embedding_status_after_prune"
+grep -q '"type": "healthy"' <<<"$embedding_status_after_prune"
+! grep -q '"model": "smoke-embedding-old"' <<<"$embedding_status_after_prune"
+
 search="$(run_code_context search Health)"
 printf '%s\n' "$search"
 grep -q "HealthHandler" <<<"$search"
@@ -278,6 +336,27 @@ grep -q '"kind":"symbol"' <<<"$text_api"
 grep -q '"kind":"document"' <<<"$text_api"
 grep -q "HealthHandler" <<<"$text_api"
 grep -q "docs/health.md" <<<"$text_api"
+
+embedding_status_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/embedding-status?limit=10")"
+printf '%s\n' "$embedding_status_api"
+grep -q '"enabled":true' <<<"$embedding_status_api"
+grep -q '"model":"smoke-embedding"' <<<"$embedding_status_api"
+grep -q '"type":"healthy"' <<<"$embedding_status_api"
+
+embedding_lifecycle_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/embedding-lifecycle?limit=10")"
+printf '%s\n' "$embedding_lifecycle_api"
+grep -q '"summary":' <<<"$embedding_lifecycle_api"
+grep -q '"recommended_actions"' <<<"$embedding_lifecycle_api"
+
+embedding_namespaces_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/embedding-namespaces")"
+printf '%s\n' "$embedding_namespaces_api"
+grep -q '"total_namespaces":1' <<<"$embedding_namespaces_api"
+grep -q '"model":"smoke-embedding"' <<<"$embedding_namespaces_api"
+
+embedding_prune_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/embedding-prune?model=smoke-embedding-missing&dimensions=3" -H 'Content-Type: application/json' --data '{}')"
+printf '%s\n' "$embedding_prune_api"
+grep -q '"dry_run":true' <<<"$embedding_prune_api"
+grep -q "was not found" <<<"$embedding_prune_api"
 
 vector_api_status="$(curl -sS -o "$SMOKE_DIR/vector-api.out" -w "%{http_code}" -X POST "http://127.0.0.1:${HTTP_PORT}/api/vector" -H 'Content-Type: application/json' --data '{}')"
 cat "$SMOKE_DIR/vector-api.out"

@@ -113,7 +113,8 @@ Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the a
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.
 The smoke starts a deterministic local OpenAI-compatible fake embedding server and verifies `status`
-capabilities, `/api/text`, real `/api/vector` query-text results, `/api/hybrid` vector fusion, and
+capabilities, embedding lifecycle status, namespace inventory, prune dry-run/apply safety,
+`/api/text`, real `/api/vector` query-text results, `/api/hybrid` vector fusion, and
 `/api/graph/traverse` through `serve`; keep `CODE_CONTEXT_HELIX_SMOKE_PORT` and
 `CODE_CONTEXT_HELIX_EMBEDDING_PORT` free or set them to available ports.
 Advanced Helix-backed features should stay behind provider-neutral optional interfaces in
