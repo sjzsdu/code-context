@@ -146,6 +146,30 @@ func TestRunEmbeddingPlanToolDisabled(t *testing.T) {
 	if !strings.Contains(out, "\"enabled\": false") || !strings.Contains(out, "embedding provider is disabled") {
 		t.Fatalf("expected disabled embedding plan, got:\n%s", out)
 	}
+
+	out, err = runEmbeddingBackfillTool(context.Background(), eng, EmbeddingBackfillArgs{Limit: 2})
+	if err != nil {
+		t.Fatalf("run embedding backfill tool: %v", err)
+	}
+	if !strings.Contains(out, "\"dry_run\": true") || !strings.Contains(out, "embedding provider is disabled") {
+		t.Fatalf("expected disabled embedding backfill dry run, got:\n%s", out)
+	}
+
+	out, err = runEmbeddingNamespacesTool(context.Background(), eng)
+	if err != nil {
+		t.Fatalf("run embedding namespaces tool: %v", err)
+	}
+	if !strings.Contains(out, "\"cache_supported\": true") || !strings.Contains(out, "no embedding namespaces found") {
+		t.Fatalf("expected empty embedding namespace inventory, got:\n%s", out)
+	}
+
+	out, err = runEmbeddingPruneTool(context.Background(), eng, EmbeddingPruneArgs{Model: "fake", Dimensions: 3})
+	if err != nil {
+		t.Fatalf("run embedding prune tool: %v", err)
+	}
+	if !strings.Contains(out, "\"dry_run\": true") || !strings.Contains(out, "embedding namespace fake/3 was not found") {
+		t.Fatalf("expected dry-run prune miss, got:\n%s", out)
+	}
 }
 
 func TestRunHybridSearchTool(t *testing.T) {

@@ -78,6 +78,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/embedding-plan", s.handleEmbeddingPlan)
+	mux.HandleFunc("/api/embedding-backfill", s.handleEmbeddingBackfill)
+	mux.HandleFunc("/api/embedding-namespaces", s.handleEmbeddingNamespaces)
+	mux.HandleFunc("/api/embedding-prune", s.handleEmbeddingPrune)
 	mux.HandleFunc("/api/freshness", s.handleFreshness)
 	mux.HandleFunc("/api/doctor", s.handleDoctor)
 	mux.HandleFunc("/api/rebuild", s.handleRebuild)
@@ -399,6 +402,59 @@ func (s *Server) handleEmbeddingPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, plan)
+}
+
+func (s *Server) handleEmbeddingBackfill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 0 {
+		limit = 0
+	}
+	apply := strings.EqualFold(r.URL.Query().Get("apply"), "true")
+	result, err := s.eng.BackfillEmbeddings(r.Context(), engine.EmbeddingBackfillOptions{
+		Limit: limit,
+		Apply: apply,
+	})
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleEmbeddingNamespaces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	report, err := s.eng.EmbeddingNamespaces(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, report)
+}
+
+func (s *Server) handleEmbeddingPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
+		return
+	}
+	dimensions, _ := strconv.Atoi(r.URL.Query().Get("dimensions"))
+	result, err := s.eng.PruneEmbeddingNamespace(r.Context(), engine.EmbeddingPruneOptions{
+		Model:        r.URL.Query().Get("model"),
+		Dimensions:   dimensions,
+		Apply:        strings.EqualFold(r.URL.Query().Get("apply"), "true"),
+		ForceCurrent: strings.EqualFold(r.URL.Query().Get("force_current"), "true") || strings.EqualFold(r.URL.Query().Get("force-current"), "true"),
+	})
+	if err != nil {
+		writeError(w, err, 400)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {

@@ -271,6 +271,58 @@ ON CONFLICT(key) DO UPDATE SET
 	return err
 }
 
+func (s *sqliteStore) ListEmbeddingNamespaces(ctx context.Context) ([]EmbeddingNamespace, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT model, dimensions, input_kind, target_kind, COUNT(*) AS chunks, MIN(created_at), MAX(updated_at)
+FROM embedding_cache
+GROUP BY model, dimensions, input_kind, target_kind
+ORDER BY model ASC, dimensions ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	acc := newEmbeddingNamespaceAccumulator()
+	for rows.Next() {
+		var (
+			model      string
+			dimensions int
+			inputKind  string
+			targetKind string
+			chunks     int
+			createdAt  int64
+			updatedAt  int64
+		)
+		if err := rows.Scan(&model, &dimensions, &inputKind, &targetKind, &chunks, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		acc.Add(model, dimensions, EmbeddingInputKind(inputKind), TargetKind(targetKind), chunks, timeFromUnixSeconds(createdAt), timeFromUnixSeconds(updatedAt))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return acc.List(), nil
+}
+
+func (s *sqliteStore) DeleteEmbeddingNamespace(ctx context.Context, model string, dimensions int) (int, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return 0, fmt.Errorf("embedding model is required")
+	}
+	if dimensions <= 0 {
+		return 0, fmt.Errorf("embedding dimensions are required")
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM embedding_cache WHERE model = ? AND dimensions = ?`, model, dimensions)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 type embeddingCacheRow struct {
 	Key          string
 	Model        string

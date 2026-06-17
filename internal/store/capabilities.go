@@ -74,6 +74,12 @@ func DetectCapabilities(provider any) []Capability {
 	if _, ok := provider.(EmbeddingCache); ok {
 		add(CapabilityEmbeddingCache)
 	}
+	if _, ok := provider.(EmbeddingCacheInspector); ok {
+		add(CapabilityEmbeddingCache)
+	}
+	if _, ok := provider.(EmbeddingCachePruner); ok {
+		add(CapabilityEmbeddingCache)
+	}
 
 	caps := make([]Capability, 0, len(seen))
 	for c := range seen {
@@ -473,9 +479,87 @@ type EmbeddingCacheEntry struct {
 	UpdatedAt   time.Time          `json:"updated_at,omitempty"`
 }
 
+type EmbeddingNamespace struct {
+	Model       string                     `json:"model"`
+	Dimensions  int                        `json:"dimensions"`
+	Chunks      int                        `json:"chunks"`
+	InputKinds  map[EmbeddingInputKind]int `json:"input_kinds,omitempty"`
+	TargetKinds map[TargetKind]int         `json:"target_kinds,omitempty"`
+	CreatedAt   time.Time                  `json:"created_at,omitempty"`
+	UpdatedAt   time.Time                  `json:"updated_at,omitempty"`
+}
+
 type EmbeddingCache interface {
 	GetEmbedding(ctx context.Context, key string) (*EmbeddingCacheEntry, error)
 	UpsertEmbedding(ctx context.Context, entry EmbeddingCacheEntry) error
+}
+
+type EmbeddingCacheInspector interface {
+	ListEmbeddingNamespaces(ctx context.Context) ([]EmbeddingNamespace, error)
+}
+
+type EmbeddingCachePruner interface {
+	DeleteEmbeddingNamespace(ctx context.Context, model string, dimensions int) (int, error)
+}
+
+type embeddingNamespaceAccumulator struct {
+	byKey map[string]*EmbeddingNamespace
+}
+
+func newEmbeddingNamespaceAccumulator() *embeddingNamespaceAccumulator {
+	return &embeddingNamespaceAccumulator{byKey: map[string]*EmbeddingNamespace{}}
+}
+
+func (a *embeddingNamespaceAccumulator) Add(model string, dimensions int, inputKind EmbeddingInputKind, targetKind TargetKind, chunks int, createdAt, updatedAt time.Time) {
+	model = strings.TrimSpace(model)
+	if chunks <= 0 {
+		chunks = 1
+	}
+	key := model + "\x00" + strconv.Itoa(dimensions)
+	ns := a.byKey[key]
+	if ns == nil {
+		ns = &EmbeddingNamespace{
+			Model:       model,
+			Dimensions:  dimensions,
+			InputKinds:  map[EmbeddingInputKind]int{},
+			TargetKinds: map[TargetKind]int{},
+		}
+		a.byKey[key] = ns
+	}
+	ns.Chunks += chunks
+	if inputKind != "" {
+		ns.InputKinds[inputKind] += chunks
+	}
+	if targetKind != "" {
+		ns.TargetKinds[targetKind] += chunks
+	}
+	if !createdAt.IsZero() && (ns.CreatedAt.IsZero() || createdAt.Before(ns.CreatedAt)) {
+		ns.CreatedAt = createdAt
+	}
+	if !updatedAt.IsZero() && (ns.UpdatedAt.IsZero() || updatedAt.After(ns.UpdatedAt)) {
+		ns.UpdatedAt = updatedAt
+	}
+}
+
+func (a *embeddingNamespaceAccumulator) List() []EmbeddingNamespace {
+	namespaces := make([]EmbeddingNamespace, 0, len(a.byKey))
+	for _, ns := range a.byKey {
+		namespaces = append(namespaces, *ns)
+	}
+	sort.Slice(namespaces, func(i, j int) bool {
+		if namespaces[i].Model != namespaces[j].Model {
+			return namespaces[i].Model < namespaces[j].Model
+		}
+		return namespaces[i].Dimensions < namespaces[j].Dimensions
+	})
+	return namespaces
+}
+
+func timeFromUnixSeconds(seconds int64) time.Time {
+	if seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
 }
 
 type EmbeddingModelInfo struct {

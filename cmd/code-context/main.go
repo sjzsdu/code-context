@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -107,6 +108,9 @@ func main() {
 		newStatsCmd(),
 		newStatusCmd(),
 		newEmbeddingPlanCmd(),
+		newEmbeddingBackfillCmd(),
+		newEmbeddingNamespacesCmd(),
+		newEmbeddingPruneCmd(),
 		newFreshnessCmd(),
 		newDoctorCmd(),
 		newCICmd(),
@@ -1391,6 +1395,188 @@ func newEmbeddingPlanCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 50, "max pending chunks to print, 0 for all")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON plan")
 	return cmd
+}
+
+func newEmbeddingBackfillCmd() *cobra.Command {
+	var limit int
+	var apply bool
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "embedding-backfill",
+		Short: "Backfill missing or stale embeddings for the configured model",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			result, err := eng.BackfillEmbeddings(context.Background(), engine.EmbeddingBackfillOptions{
+				Limit: limit,
+				Apply: apply,
+			})
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+			fmt.Println(result.Summary)
+			if result.DryRun {
+				fmt.Println("Mode:          dry-run (pass --apply to call the embedding provider and write cache entries)")
+			} else {
+				fmt.Println("Mode:          apply")
+			}
+			fmt.Printf("Embedding:     %s model=%s", result.Provider, result.Model)
+			if result.Dimensions > 0 {
+				fmt.Printf(" dimensions=%d", result.Dimensions)
+			}
+			fmt.Println()
+			fmt.Printf("Planned:       %d chunks\n", result.PlannedChunks)
+			if result.EmbeddedChunks > 0 || result.SkippedChunks > 0 {
+				fmt.Printf("Result:        %d embedded, %d skipped\n", result.EmbeddedChunks, result.SkippedChunks)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 0, "max chunks to backfill, 0 for all")
+	cmd.Flags().BoolVar(&apply, "apply", false, "call the embedding provider and write cache entries")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON result")
+	return cmd
+}
+
+func newEmbeddingNamespacesCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "embedding-namespaces",
+		Short: "List embedding cache model/dimension namespaces",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.EmbeddingNamespaces(context.Background())
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
+			}
+			fmt.Println(report.Summary)
+			fmt.Printf("Cache support: %t\n", report.CacheSupported)
+			if len(report.Namespaces) == 0 {
+				return nil
+			}
+			fmt.Printf("Namespaces:    %d (%d cached chunks)\n", report.TotalNamespaces, report.TotalChunks)
+			for _, ns := range report.Namespaces {
+				updated := "-"
+				if !ns.UpdatedAt.IsZero() {
+					updated = ns.UpdatedAt.Format(time.RFC3339)
+				}
+				fmt.Printf("  %s/%d chunks=%d updated=%s input=%s target=%s\n",
+					ns.Model,
+					ns.Dimensions,
+					ns.Chunks,
+					updated,
+					formatEmbeddingInputKindCounts(ns.InputKinds),
+					formatEmbeddingTargetKindCounts(ns.TargetKinds),
+				)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON namespace inventory")
+	return cmd
+}
+
+func newEmbeddingPruneCmd() *cobra.Command {
+	var model string
+	var dimensions int
+	var apply bool
+	var forceCurrent bool
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "embedding-prune",
+		Short: "Dry-run or delete a cached embedding model/dimension namespace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			result, err := eng.PruneEmbeddingNamespace(context.Background(), engine.EmbeddingPruneOptions{
+				Model:        model,
+				Dimensions:   dimensions,
+				Apply:        apply,
+				ForceCurrent: forceCurrent,
+			})
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+			fmt.Println(result.Summary)
+			if result.DryRun {
+				fmt.Println("Mode:          dry-run (pass --apply to delete cached vectors)")
+			} else {
+				fmt.Println("Mode:          apply")
+			}
+			fmt.Printf("Cache support: %t\n", result.CacheSupported)
+			fmt.Printf("Namespace:     %s/%d\n", result.Model, result.Dimensions)
+			if result.CurrentNamespace {
+				fmt.Println("Current:       true (pass --force-current with --apply to prune it intentionally)")
+			}
+			if result.MatchedChunks > 0 || result.DeletedChunks > 0 {
+				fmt.Printf("Chunks:        %d matched, %d deleted\n", result.MatchedChunks, result.DeletedChunks)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&model, "model", "", "embedding model namespace to prune")
+	cmd.Flags().IntVar(&dimensions, "dimensions", 0, "embedding dimensions namespace to prune")
+	cmd.Flags().BoolVar(&apply, "apply", false, "delete cached vectors from the selected namespace")
+	cmd.Flags().BoolVar(&forceCurrent, "force-current", false, "allow pruning the currently configured embedding namespace")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON prune result")
+	return cmd
+}
+
+func formatEmbeddingInputKindCounts(counts map[store.EmbeddingInputKind]int) string {
+	if len(counts) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(counts))
+	for kind := range counts {
+		keys = append(keys, string(kind))
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[store.EmbeddingInputKind(key)]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func formatEmbeddingTargetKindCounts(counts map[store.TargetKind]int) string {
+	if len(counts) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(counts))
+	for kind := range counts {
+		keys = append(keys, string(kind))
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[store.TargetKind(key)]))
+	}
+	return strings.Join(parts, ",")
 }
 
 func newFreshnessCmd() *cobra.Command {

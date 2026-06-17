@@ -84,6 +84,9 @@ code-context doc-coverage
 code-context doctor
 code-context freshness
 code-context embedding-plan
+code-context embedding-namespaces
+code-context embedding-prune --model text-embedding-old --dimensions 768
+code-context embedding-backfill --apply
 code-context rebuild
 
 # Show index stats
@@ -227,6 +230,8 @@ code-context map
 code-context snapshot
 code-context search Snapshot
 code-context embedding-plan
+code-context embedding-namespaces
+code-context embedding-prune --model text-embedding-old --dimensions 768
 code-context vector-search Snapshot
 code-context hybrid-search Snapshot
 code-context context Snapshot
@@ -275,6 +280,39 @@ see how many chunks are already cached and how many need a normal `index`/`rebui
 ```bash
 code-context embedding-plan
 code-context embedding-plan --json --limit 100
+```
+
+### `embedding-namespaces` — List cached embedding model namespaces
+
+Lists all cached model + dimension namespaces in the active embedding cache, including chunk counts,
+input kinds, target kinds, and last update timestamps. Use it before changing embedding providers or
+models to see which vector spaces already exist and which ones can be cleaned up later.
+
+```bash
+code-context embedding-namespaces
+code-context embedding-namespaces --json
+```
+
+### `embedding-prune` — Delete an old embedding namespace
+
+Dry-runs deletion of a selected model + dimension namespace by default. Pass `--apply` only after
+reviewing `embedding-namespaces`; pruning the currently configured embedding namespace is blocked
+unless `--force-current` is also provided.
+
+```bash
+code-context embedding-prune --model text-embedding-old --dimensions 768
+code-context embedding-prune --model text-embedding-old --dimensions 768 --apply
+```
+
+### `embedding-backfill` — Fill missing/stale embedding cache entries
+
+Runs the same plan, then embeds only missing/stale chunks for the configured model namespace. It is
+dry-run by default; pass `--apply` to call the embedding provider and write cache entries.
+
+```bash
+code-context embedding-backfill          # dry run
+code-context embedding-backfill --apply  # write missing/stale cache entries
+code-context embedding-backfill --apply --limit 100
 ```
 
 ### `hybrid-search [query]` — Fuse text, vector, and graph signals
@@ -593,6 +631,12 @@ code-context owns only the chunking, caching, storage, and retrieval glue. When 
 vectors by model + dimensions + chunk hash. Helix stores those vectors in `CodeContextEmbeddingChunk`
 nodes and exposes them through `VectorSearcher`; the engine-level hybrid fusion layer combines
 provider text, vector, and graph signals without requiring Helix-specific call sites.
+Use `embedding-namespaces`, `/api/embedding-namespaces`, or MCP
+`embedding_namespaces`/`code_context_embedding_namespaces` to inventory cached model/dimension
+namespaces before switching models or planning future cache cleanup. Use `embedding-prune`,
+`POST /api/embedding-prune`, or MCP `embedding_prune`/`code_context_embedding_prune` to delete a
+selected old namespace; prune is dry-run by default and refuses to remove the currently configured
+namespace unless explicitly forced.
 
 ## HTTP API
 
@@ -639,6 +683,9 @@ Start the server with `code-context serve`, then:
 | GET | `/api/stats` | — | Index statistics with version metadata |
 | GET | `/api/status` | — | Service/workflow status including provider capabilities and watch metadata |
 | GET | `/api/embedding-plan` | `limit?` | Embedding cache coverage and backfill plan for the configured model |
+| POST | `/api/embedding-backfill` | `apply?`, `limit?` | Dry-run or apply missing/stale embedding backfill |
+| GET | `/api/embedding-namespaces` | — | List cached embedding model/dimension namespaces |
+| POST | `/api/embedding-prune` | `model`, `dimensions`, `apply?`, `force_current?` | Dry-run or delete a selected embedding namespace |
 | GET | `/api/freshness` | `limit?` | Report indexed files/documents that differ from the filesystem |
 | GET | `/api/doctor` | — | Check database schema, index freshness, and service health |
 | POST | `/api/index` | `incremental?` | Trigger indexing |
@@ -701,6 +748,8 @@ Add to your AI client config:
 | `search` | Search symbols by name | `query` |
 | `vector_search` | Provider-backed vector search | `query_text?`, `vector?`, `model?`, `dimensions?`, `filter?`, `limit?`, `offset?` |
 | `hybrid_search` | Provider-neutral text/vector/graph fusion | `query?`, `vector?`, `model?`, `dimensions?`, `filter?`, weights, `expand_from?`, `limit?` |
+| `embedding_namespaces` | Cached embedding model/dimension namespace inventory | - |
+| `embedding_prune` | Dry-run or delete a cached embedding namespace | `model`, `dimensions`, `apply?`, `force_current?` |
 | `find_def` | Find where a symbol is defined | `name` |
 | `find_refs` | Find all references to a symbol | `name` |
 | `files` | List indexed files | `language?` |
@@ -714,6 +763,9 @@ Add to your AI client config:
 | `doc_drift` | Report broken documentation references | - |
 | `stats` | Show index statistics | - |
 | `code_context_embedding_plan` | Embedding cache coverage and backfill plan | `limit?` |
+| `code_context_embedding_backfill` | Dry-run or apply missing/stale embedding backfill | `apply?`, `limit?` |
+| `code_context_embedding_namespaces` | Cached embedding model/dimension namespace inventory | - |
+| `code_context_embedding_prune` | Dry-run or delete a cached embedding namespace | `model`, `dimensions`, `apply?`, `force_current?` |
 | `code_context_freshness` | Report indexed files/documents that differ from the filesystem | `limit?` |
 | `code_context_doctor` | Check database schema, index freshness, and service health | - |
 | `map` | Show project architecture overview with graph analysis | - |
@@ -747,6 +799,7 @@ code-context:index
 
 # Then search
 code-context:search "Server"
+code-context:embedding_namespaces
 code-context:vector_search '{"query_text":"health handler","limit":5}'
 code-context:hybrid_search '{"query":"health handler","limit":5}'
 

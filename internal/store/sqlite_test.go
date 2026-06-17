@@ -228,6 +228,101 @@ func TestEmbeddingCacheUpsertAndGet(t *testing.T) {
 	}
 }
 
+func TestEmbeddingCacheListNamespaces(t *testing.T) {
+	st, clean := newTestStore(t)
+	defer clean()
+	cache, ok := st.(EmbeddingCache)
+	if !ok {
+		t.Fatalf("sqlite store does not implement EmbeddingCache")
+	}
+	inspector, ok := st.(EmbeddingCacheInspector)
+	if !ok {
+		t.Fatalf("sqlite store does not implement EmbeddingCacheInspector")
+	}
+	ctx := context.Background()
+	entries := []EmbeddingCacheEntry{
+		{
+			Key:         "model-b-doc",
+			Model:       "model-b",
+			Dimensions:  2,
+			ContentHash: "hash-b",
+			InputKind:   EmbeddingInputDocument,
+			Target:      TargetRef{Kind: TargetDocument, Path: "README.md"},
+			Values:      []float32{0.1, 0.2},
+		},
+		{
+			Key:         "model-a-symbol",
+			Model:       "model-a",
+			Dimensions:  3,
+			ContentHash: "hash-a1",
+			InputKind:   EmbeddingInputSymbol,
+			Target:      TargetRef{Kind: TargetSymbol, Path: "main.go", Name: "Foo"},
+			Values:      []float32{0.1, 0.2, 0.3},
+		},
+		{
+			Key:         "model-a-doc",
+			Model:       "model-a",
+			Dimensions:  3,
+			ContentHash: "hash-a2",
+			InputKind:   EmbeddingInputDocument,
+			Target:      TargetRef{Kind: TargetDocument, Path: "README.md"},
+			Values:      []float32{0.4, 0.5, 0.6},
+		},
+	}
+	for _, entry := range entries {
+		if err := cache.UpsertEmbedding(ctx, entry); err != nil {
+			t.Fatalf("upsert embedding %s: %v", entry.Key, err)
+		}
+	}
+
+	namespaces, err := inspector.ListEmbeddingNamespaces(ctx)
+	if err != nil {
+		t.Fatalf("list namespaces: %v", err)
+	}
+	if len(namespaces) != 2 {
+		t.Fatalf("namespaces = %+v, want 2", namespaces)
+	}
+	first := namespaces[0]
+	if first.Model != "model-a" || first.Dimensions != 3 || first.Chunks != 2 {
+		t.Fatalf("first namespace = %+v, want model-a/3 with 2 chunks", first)
+	}
+	if first.InputKinds[EmbeddingInputSymbol] != 1 || first.InputKinds[EmbeddingInputDocument] != 1 {
+		t.Fatalf("input kind counts = %+v, want symbol=1 document=1", first.InputKinds)
+	}
+	if first.TargetKinds[TargetSymbol] != 1 || first.TargetKinds[TargetDocument] != 1 {
+		t.Fatalf("target kind counts = %+v, want symbol=1 document=1", first.TargetKinds)
+	}
+	if namespaces[1].Model != "model-b" || namespaces[1].Dimensions != 2 || namespaces[1].Chunks != 1 {
+		t.Fatalf("second namespace = %+v, want model-b/2 with 1 chunk", namespaces[1])
+	}
+
+	pruner, ok := st.(EmbeddingCachePruner)
+	if !ok {
+		t.Fatalf("sqlite store does not implement EmbeddingCachePruner")
+	}
+	deleted, err := pruner.DeleteEmbeddingNamespace(ctx, "model-a", 3)
+	if err != nil {
+		t.Fatalf("delete namespace: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+	namespaces, err = inspector.ListEmbeddingNamespaces(ctx)
+	if err != nil {
+		t.Fatalf("list namespaces after delete: %v", err)
+	}
+	if len(namespaces) != 1 || namespaces[0].Model != "model-b" || namespaces[0].Chunks != 1 {
+		t.Fatalf("namespaces after delete = %+v, want only model-b", namespaces)
+	}
+	got, err := cache.GetEmbedding(ctx, "model-a-symbol")
+	if err != nil {
+		t.Fatalf("get deleted embedding: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("deleted embedding still present: %+v", got)
+	}
+}
+
 func TestUpsertFileUpdate(t *testing.T) {
 	st, clean := newTestStore(t)
 	defer clean()

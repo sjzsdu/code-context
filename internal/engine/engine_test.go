@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sjzsdu/code-context/internal/api"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 func TestDocDriftResolvesDocumentRouteLinks(t *testing.T) {
@@ -209,9 +210,20 @@ func TestEmbeddingPlanReportsMissingAndCachedChunks(t *testing.T) {
 		t.Fatalf("missing items = %+v, want missing item", missing.Items)
 	}
 
-	eng.indexer.SetEmbedder(fakeEmbedder{})
-	if _, err := eng.Index(ctx, false); err != nil {
-		t.Fatalf("index with embeddings: %v", err)
+	dryRun, err := eng.BackfillEmbeddings(ctx, EmbeddingBackfillOptions{})
+	if err != nil {
+		t.Fatalf("embedding backfill dry run: %v", err)
+	}
+	if !dryRun.DryRun || dryRun.PlannedChunks == 0 || dryRun.EmbeddedChunks != 0 {
+		t.Fatalf("dry run result = %+v, want planned chunks without writes", dryRun)
+	}
+
+	applied, err := eng.BackfillEmbeddings(ctx, EmbeddingBackfillOptions{Apply: true})
+	if err != nil {
+		t.Fatalf("embedding backfill apply: %v", err)
+	}
+	if applied.DryRun || applied.EmbeddedChunks == 0 {
+		t.Fatalf("apply result = %+v, want embedded chunks", applied)
 	}
 	cached, err := eng.EmbeddingPlan(ctx, 10)
 	if err != nil {
@@ -222,5 +234,39 @@ func TestEmbeddingPlanReportsMissingAndCachedChunks(t *testing.T) {
 	}
 	if len(cached.Namespaces) != 1 || cached.Namespaces[0].Model != "fake" || cached.Namespaces[0].Dimensions != 1 {
 		t.Fatalf("namespaces = %+v, want fake/1", cached.Namespaces)
+	}
+	inventory, err := eng.EmbeddingNamespaces(ctx)
+	if err != nil {
+		t.Fatalf("embedding namespaces: %v", err)
+	}
+	if !inventory.CacheSupported || inventory.TotalNamespaces != 1 || inventory.TotalChunks != cached.TotalChunks {
+		t.Fatalf("namespace inventory = %+v, want 1 namespace with %d chunks", inventory, cached.TotalChunks)
+	}
+	if inventory.Namespaces[0].InputKinds[store.EmbeddingInputSymbol] == 0 {
+		t.Fatalf("namespace input kind counts = %+v, want symbol chunks", inventory.Namespaces[0].InputKinds)
+	}
+	pruneDryRun, err := eng.PruneEmbeddingNamespace(ctx, EmbeddingPruneOptions{Model: "fake", Dimensions: 1})
+	if err != nil {
+		t.Fatalf("prune dry run: %v", err)
+	}
+	if !pruneDryRun.DryRun || !pruneDryRun.CurrentNamespace || pruneDryRun.MatchedChunks != cached.TotalChunks || pruneDryRun.DeletedChunks != 0 {
+		t.Fatalf("prune dry run = %+v, want current namespace dry-run with %d matched", pruneDryRun, cached.TotalChunks)
+	}
+	if _, err := eng.PruneEmbeddingNamespace(ctx, EmbeddingPruneOptions{Model: "fake", Dimensions: 1, Apply: true}); err == nil {
+		t.Fatalf("expected current namespace prune without force to fail")
+	}
+	pruned, err := eng.PruneEmbeddingNamespace(ctx, EmbeddingPruneOptions{Model: "fake", Dimensions: 1, Apply: true, ForceCurrent: true})
+	if err != nil {
+		t.Fatalf("prune apply: %v", err)
+	}
+	if pruned.DryRun || pruned.DeletedChunks != cached.TotalChunks {
+		t.Fatalf("prune result = %+v, want deleted %d", pruned, cached.TotalChunks)
+	}
+	afterPrune, err := eng.EmbeddingNamespaces(ctx)
+	if err != nil {
+		t.Fatalf("embedding namespaces after prune: %v", err)
+	}
+	if afterPrune.TotalNamespaces != 0 || afterPrune.TotalChunks != 0 {
+		t.Fatalf("namespace inventory after prune = %+v, want empty", afterPrune)
 	}
 }

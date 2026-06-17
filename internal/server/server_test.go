@@ -475,6 +475,54 @@ func TestEmbeddingPlanEndpoint(t *testing.T) {
 	if !strings.Contains(payload.Summary, "disabled") {
 		t.Fatalf("expected disabled summary, got %+v", payload)
 	}
+
+	resp, err = http.Post(ts.URL+"/api/embedding-backfill?limit=2", "application/json", nil)
+	if err != nil {
+		t.Fatalf("backfill request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var backfill engine.EmbeddingBackfillResult
+	if err := json.NewDecoder(resp.Body).Decode(&backfill); err != nil {
+		t.Fatalf("failed to decode backfill response: %v", err)
+	}
+	if !backfill.DryRun || !strings.Contains(backfill.Summary, "disabled") {
+		t.Fatalf("expected disabled dry-run backfill, got %+v", backfill)
+	}
+
+	resp, err = http.Get(ts.URL + "/api/embedding-namespaces")
+	if err != nil {
+		t.Fatalf("namespace request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var namespaces engine.EmbeddingNamespaceReport
+	if err := json.NewDecoder(resp.Body).Decode(&namespaces); err != nil {
+		t.Fatalf("failed to decode namespace response: %v", err)
+	}
+	if !namespaces.CacheSupported || namespaces.TotalNamespaces != 0 || !strings.Contains(namespaces.Summary, "no embedding namespaces") {
+		t.Fatalf("expected empty namespace inventory, got %+v", namespaces)
+	}
+
+	resp, err = http.Post(ts.URL+"/api/embedding-prune?model=fake&dimensions=3", "application/json", nil)
+	if err != nil {
+		t.Fatalf("prune request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var prune engine.EmbeddingPruneResult
+	if err := json.NewDecoder(resp.Body).Decode(&prune); err != nil {
+		t.Fatalf("failed to decode prune response: %v", err)
+	}
+	if !prune.DryRun || prune.Model != "fake" || prune.Dimensions != 3 || !strings.Contains(prune.Summary, "was not found") {
+		t.Fatalf("expected dry-run prune miss, got %+v", prune)
+	}
 }
 
 func TestGraphEndpoint(t *testing.T) {

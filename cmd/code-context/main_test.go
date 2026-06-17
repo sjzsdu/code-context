@@ -131,6 +131,34 @@ func TestEmbeddingPlanCmdReportsDisabledProvider(t *testing.T) {
 	if !strings.Contains(out, "embedding provider is disabled") || !strings.Contains(out, "Embedding:     disabled") {
 		t.Fatalf("expected disabled embedding plan, got:\n%s", out)
 	}
+
+	cmd = newEmbeddingBackfillCmd()
+	out, err = captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute embedding-backfill cmd: %v", err)
+	}
+	if !strings.Contains(out, "embedding provider is disabled") || !strings.Contains(out, "Mode:          dry-run") {
+		t.Fatalf("expected disabled embedding backfill dry run, got:\n%s", out)
+	}
+
+	cmd = newEmbeddingNamespacesCmd()
+	out, err = captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute embedding-namespaces cmd: %v", err)
+	}
+	if !strings.Contains(out, "no embedding namespaces found") || !strings.Contains(out, "Cache support: true") {
+		t.Fatalf("expected empty embedding namespace inventory, got:\n%s", out)
+	}
+
+	cmd = newEmbeddingPruneCmd()
+	cmd.SetArgs([]string{"--model", "fake", "--dimensions", "3"})
+	out, err = captureStdout(func() error { return cmd.Execute() })
+	if err != nil {
+		t.Fatalf("execute embedding-prune cmd: %v", err)
+	}
+	if !strings.Contains(out, "embedding namespace fake/3 was not found") || !strings.Contains(out, "Mode:          dry-run") {
+		t.Fatalf("expected dry-run prune miss, got:\n%s", out)
+	}
 }
 
 func TestGraphCmd(t *testing.T) {

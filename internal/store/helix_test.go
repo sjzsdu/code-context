@@ -166,6 +166,13 @@ func TestHelixVectorSearchRequestMarshals(t *testing.T) {
 	}
 }
 
+func TestHelixDeleteEmbeddingNamespaceRequestMarshals(t *testing.T) {
+	req := helixDeleteEmbeddingNamespaceRequest("project-a", "text-embedding-test", 3)
+	if _, err := helix.MarshalRequest(req); err != nil {
+		t.Fatalf("marshal delete embedding namespace request: %v", err)
+	}
+}
+
 func TestHelixVectorRowsToHitsFiltersAndRanks(t *testing.T) {
 	rows := []helixVectorChunkRow{
 		{

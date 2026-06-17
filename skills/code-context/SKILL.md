@@ -48,6 +48,10 @@ code-context search "Handler"
 
 # 4. Check embedding cache coverage when embeddings are configured
 code-context embedding-plan
+code-context embedding-namespaces
+code-context embedding-prune --model text-embedding-old --dimensions 768  # dry run
+code-context embedding-backfill          # dry run
+code-context embedding-backfill --apply  # writes cache entries
 
 # 5. Search provider-backed vectors when Helix + embeddings are configured
 code-context vector-search "handler health check"
@@ -126,7 +130,14 @@ mixed in one vector index. Use `vector-search`, `/api/vector`, or MCP `vector_se
 `code_context_vector_search` to call `VectorSearcher`; query-text search additionally requires a
 configured `Embedder`. Use `embedding-plan`, `/api/embedding-plan`, or MCP
 `code_context_embedding_plan` to inspect cache coverage and plan model backfills without calling the
-embedding provider. Use `hybrid-search`, `/api/hybrid`, or MCP `hybrid_search`/
+embedding provider; use `embedding-backfill`, `POST /api/embedding-backfill?apply=true`, or MCP
+`code_context_embedding_backfill` to fill missing/stale chunks, noting that backfill is dry-run by
+default and only calls the provider when explicitly applied. Use `embedding-namespaces`,
+`/api/embedding-namespaces`, or MCP `embedding_namespaces`/`code_context_embedding_namespaces` to
+inventory existing model/dimension vector spaces before switching models or planning cleanup. Use
+`embedding-prune`, `POST /api/embedding-prune`, or MCP `embedding_prune`/
+`code_context_embedding_prune` to delete an old namespace; it is dry-run by default and refuses to
+delete the currently configured namespace unless explicitly forced. Use `hybrid-search`, `/api/hybrid`, or MCP `hybrid_search`/
 `code_context_hybrid_search` to fuse text, vector, and graph signals while degrading to the
 capabilities present in the selected backend. The engine fallback normalizes each source's scores
 per query before applying weights, and stores raw score, normalized score, rank, contribution, and
@@ -491,6 +502,9 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/stats` | — | Index stats with version metadata |
 | GET | `/api/status` | — | Workflow/service status including provider capabilities and watch metadata |
 | GET | `/api/embedding-plan` | `limit?` | Embedding cache coverage and backfill plan |
+| POST | `/api/embedding-backfill` | `apply?`, `limit?` | Dry-run or apply embedding backfill |
+| GET | `/api/embedding-namespaces` | — | Cached embedding model/dimension namespace inventory |
+| POST | `/api/embedding-prune` | `model`, `dimensions`, `apply?`, `force_current?` | Dry-run or delete a selected embedding namespace |
 | POST | `/api/index` | `incremental?` | Re-index |
 
 ## MCP Server
@@ -509,6 +523,9 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 - `GET /api/stats` — index stats with version metadata
 - `GET /api/status` — workflow/service status with provider capabilities and watch metadata
 - `GET /api/embedding-plan` — embedding cache coverage and backfill plan
+- `POST /api/embedding-backfill?apply=true` — apply missing/stale embedding backfill
+- `GET /api/embedding-namespaces` — cached embedding model/dimension namespace inventory
+- `POST /api/embedding-prune?model=...&dimensions=...` — dry-run or delete a selected embedding namespace
 - `POST /api/index?incremental=true` — trigger refresh
 
 ### MCP Server
@@ -568,6 +585,9 @@ go build -o code-context-mcp ./cmd/mcp
 | `importers` | Find importing files | `source` |
 | `stats` | Index statistics | - |
 | `code_context_embedding_plan` | Embedding cache coverage and backfill plan | `limit?` |
+| `code_context_embedding_backfill` | Dry-run or apply missing/stale embedding backfill | `apply?`, `limit?` |
+| `code_context_embedding_namespaces` | Cached embedding model/dimension namespace inventory | - |
+| `code_context_embedding_prune` | Dry-run or delete a cached embedding namespace | `model`, `dimensions`, `apply?`, `force_current?` |
 | `map` | Project architecture with graph analysis | - |
 | `graph` | Export repository or focused graph JSON | `focus?` |
 | `graph_path` | Find a file-level path through the graph | `from`, `to` |

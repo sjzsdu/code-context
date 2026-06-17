@@ -134,6 +134,18 @@ type FreshnessArgs struct {
 	Limit int `json:"limit,omitempty"`
 }
 
+type EmbeddingBackfillArgs struct {
+	Limit int  `json:"limit,omitempty"`
+	Apply bool `json:"apply,omitempty"`
+}
+
+type EmbeddingPruneArgs struct {
+	Model        string `json:"model"`
+	Dimensions   int    `json:"dimensions"`
+	Apply        bool   `json:"apply,omitempty"`
+	ForceCurrent bool   `json:"force_current,omitempty"`
+}
+
 func main() {
 	flag.StringVar(&root, "root", ".", "codebase root directory")
 	flag.StringVar(&db, "db", "", "database path (default: <root>/.code-context/index.db)")
@@ -288,10 +300,12 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 2. Use code_context_explore for a query before broad grep/read.
 3. Use code_context_search for symbols, code_context_context for a symbol profile, and code_context_snapshot for focused LLM context.
 4. Use code_context_hybrid_search when status reports hybrid_search and you want text + vector + graph fusion.
-5. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
-6. Use code_context_callers and code_context_callees for lightweight call graph navigation.
-7. If status or a result reports stale/pending files, read those files directly before editing.
-8. Prefer the recommended next tool calls in each response.`), nil, nil
+5. Use code_context_embedding_namespaces to inspect cached model/dimension namespaces before changing embedding models.
+6. Use code_context_embedding_prune as a dry-run first before deleting stale embedding namespaces.
+7. Use code_context_vector_search only when status reports vector_search and embeddings are configured or you provide a raw vector.
+8. Use code_context_callers and code_context_callees for lightweight call graph navigation.
+9. If status or a result reports stale/pending files, read those files directly before editing.
+10. Prefer the recommended next tool calls in each response.`), nil, nil
 		})
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_status", Description: "Show index freshness, pending files, provider capabilities, and service metadata"},
@@ -340,6 +354,33 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_embedding_plan", Description: "Show embedding cache coverage and backfill plan for the configured model"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args FreshnessArgs) (*mcp.CallToolResult, any, error) {
 			out, err := runEmbeddingPlanTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_embedding_backfill", Description: "Dry-run or apply missing/stale embedding backfill for the configured model"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args EmbeddingBackfillArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runEmbeddingBackfillTool(ctx, eng, args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_embedding_namespaces", Description: "List cached embedding model/dimension namespaces"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			out, err := runEmbeddingNamespacesTool(ctx, eng)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_embedding_prune", Description: "Dry-run or delete a cached embedding model/dimension namespace"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args EmbeddingPruneArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runEmbeddingPruneTool(ctx, eng, args)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -642,6 +683,28 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		output, err := runHybridSearchTool(ctx, eng, args)
 		if err != nil {
 			return nil, nil, fmt.Errorf("hybrid_search failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "embedding_namespaces",
+		Description: "List cached embedding model/dimension namespaces",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		output, err := runEmbeddingNamespacesTool(ctx, eng)
+		if err != nil {
+			return nil, nil, fmt.Errorf("embedding_namespaces failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "embedding_prune",
+		Description: "Dry-run or delete a cached embedding model/dimension namespace",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args EmbeddingPruneArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runEmbeddingPruneTool(ctx, eng, args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("embedding_prune failed: %w", err)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
@@ -1241,6 +1304,38 @@ func runEmbeddingPlanTool(ctx context.Context, eng *engine.Engine, args Freshnes
 		return "", err
 	}
 	return marshalIndentedJSON(plan)
+}
+
+func runEmbeddingBackfillTool(ctx context.Context, eng *engine.Engine, args EmbeddingBackfillArgs) (string, error) {
+	result, err := eng.BackfillEmbeddings(ctx, engine.EmbeddingBackfillOptions{
+		Limit: args.Limit,
+		Apply: args.Apply,
+	})
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func runEmbeddingNamespacesTool(ctx context.Context, eng *engine.Engine) (string, error) {
+	result, err := eng.EmbeddingNamespaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
+}
+
+func runEmbeddingPruneTool(ctx context.Context, eng *engine.Engine, args EmbeddingPruneArgs) (string, error) {
+	result, err := eng.PruneEmbeddingNamespace(ctx, engine.EmbeddingPruneOptions{
+		Model:        args.Model,
+		Dimensions:   args.Dimensions,
+		Apply:        args.Apply,
+		ForceCurrent: args.ForceCurrent,
+	})
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(result)
 }
 
 func runHybridSearchTool(ctx context.Context, eng *engine.Engine, args HybridSearchArgs) (string, error) {

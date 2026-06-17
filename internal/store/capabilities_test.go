@@ -46,6 +46,22 @@ func TestDetectCapabilitiesFromEmbeddingCache(t *testing.T) {
 	}
 }
 
+func TestDetectCapabilitiesFromEmbeddingCacheInspector(t *testing.T) {
+	got := DetectCapabilities(capabilityEmbeddingCacheInspectorProvider{})
+	want := []Capability{CapabilityEmbeddingCache}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectCapabilities(cache inspector) = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetectCapabilitiesFromEmbeddingCachePruner(t *testing.T) {
+	got := DetectCapabilities(capabilityEmbeddingCachePrunerProvider{})
+	want := []Capability{CapabilityEmbeddingCache}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DetectCapabilities(cache pruner) = %#v, want %#v", got, want)
+	}
+}
+
 func TestDetectCapabilitiesNil(t *testing.T) {
 	if got := DetectCapabilities(nil); got != nil {
 		t.Fatalf("DetectCapabilities(nil) = %#v, want nil", got)
@@ -127,4 +143,16 @@ func (capabilityEmbeddingCacheProvider) GetEmbedding(context.Context, string) (*
 
 func (capabilityEmbeddingCacheProvider) UpsertEmbedding(context.Context, EmbeddingCacheEntry) error {
 	return nil
+}
+
+type capabilityEmbeddingCacheInspectorProvider struct{}
+
+func (capabilityEmbeddingCacheInspectorProvider) ListEmbeddingNamespaces(context.Context) ([]EmbeddingNamespace, error) {
+	return nil, nil
+}
+
+type capabilityEmbeddingCachePrunerProvider struct{}
+
+func (capabilityEmbeddingCachePrunerProvider) DeleteEmbeddingNamespace(context.Context, string, int) (int, error) {
+	return 0, nil
 }

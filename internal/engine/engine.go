@@ -2644,10 +2644,235 @@ type EmbeddingPlanItem struct {
 }
 
 func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, error) {
+	plan, _, err := e.embeddingPlanState(ctx, limit)
+	return plan, err
+}
+
+type EmbeddingBackfillOptions struct {
+	Limit int  `json:"limit,omitempty"`
+	Apply bool `json:"apply,omitempty"`
+}
+
+type EmbeddingBackfillResult struct {
+	DryRun         bool           `json:"dry_run"`
+	Provider       string         `json:"provider,omitempty"`
+	Model          string         `json:"model,omitempty"`
+	Dimensions     int            `json:"dimensions,omitempty"`
+	PlannedChunks  int            `json:"planned_chunks"`
+	EmbeddedChunks int            `json:"embedded_chunks,omitempty"`
+	SkippedChunks  int            `json:"skipped_chunks,omitempty"`
+	Summary        string         `json:"summary"`
+	Plan           *EmbeddingPlan `json:"plan,omitempty"`
+}
+
+type EmbeddingNamespaceReport struct {
+	CacheSupported  bool                       `json:"cache_supported"`
+	TotalNamespaces int                        `json:"total_namespaces"`
+	TotalChunks     int                        `json:"total_chunks"`
+	Namespaces      []store.EmbeddingNamespace `json:"namespaces,omitempty"`
+	Summary         string                     `json:"summary"`
+}
+
+type EmbeddingPruneOptions struct {
+	Model        string `json:"model,omitempty"`
+	Dimensions   int    `json:"dimensions,omitempty"`
+	Apply        bool   `json:"apply,omitempty"`
+	ForceCurrent bool   `json:"force_current,omitempty"`
+}
+
+type EmbeddingPruneResult struct {
+	DryRun           bool                      `json:"dry_run"`
+	CacheSupported   bool                      `json:"cache_supported"`
+	Model            string                    `json:"model,omitempty"`
+	Dimensions       int                       `json:"dimensions,omitempty"`
+	MatchedChunks    int                       `json:"matched_chunks,omitempty"`
+	DeletedChunks    int                       `json:"deleted_chunks,omitempty"`
+	CurrentNamespace bool                      `json:"current_namespace,omitempty"`
+	Namespace        *store.EmbeddingNamespace `json:"namespace,omitempty"`
+	Summary          string                    `json:"summary"`
+}
+
+func (e *Engine) EmbeddingNamespaces(ctx context.Context) (*EmbeddingNamespaceReport, error) {
+	report := &EmbeddingNamespaceReport{}
+	inspector, ok := e.store.(store.EmbeddingCacheInspector)
+	if !ok {
+		report.Summary = "active store does not implement embedding cache inspection"
+		return report, nil
+	}
+	report.CacheSupported = true
+	namespaces, err := inspector.ListEmbeddingNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report.Namespaces = namespaces
+	report.TotalNamespaces = len(namespaces)
+	for _, ns := range namespaces {
+		report.TotalChunks += ns.Chunks
+	}
+	if report.TotalNamespaces == 0 {
+		report.Summary = "no embedding namespaces found in the active cache"
+	} else {
+		report.Summary = fmt.Sprintf("found %d embedding namespaces with %d cached chunks", report.TotalNamespaces, report.TotalChunks)
+	}
+	return report, nil
+}
+
+func (e *Engine) PruneEmbeddingNamespace(ctx context.Context, opts EmbeddingPruneOptions) (*EmbeddingPruneResult, error) {
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		return nil, fmt.Errorf("embedding model is required")
+	}
+	if opts.Dimensions <= 0 {
+		return nil, fmt.Errorf("embedding dimensions are required")
+	}
+
+	result := &EmbeddingPruneResult{
+		DryRun:     !opts.Apply,
+		Model:      model,
+		Dimensions: opts.Dimensions,
+	}
+	inspector, ok := e.store.(store.EmbeddingCacheInspector)
+	if !ok {
+		result.Summary = "active store does not implement embedding cache inspection"
+		return result, nil
+	}
+	result.CacheSupported = true
+	namespaces, err := inspector.ListEmbeddingNamespaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, ns := range namespaces {
+		if ns.Model == model && ns.Dimensions == opts.Dimensions {
+			copy := ns
+			result.Namespace = &copy
+			result.MatchedChunks = ns.Chunks
+			break
+		}
+	}
+	result.CurrentNamespace = e.isCurrentEmbeddingNamespace(model, opts.Dimensions)
+	if result.MatchedChunks == 0 {
+		result.Summary = fmt.Sprintf("embedding namespace %s/%d was not found", model, opts.Dimensions)
+		return result, nil
+	}
+	if !opts.Apply {
+		result.Summary = fmt.Sprintf("dry run: %d chunks would be deleted from embedding namespace %s/%d", result.MatchedChunks, model, opts.Dimensions)
+		return result, nil
+	}
+	if result.CurrentNamespace && !opts.ForceCurrent {
+		return nil, fmt.Errorf("refusing to prune current embedding namespace %s/%d without ForceCurrent", model, opts.Dimensions)
+	}
+	pruner, ok := e.store.(store.EmbeddingCachePruner)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityEmbeddingCache)
+	}
+	deleted, err := pruner.DeleteEmbeddingNamespace(ctx, model, opts.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+	result.DeletedChunks = deleted
+	result.Summary = fmt.Sprintf("deleted %d chunks from embedding namespace %s/%d", deleted, model, opts.Dimensions)
+	return result, nil
+}
+
+func (e *Engine) isCurrentEmbeddingNamespace(model string, dimensions int) bool {
+	if e.embedder == nil || dimensions <= 0 {
+		return false
+	}
+	info := e.embedder.EmbeddingModel()
+	if strings.TrimSpace(info.Model) != strings.TrimSpace(model) {
+		return false
+	}
+	return info.Dimensions <= 0 || info.Dimensions == dimensions
+}
+
+func (e *Engine) BackfillEmbeddings(ctx context.Context, opts EmbeddingBackfillOptions) (*EmbeddingBackfillResult, error) {
+	plan, pending, err := e.embeddingPlanState(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	result := &EmbeddingBackfillResult{
+		DryRun:     !opts.Apply,
+		Provider:   plan.Provider,
+		Model:      plan.Model,
+		Dimensions: plan.Dimensions,
+		Plan:       plan,
+	}
+	if !plan.Enabled || !plan.CacheSupported || !plan.BackfillRequired {
+		result.Summary = plan.Summary
+		return result, nil
+	}
+	targets := make([]embeddingPendingChunk, 0, len(pending))
+	for _, item := range pending {
+		if item.Item.Status == "error" {
+			result.SkippedChunks++
+			continue
+		}
+		targets = append(targets, item)
+		if opts.Limit > 0 && len(targets) >= opts.Limit {
+			break
+		}
+	}
+	result.PlannedChunks = len(targets)
+	if len(targets) == 0 {
+		result.Summary = "no embedding chunks are eligible for backfill"
+		return result, nil
+	}
+	if !opts.Apply {
+		result.Summary = fmt.Sprintf("dry run: %d embedding chunks would be backfilled for namespace %s/%d", result.PlannedChunks, plan.Model, plan.Dimensions)
+		return result, nil
+	}
+	cache, ok := e.store.(store.EmbeddingCache)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityEmbeddingCache)
+	}
+	if e.embedder == nil {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnsupported, store.CapabilityEmbedding)
+	}
+	inputs := make([]store.EmbeddingInput, 0, len(targets))
+	for _, target := range targets {
+		inputs = append(inputs, target.Chunk.Input())
+	}
+	vectors, err := e.embedder.Embed(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) != len(targets) {
+		return nil, fmt.Errorf("embedding result count = %d, want %d", len(vectors), len(targets))
+	}
+	for i, vector := range vectors {
+		target := targets[i]
+		dimensions := vector.Dimensions
+		if dimensions <= 0 {
+			dimensions = len(vector.Values)
+		}
+		if err := cache.UpsertEmbedding(ctx, store.EmbeddingCacheEntry{
+			Key:         target.Item.Key,
+			Model:       firstNonEmptyEngine(vector.Model, plan.Model),
+			Dimensions:  dimensions,
+			ContentHash: target.Chunk.ContentHash,
+			InputKind:   target.Chunk.Kind,
+			Target:      target.Chunk.Target,
+			Values:      vector.Values,
+			Metadata:    mergeStringMapsEngine(target.Chunk.Metadata, vector.Metadata),
+		}); err != nil {
+			return nil, err
+		}
+		result.EmbeddedChunks++
+	}
+	result.Summary = fmt.Sprintf("backfilled %d embedding chunks for namespace %s/%d", result.EmbeddedChunks, plan.Model, plan.Dimensions)
+	return result, nil
+}
+
+type embeddingPendingChunk struct {
+	Item  EmbeddingPlanItem
+	Chunk embeddingpkg.Chunk
+}
+
+func (e *Engine) embeddingPlanState(ctx context.Context, limit int) (*EmbeddingPlan, []embeddingPendingChunk, error) {
 	plan := &EmbeddingPlan{}
 	if e.embedder == nil {
 		plan.Summary = "embedding provider is disabled; no embedding backfill plan is available"
-		return plan, nil
+		return plan, nil, nil
 	}
 	info := e.embedder.EmbeddingModel()
 	plan.Enabled = true
@@ -2657,18 +2882,19 @@ func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, 
 	cache, ok := e.store.(store.EmbeddingCache)
 	if !ok {
 		plan.Summary = "active store does not implement embedding cache; embeddings cannot be planned"
-		return plan, nil
+		return plan, nil, nil
 	}
 	plan.CacheSupported = true
 	if plan.Model == "" {
-		return nil, fmt.Errorf("embedding model is required")
+		return nil, nil, fmt.Errorf("embedding model is required")
 	}
 
 	chunks, err := e.embeddingPlanChunks(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	plan.TotalChunks = len(chunks)
+	pending := make([]embeddingPendingChunk, 0)
 	namespaceCounts := map[string]*EmbeddingPlanNamespace{}
 	addItem := func(item EmbeddingPlanItem) {
 		if limit <= 0 || len(plan.Items) < limit {
@@ -2680,7 +2906,7 @@ func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, 
 	for _, chunk := range chunks {
 		select {
 		case <-ctx.Done():
-			return plan, ctx.Err()
+			return plan, pending, ctx.Err()
 		default:
 		}
 		key := embeddingpkg.CacheKey(plan.Model, plan.Dimensions, chunk.Text)
@@ -2710,7 +2936,7 @@ func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, 
 			ns.Chunks++
 		}
 		if status != "cached" {
-			addItem(EmbeddingPlanItem{
+			item := EmbeddingPlanItem{
 				Key:         key,
 				Status:      status,
 				Reason:      reason,
@@ -2719,7 +2945,9 @@ func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, 
 				Name:        chunk.Target.Name,
 				Line:        chunk.Target.Line,
 				ContentHash: chunk.ContentHash,
-			})
+			}
+			addItem(item)
+			pending = append(pending, embeddingPendingChunk{Item: item, Chunk: chunk})
 		}
 	}
 	plan.BackfillRequired = plan.MissingChunks > 0 || plan.StaleChunks > 0 || plan.ErrorChunks > 0
@@ -2739,7 +2967,29 @@ func (e *Engine) EmbeddingPlan(ctx context.Context, limit int) (*EmbeddingPlan, 
 	} else {
 		plan.Summary = fmt.Sprintf("embedding cache is complete for %d chunks in namespace %s/%d", plan.TotalChunks, plan.Model, plan.Dimensions)
 	}
-	return plan, nil
+	return plan, pending, nil
+}
+
+func firstNonEmptyEngine(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func mergeStringMapsEngine(maps ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range maps {
+		for k, v := range m {
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func (e *Engine) embeddingPlanChunks(ctx context.Context) ([]embeddingpkg.Chunk, error) {

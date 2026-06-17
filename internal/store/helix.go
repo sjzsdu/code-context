@@ -520,6 +520,46 @@ func (s *helixStore) UpsertEmbedding(ctx context.Context, entry EmbeddingCacheEn
 	}, nil)
 }
 
+func (s *helixStore) ListEmbeddingNamespaces(ctx context.Context) ([]EmbeddingNamespace, error) {
+	var out struct {
+		Chunks helixRows[helixEmbeddingChunkRow] `json:"chunks"`
+	}
+	q := helix.ReadQuery("code_context_list_embedding_namespaces")
+	req := q.VarAs("chunks", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
+		Project(helixEmbeddingChunkProjections()...)).
+		Returning("chunks")
+	if err := s.client.Exec(ctx, req, &out); err != nil {
+		return nil, err
+	}
+
+	acc := newEmbeddingNamespaceAccumulator()
+	for _, row := range out.Chunks.Properties {
+		acc.Add(row.Model, row.Dimensions, EmbeddingInputKind(row.InputKind), TargetKind(row.TargetKind), 1, timeFromUnixSeconds(row.CreatedAt), timeFromUnixSeconds(row.UpdatedAt))
+	}
+	return acc.List(), nil
+}
+
+func (s *helixStore) DeleteEmbeddingNamespace(ctx context.Context, model string, dimensions int) (int, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return 0, fmt.Errorf("embedding model is required")
+	}
+	if dimensions <= 0 {
+		return 0, fmt.Errorf("embedding dimensions are required")
+	}
+	var out struct {
+		Deleted helixCount `json:"deleted"`
+	}
+	err := s.execWrite(ctx, func() helix.Request {
+		return helixDeleteEmbeddingNamespaceRequest(s.projectID, model, dimensions)
+	}, &out)
+	if err != nil {
+		return 0, err
+	}
+	return out.Deleted.Count, nil
+}
+
 func (s *helixStore) SearchVector(ctx context.Context, query VectorSearchQuery) ([]SearchHit, error) {
 	if len(query.Vector) == 0 {
 		return nil, nil
@@ -607,6 +647,20 @@ func helixTextSearchLimit(limit int) int {
 		return 50
 	}
 	return limit
+}
+
+func helixDeleteEmbeddingNamespaceRequest(projectID, model string, dimensions int) helix.Request {
+	q := helix.WriteQuery("code_context_delete_embedding_namespace")
+	projectParam := q.ParamString("project_id", projectID)
+	modelParam := q.ParamString("model", model)
+	dimensionsParam := q.ParamI64("dimensions", int64(dimensions))
+	return q.VarAs("deleted", helix.G().NWithLabel(helixEmbeddingChunkLabel).
+		Where(helix.PredEq("project_id", projectParam)).
+		Where(helix.PredEq("model", modelParam)).
+		Where(helix.PredEq("dimensions", dimensionsParam)).
+		Drop().
+		Count()).
+		Returning("deleted")
 }
 
 func helixVectorSearchRequest(projectID string, query VectorSearchQuery, model string, dimensions int) (helix.Request, int) {
