@@ -375,8 +375,10 @@ machine-readable payloads. Provider-backed answers include a local citation grou
 (citation-label coverage, not semantic fact-checking) in `grounding`; `--require-citations` turns
 missing/unknown retrieved-source citations into a CLI failure after printing the result.
 `--min-citation-coverage 0.5` can require a minimum cited-source coverage ratio.
+Use `answer-templates` or `GET /api/answer-templates` to discover available built-in templates.
 
 ```bash
+code-context answer-templates
 code-context answer "Where is status served?" --context-only
 code-context answer "Where is status served?" --context-only --format markdown
 code-context answer "Where is status served?" --context-only --target-kind symbol --text-weight 0.7 --vector-weight 0.3
@@ -699,7 +701,8 @@ results include provider-neutral citation/source metadata, and requests can over
 `system_prompt` or pass prior `messages` for provider-specific conversation style while keeping
 retrieval backend-neutral. They can also select reusable provider-neutral prompt presets with
 `template: "general" | "explain" | "review" | "plan"`; `system_prompt` overrides the preset text
-when both are present. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
+when both are present, and `answer-templates` / `/api/answer-templates` / MCP
+`answer_templates` exposes the current catalog. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
 `graph_weight`, `expand_from`, and `expand_max_depth` so callers can scope and tune retrieval
 without dropping to backend-specific APIs. MCP answer tools can return `format: "markdown"` for a
 ready-to-display answer with sources, or JSON for structured consumers. Provider-backed answers run
@@ -744,6 +747,7 @@ Start the server with `code-context serve`, then:
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
 | POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources` and provider-backed `grounding` |
+| GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

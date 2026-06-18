@@ -125,6 +125,10 @@ type AnswerArgs struct {
 	Temperature         *float64              `json:"temperature,omitempty"`
 }
 
+type AnswerTemplatesArgs struct {
+	IncludePrompts bool `json:"include_prompts,omitempty"`
+}
+
 type SearchArgs struct {
 	Query string `json:"query"`
 }
@@ -532,6 +536,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_hybrid_search", "code_context_snapshot"))), nil, nil
 		})
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer_templates", Description: "List built-in provider-neutral answer prompt templates"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerTemplatesArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runAnswerTemplatesTool(args)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callers", Description: "Show functions/methods that call a symbol name"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args ContextArgs) (*mcp.CallToolResult, any, error) {
 			calls, err := eng.Callers(ctx, args.Symbol)
@@ -793,6 +806,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		output, err := runAnswerTool(ctx, eng, args)
 		if err != nil {
 			return nil, nil, fmt.Errorf("answer failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "answer_templates",
+		Description: "List built-in provider-neutral answer prompt templates",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerTemplatesArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runAnswerTemplatesTool(args)
+		if err != nil {
+			return nil, nil, fmt.Errorf("answer_templates failed: %w", err)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
@@ -1533,6 +1557,11 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 	default:
 		return "", fmt.Errorf("unsupported answer output format %q (supported: json, markdown)", args.Format)
 	}
+}
+
+func runAnswerTemplatesTool(args AnswerTemplatesArgs) (string, error) {
+	templates := engine.AnswerTemplateCatalog(args.IncludePrompts)
+	return marshalIndentedJSON(map[string]any{"templates": templates, "count": len(templates)})
 }
 
 func runGraphTool(ctx context.Context, eng *engine.Engine, args GraphArgs) (string, error) {

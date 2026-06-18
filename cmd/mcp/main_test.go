@@ -231,6 +231,19 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 	}
 }
 
+func TestRunAnswerTemplatesTool(t *testing.T) {
+	out, err := runAnswerTemplatesTool(AnswerTemplatesArgs{IncludePrompts: true})
+	if err != nil {
+		t.Fatalf("run answer templates tool: %v", err)
+	}
+	if !strings.Contains(out, "\"templates\"") ||
+		!strings.Contains(out, "\"name\": \"general\"") ||
+		!strings.Contains(out, "\"name\": \"plan\"") ||
+		!strings.Contains(out, "\"prompt\"") {
+		t.Fatalf("expected answer templates JSON, got:\n%s", out)
+	}
+}
+
 func TestFormatHybridHitsMarkdown(t *testing.T) {
 	out := formatHybridHitsMarkdown([]store.SearchHit{{
 		Target: store.TargetRef{Kind: store.TargetSymbol, Path: "a.go", Name: "Foo", Line: 3},

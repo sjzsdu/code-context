@@ -111,6 +111,7 @@ func main() {
 		newVectorSearchCmd(),
 		newHybridSearchCmd(),
 		newAnswerCmd(),
+		newAnswerTemplatesCmd(),
 		newFindDefCmd(),
 		newGitFilesCmd(),
 		newGitDiffCmd(),
@@ -1231,6 +1232,33 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&temperature, "temperature", 0, "override answer sampling temperature")
 	cmd.Flags().StringVar(&format, "format", "text", "answer output format (text|markdown|json)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer result")
+	return cmd
+}
+
+func newAnswerTemplatesCmd() *cobra.Command {
+	var includePrompts bool
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "answer-templates",
+		Short: "List built-in provider-neutral answer prompt templates",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			templates := engine.AnswerTemplateCatalog(includePrompts)
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(map[string]any{"templates": templates, "count": len(templates)})
+			}
+			for _, template := range templates {
+				fmt.Printf("%s\t%s\n", template.Name, template.Description)
+				if includePrompts && strings.TrimSpace(template.Prompt) != "" {
+					fmt.Printf("  prompt: %s\n", template.Prompt)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&includePrompts, "include-prompts", false, "include full system prompt text")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer template catalog")
 	return cmd
 }
 

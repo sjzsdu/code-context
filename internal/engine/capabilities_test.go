@@ -35,6 +35,28 @@ func TestCapabilityNamesEmpty(t *testing.T) {
 	}
 }
 
+func TestAnswerTemplateCatalog(t *testing.T) {
+	infos := AnswerTemplateCatalog(true)
+	if len(infos) != len(AnswerTemplates()) {
+		t.Fatalf("catalog len = %d, names len = %d", len(infos), len(AnswerTemplates()))
+	}
+	if infos[0].Name != AnswerTemplateGeneral || infos[0].Description == "" || infos[0].Prompt == "" {
+		t.Fatalf("first template = %#v, want populated general template", infos[0])
+	}
+	var foundPlan bool
+	for _, info := range infos {
+		if info.Name == AnswerTemplatePlan {
+			foundPlan = true
+			if !strings.Contains(info.Description, "implementation plan") || !strings.Contains(info.Prompt, "implementation plan") {
+				t.Fatalf("plan template info = %#v", info)
+			}
+		}
+	}
+	if !foundPlan {
+		t.Fatalf("catalog = %#v, want plan template", infos)
+	}
+}
+
 func TestStatusIncludesEmbeddingCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := NewWithOptions(root, Options{

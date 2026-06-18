@@ -640,6 +640,12 @@ type AnswerGrounding struct {
 	Summary          string   `json:"summary"`
 }
 
+type AnswerTemplateInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt,omitempty"`
+}
+
 func FormatAnswerMarkdown(result *AnswerResult) string {
 	if result == nil {
 		return ""
@@ -847,12 +853,31 @@ const (
 )
 
 func AnswerTemplates() []string {
-	return []string{
+	infos := AnswerTemplateCatalog(false)
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	return names
+}
+
+func AnswerTemplateCatalog(includePrompts bool) []AnswerTemplateInfo {
+	templates := []string{
 		AnswerTemplateGeneral,
 		AnswerTemplateExplain,
 		AnswerTemplateReview,
 		AnswerTemplatePlan,
 	}
+	infos := make([]AnswerTemplateInfo, 0, len(templates))
+	for _, template := range templates {
+		description, _ := answerTemplateDescription(template)
+		info := AnswerTemplateInfo{Name: template, Description: description}
+		if includePrompts {
+			info.Prompt, _ = answerTemplatePrompt(template)
+		}
+		infos = append(infos, info)
+	}
+	return infos
 }
 
 func resolveAnswerPrompt(template string, systemPrompt string) (string, string, error) {
@@ -884,6 +909,21 @@ func answerTemplatePrompt(template string) (string, bool) {
 		return "Review the supplied code-context evidence for correctness, risk, test impact, documentation impact, and follow-up actions. Be concrete and cite sources with the provided labels such as [1]. If evidence is insufficient for a claim, say so.", true
 	case AnswerTemplatePlan:
 		return "Create an implementation plan from the supplied code-context evidence. Include ordered steps, files or symbols likely involved, risks, and validation commands when evidence supports them. Cite sources with the provided labels such as [1].", true
+	default:
+		return "", false
+	}
+}
+
+func answerTemplateDescription(template string) (string, bool) {
+	switch template {
+	case AnswerTemplateGeneral:
+		return "General evidence-grounded answer with citation labels.", true
+	case AnswerTemplateExplain:
+		return "Explain code behavior, location, and interactions using retrieved evidence.", true
+	case AnswerTemplateReview:
+		return "Review correctness, risk, test impact, documentation impact, and follow-up actions.", true
+	case AnswerTemplatePlan:
+		return "Create an implementation plan with likely files/symbols, risks, and validation commands.", true
 	default:
 		return "", false
 	}

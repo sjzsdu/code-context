@@ -46,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/hybrid", s.handleHybridSearch)
 	mux.HandleFunc("/api/hybrid-search", s.handleHybridSearch)
 	mux.HandleFunc("/api/answer", s.handleAnswer)
+	mux.HandleFunc("/api/answer-templates", s.handleAnswerTemplates)
 	mux.HandleFunc("/api/imports", s.handleImports)
 	mux.HandleFunc("/api/importers", s.handleImporters)
 	mux.HandleFunc("/api/callers", s.handleCallers)
@@ -288,6 +289,16 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, result)
+}
+
+func (s *Server) handleAnswerTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, fmt.Errorf("GET only"), http.StatusMethodNotAllowed)
+		return
+	}
+	includePrompts := r.URL.Query().Get("include_prompts") == "true" || r.URL.Query().Get("include_prompts") == "1"
+	templates := engine.AnswerTemplateCatalog(includePrompts)
+	writeJSON(w, map[string]any{"templates": templates, "count": len(templates)})
 }
 
 func (s *Server) handleImports(w http.ResponseWriter, r *http.Request) {

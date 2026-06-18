@@ -266,6 +266,34 @@ func TestAnswerEndpointRequiresProviderWhenNotContextOnly(t *testing.T) {
 	}
 }
 
+func TestAnswerTemplatesEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/answer-templates?include_prompts=true")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload struct {
+		Templates []engine.AnswerTemplateInfo `json:"templates"`
+		Count     int                         `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Count != len(payload.Templates) || payload.Count == 0 {
+		t.Fatalf("payload = %#v, want non-empty matching count", payload)
+	}
+	if payload.Templates[0].Name != engine.AnswerTemplateGeneral || payload.Templates[0].Prompt == "" {
+		t.Fatalf("templates = %#v, want prompt-inclusive catalog", payload.Templates)
+	}
+}
+
 func TestSearchMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
