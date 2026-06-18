@@ -66,6 +66,7 @@ type Options struct {
 	Answer          answerpkg.Options
 	AnswerReranker  AnswerReranker
 	AnswerEvaluator AnswerEvaluator
+	AnswerProfiles  []AnswerProfileInfo
 }
 
 func NewWithOptions(root string, opts Options) (*Engine, error) {
@@ -758,8 +759,15 @@ type AnswerProfileInfo struct {
 	VectorWeight        float64            `json:"vector_weight,omitempty"`
 	GraphWeight         float64            `json:"graph_weight,omitempty"`
 	ExpandMaxDepth      int                `json:"expand_max_depth,omitempty"`
+	MinContextScore     float64            `json:"min_context_score,omitempty"`
+	DedupeContext       bool               `json:"dedupe_context,omitempty"`
+	MaxPerFile          int                `json:"max_per_file,omitempty"`
+	MaxContextChars     int                `json:"max_context_chars,omitempty"`
+	MaxContextItemChars int                `json:"max_context_item_chars,omitempty"`
 	RequireCitations    bool               `json:"require_citations,omitempty"`
 	MinCitationCoverage float64            `json:"min_citation_coverage,omitempty"`
+	Evaluate            bool               `json:"evaluate,omitempty"`
+	MinEvaluationScore  float64            `json:"min_evaluation_score,omitempty"`
 }
 
 func FormatAnswerMarkdown(result *AnswerResult) string {
@@ -873,7 +881,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	if question == "" {
 		return nil, fmt.Errorf("answer question is required")
 	}
-	profile, opts, err := applyAnswerProfile(opts)
+	profile, opts, err := e.applyAnswerProfile(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -986,7 +994,7 @@ func (e *Engine) answerContextWithOptions(ctx context.Context, opts AnswerOption
 		return nil, nil, nil, fmt.Errorf("answer question is required")
 	}
 	var err error
-	_, opts, err = applyAnswerProfile(opts)
+	_, opts, err = e.applyAnswerProfile(opts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1120,6 +1128,30 @@ func AnswerProfiles() []string {
 }
 
 func AnswerProfileCatalog() []AnswerProfileInfo {
+	return builtinAnswerProfileCatalog()
+}
+
+func AnswerProfileCatalogWithCustom(custom []AnswerProfileInfo) []AnswerProfileInfo {
+	return mergeAnswerProfileCatalog(builtinAnswerProfileCatalog(), custom)
+}
+
+func (e *Engine) AnswerProfileCatalog() []AnswerProfileInfo {
+	if e == nil {
+		return AnswerProfileCatalog()
+	}
+	return AnswerProfileCatalogWithCustom(e.options.AnswerProfiles)
+}
+
+func (e *Engine) AnswerProfiles() []string {
+	infos := e.AnswerProfileCatalog()
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	return names
+}
+
+func builtinAnswerProfileCatalog() []AnswerProfileInfo {
 	return []AnswerProfileInfo{
 		{
 			Name:        AnswerProfileGeneral,
@@ -1195,11 +1227,22 @@ func AnswerProfileCatalog() []AnswerProfileInfo {
 }
 
 func applyAnswerProfile(opts AnswerOptions) (string, AnswerOptions, error) {
+	return applyAnswerProfileFromCatalog(opts, AnswerProfileCatalog(), AnswerProfiles())
+}
+
+func (e *Engine) applyAnswerProfile(opts AnswerOptions) (string, AnswerOptions, error) {
+	if e == nil {
+		return applyAnswerProfile(opts)
+	}
+	return applyAnswerProfileFromCatalog(opts, e.AnswerProfileCatalog(), e.AnswerProfiles())
+}
+
+func applyAnswerProfileFromCatalog(opts AnswerOptions, catalog []AnswerProfileInfo, supported []string) (string, AnswerOptions, error) {
 	profileName := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(opts.Profile, "_", "-")))
 	if profileName == "" {
 		return "", opts, nil
 	}
-	for _, profile := range AnswerProfileCatalog() {
+	for _, profile := range catalog {
 		if profile.Name != profileName {
 			continue
 		}
@@ -1207,7 +1250,36 @@ func applyAnswerProfile(opts AnswerOptions) (string, AnswerOptions, error) {
 		opts = applyAnswerProfileDefaults(opts, profile)
 		return profileName, opts, nil
 	}
-	return "", opts, fmt.Errorf("unsupported answer profile %q (supported: %s)", profileName, strings.Join(AnswerProfiles(), ", "))
+	return "", opts, fmt.Errorf("unsupported answer profile %q (supported: %s)", profileName, strings.Join(supported, ", "))
+}
+
+func mergeAnswerProfileCatalog(base []AnswerProfileInfo, custom []AnswerProfileInfo) []AnswerProfileInfo {
+	out := append([]AnswerProfileInfo(nil), base...)
+	indexByName := map[string]int{}
+	for i, profile := range out {
+		if name := normalizeAnswerProfileName(profile.Name); name != "" {
+			out[i].Name = name
+			indexByName[name] = i
+		}
+	}
+	for _, profile := range custom {
+		name := normalizeAnswerProfileName(profile.Name)
+		if name == "" {
+			continue
+		}
+		profile.Name = name
+		if idx, ok := indexByName[name]; ok {
+			out[idx] = profile
+			continue
+		}
+		indexByName[name] = len(out)
+		out = append(out, profile)
+	}
+	return out
+}
+
+func normalizeAnswerProfileName(name string) string {
+	return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(name, "_", "-")))
 }
 
 func applyAnswerProfileDefaults(opts AnswerOptions, profile AnswerProfileInfo) AnswerOptions {
@@ -1224,6 +1296,21 @@ func applyAnswerProfileDefaults(opts AnswerOptions, profile AnswerProfileInfo) A
 	}
 	if opts.ExpandMaxDepth <= 0 && profile.ExpandMaxDepth > 0 {
 		opts.ExpandMaxDepth = profile.ExpandMaxDepth
+	}
+	if opts.MinContextScore == 0 && profile.MinContextScore > 0 {
+		opts.MinContextScore = profile.MinContextScore
+	}
+	if !opts.DedupeContext {
+		opts.DedupeContext = profile.DedupeContext
+	}
+	if opts.MaxPerFile <= 0 && profile.MaxPerFile > 0 {
+		opts.MaxPerFile = profile.MaxPerFile
+	}
+	if opts.MaxContextChars <= 0 && profile.MaxContextChars > 0 {
+		opts.MaxContextChars = profile.MaxContextChars
+	}
+	if opts.MaxContextItemChars <= 0 && profile.MaxContextItemChars > 0 {
+		opts.MaxContextItemChars = profile.MaxContextItemChars
 	}
 	if len(opts.Filter.TargetKinds) == 0 && len(profile.Filter.TargetKinds) > 0 {
 		opts.Filter.TargetKinds = append([]store.TargetKind(nil), profile.Filter.TargetKinds...)
@@ -1246,6 +1333,12 @@ func applyAnswerProfileDefaults(opts AnswerOptions, profile AnswerProfileInfo) A
 	}
 	if opts.MinCitationCoverage == 0 && profile.MinCitationCoverage > 0 {
 		opts.MinCitationCoverage = profile.MinCitationCoverage
+	}
+	if !opts.Evaluate {
+		opts.Evaluate = profile.Evaluate
+	}
+	if opts.MinEvaluationScore == 0 && profile.MinEvaluationScore > 0 {
+		opts.MinEvaluationScore = profile.MinEvaluationScore
 	}
 	return opts
 }

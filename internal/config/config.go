@@ -63,14 +63,42 @@ type EmbeddingConfig struct {
 }
 
 type AnswerConfig struct {
-	Provider    string        `json:"provider" yaml:"provider"`
-	BaseURL     string        `json:"base_url" yaml:"base_url"`
-	APIKey      string        `json:"api_key" yaml:"api_key"`
-	APIKeyEnv   string        `json:"api_key_env" yaml:"api_key_env"`
-	Model       string        `json:"model" yaml:"model"`
-	Timeout     time.Duration `json:"timeout" yaml:"timeout"`
-	MaxTokens   int           `json:"max_tokens" yaml:"max_tokens"`
-	Temperature float64       `json:"temperature" yaml:"temperature"`
+	Provider    string                `json:"provider" yaml:"provider"`
+	BaseURL     string                `json:"base_url" yaml:"base_url"`
+	APIKey      string                `json:"api_key" yaml:"api_key"`
+	APIKeyEnv   string                `json:"api_key_env" yaml:"api_key_env"`
+	Model       string                `json:"model" yaml:"model"`
+	Timeout     time.Duration         `json:"timeout" yaml:"timeout"`
+	MaxTokens   int                   `json:"max_tokens" yaml:"max_tokens"`
+	Temperature float64               `json:"temperature" yaml:"temperature"`
+	Profiles    []AnswerProfileConfig `json:"profiles" yaml:"profiles"`
+}
+
+type AnswerProfileConfig struct {
+	Name                string             `json:"name" yaml:"name"`
+	Description         string             `json:"description" yaml:"description"`
+	Template            string             `json:"template" yaml:"template"`
+	Filter              SearchFilterConfig `json:"filter" yaml:"filter"`
+	Limit               int                `json:"limit" yaml:"limit"`
+	TextWeight          float64            `json:"text_weight" yaml:"text_weight"`
+	VectorWeight        float64            `json:"vector_weight" yaml:"vector_weight"`
+	GraphWeight         float64            `json:"graph_weight" yaml:"graph_weight"`
+	ExpandMaxDepth      int                `json:"expand_max_depth" yaml:"expand_max_depth"`
+	MinContextScore     float64            `json:"min_context_score" yaml:"min_context_score"`
+	DedupeContext       bool               `json:"dedupe_context" yaml:"dedupe_context"`
+	MaxPerFile          int                `json:"max_per_file" yaml:"max_per_file"`
+	MaxContextChars     int                `json:"max_context_chars" yaml:"max_context_chars"`
+	MaxContextItemChars int                `json:"max_context_item_chars" yaml:"max_context_item_chars"`
+	RequireCitations    bool               `json:"require_citations" yaml:"require_citations"`
+	MinCitationCoverage float64            `json:"min_citation_coverage" yaml:"min_citation_coverage"`
+	Evaluate            bool               `json:"evaluate" yaml:"evaluate"`
+	MinEvaluationScore  float64            `json:"min_evaluation_score" yaml:"min_evaluation_score"`
+}
+
+type SearchFilterConfig struct {
+	TargetKinds []string          `json:"target_kinds" yaml:"target_kinds"`
+	FilePattern string            `json:"file_pattern" yaml:"file_pattern"`
+	Metadata    map[string]string `json:"metadata" yaml:"metadata"`
 }
 
 type ServerConfig struct {
@@ -128,6 +156,7 @@ type configFields struct {
 	AnswerTimeout         bool
 	AnswerMaxTokens       bool
 	AnswerTemperature     bool
+	AnswerProfiles        bool
 	ServerPort            bool
 	WatchEnabled          bool
 	WatchInterval         bool
@@ -363,6 +392,7 @@ func fieldsFromMap(raw map[string]any) configFields {
 		f.AnswerTimeout = has(answer, "timeout")
 		f.AnswerMaxTokens = has(answer, "max_tokens")
 		f.AnswerTemperature = has(answer, "temperature")
+		f.AnswerProfiles = has(answer, "profiles")
 	}
 	if server := nested(raw, "server"); server != nil {
 		f.ServerPort = has(server, "port")
@@ -491,6 +521,14 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 		dst.Answer.Temperature = src.Answer.Temperature
 		dstFields.AnswerTemperature = true
 	}
+	if srcFields.AnswerProfiles {
+		if len(src.Answer.Profiles) == 0 {
+			dst.Answer.Profiles = nil
+		} else {
+			dst.Answer.Profiles = mergeAnswerProfiles(dst.Answer.Profiles, src.Answer.Profiles)
+		}
+		dstFields.AnswerProfiles = true
+	}
 	if srcFields.ServerPort {
 		dst.Server.Port = src.Server.Port
 		dstFields.ServerPort = true
@@ -519,4 +557,33 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 		dst.Docs.MinSymbolCoverage = src.Docs.MinSymbolCoverage
 		dstFields.DocsMinSymbolCoverage = true
 	}
+}
+
+func mergeAnswerProfiles(dst []AnswerProfileConfig, src []AnswerProfileConfig) []AnswerProfileConfig {
+	out := append([]AnswerProfileConfig(nil), dst...)
+	indexByName := map[string]int{}
+	for i, profile := range out {
+		if name := normalizeProfileName(profile.Name); name != "" {
+			out[i].Name = name
+			indexByName[name] = i
+		}
+	}
+	for _, profile := range src {
+		name := normalizeProfileName(profile.Name)
+		if name == "" {
+			continue
+		}
+		profile.Name = name
+		if idx, ok := indexByName[name]; ok {
+			out[idx] = profile
+			continue
+		}
+		indexByName[name] = len(out)
+		out = append(out, profile)
+	}
+	return out
+}
+
+func normalizeProfileName(name string) string {
+	return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(name, "_", "-")))
 }

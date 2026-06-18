@@ -15,6 +15,7 @@ import (
 
 	"github.com/sjzsdu/code-context/internal/api"
 	"github.com/sjzsdu/code-context/internal/engine"
+	"github.com/sjzsdu/code-context/internal/store"
 )
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -353,6 +354,50 @@ func TestAnswerProfilesEndpoint(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("profiles = %#v, want review-change", payload.Profiles)
+	}
+}
+
+func TestAnswerProfilesEndpointIncludesConfiguredProfiles(t *testing.T) {
+	root := t.TempDir()
+	eng, err := engine.NewWithOptions(root, engine.Options{
+		Store: store.Options{Backend: store.BackendSQLite, SQLite: store.SQLiteOptions{Path: filepath.Join(root, "index.db")}},
+		AnswerProfiles: []engine.AnswerProfileInfo{{
+			Name:        "custom-review",
+			Description: "configured custom profile",
+			Template:    engine.AnswerTemplateReview,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer eng.Close()
+	s := New(eng, 0)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/answer-profiles")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload struct {
+		Profiles []engine.AnswerProfileInfo `json:"profiles"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	var found bool
+	for _, profile := range payload.Profiles {
+		if profile.Name == "custom-review" && profile.Description == "configured custom profile" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("profiles = %#v, want configured custom profile", payload.Profiles)
 	}
 }
 

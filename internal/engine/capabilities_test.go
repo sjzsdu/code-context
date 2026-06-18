@@ -76,6 +76,37 @@ func TestAnswerProfileCatalog(t *testing.T) {
 	}
 }
 
+func TestAnswerProfileCatalogWithCustomProfiles(t *testing.T) {
+	infos := AnswerProfileCatalogWithCustom([]AnswerProfileInfo{
+		{
+			Name:        "review_change",
+			Description: "custom review override",
+			Template:    AnswerTemplatePlan,
+			Limit:       3,
+		},
+		{
+			Name:        "custom-risk",
+			Description: "custom profile",
+			Template:    AnswerTemplateReview,
+		},
+	})
+	var foundOverride, foundCustom bool
+	for _, info := range infos {
+		switch info.Name {
+		case AnswerProfileReviewChange:
+			foundOverride = true
+			if info.Description != "custom review override" || info.Template != AnswerTemplatePlan || info.Limit != 3 {
+				t.Fatalf("overridden review profile = %#v", info)
+			}
+		case "custom-risk":
+			foundCustom = true
+		}
+	}
+	if !foundOverride || !foundCustom {
+		t.Fatalf("profiles = %#v, want override and custom profile", infos)
+	}
+}
+
 func TestStatusIncludesEmbeddingCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := NewWithOptions(root, Options{
@@ -343,6 +374,53 @@ func TestAnswerProfileExplicitOptionsOverrideDefaults(t *testing.T) {
 	}
 	if hybridStore.vectorQuery.QueryText != "" {
 		t.Fatalf("vector query = %#v, want vector path skipped by explicit weights", hybridStore.vectorQuery)
+	}
+}
+
+func TestAnswerCustomProfileAppliesRetrievalRerankAndEvaluationDefaults(t *testing.T) {
+	hybridStore := &fakeAnswerRerankStore{hits: []store.SearchHit{
+		{Target: testTarget(store.TargetSymbol, "a.go", "Keep", 1), Score: 0.9, Source: store.SearchSourceText, Evidence: "kept evidence with many words"},
+		{Target: testTarget(store.TargetSymbol, "a.go", "Drop", 2), Score: 0.8, Source: store.SearchSourceText, Evidence: "same file drop"},
+		{Target: testTarget(store.TargetSymbol, "b.go", "Low", 3), Score: 0.1, Source: store.SearchSourceText, Evidence: "low score drop"},
+	}}
+	eng := &Engine{
+		store: hybridStore,
+		options: Options{AnswerProfiles: []AnswerProfileInfo{{
+			Name:                "custom-review",
+			Description:         "custom review",
+			Template:            AnswerTemplateReview,
+			Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol}},
+			Limit:               6,
+			TextWeight:          1,
+			MinContextScore:     0.5,
+			DedupeContext:       true,
+			MaxPerFile:          1,
+			MaxContextItemChars: 16,
+			RequireCitations:    true,
+			MinCitationCoverage: 0.25,
+			Evaluate:            true,
+			MinEvaluationScore:  0.2,
+		}}},
+	}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:    "hello",
+		Profile:     "custom_review",
+		ContextOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Answer with custom profile: %v", err)
+	}
+	if result.Profile != "custom-review" || result.Template != AnswerTemplateReview {
+		t.Fatalf("profile/template = %q/%q", result.Profile, result.Template)
+	}
+	if len(result.Context) != 1 || result.Context[0].Target.Name != "Keep" {
+		t.Fatalf("context = %#v", result.Context)
+	}
+	if result.Retrieval == nil || result.Retrieval.Dropped != 2 || result.Retrieval.MinContextScore != 0.5 || !result.Retrieval.DedupeContext {
+		t.Fatalf("retrieval = %#v", result.Retrieval)
+	}
+	if result.Evaluation == nil || result.Evaluation.MinScore != 0.2 {
+		t.Fatalf("evaluation = %#v", result.Evaluation)
 	}
 }
 

@@ -273,7 +273,7 @@ func TestRunAnswerToolJSONIncludesEvaluation(t *testing.T) {
 }
 
 func TestRunAnswerProfilesTool(t *testing.T) {
-	out, err := runAnswerProfilesTool()
+	out, err := runAnswerProfilesTool(nil)
 	if err != nil {
 		t.Fatalf("run answer profiles tool: %v", err)
 	}
@@ -282,6 +282,27 @@ func TestRunAnswerProfilesTool(t *testing.T) {
 		!strings.Contains(out, "\"name\": \"plan-implementation\"") ||
 		!strings.Contains(out, "\"template\"") {
 		t.Fatalf("expected answer profiles JSON, got:\n%s", out)
+	}
+
+	root := t.TempDir()
+	eng, err := engine.NewWithOptions(root, engine.Options{
+		Store: store.Options{Backend: store.BackendSQLite, SQLite: store.SQLiteOptions{Path: filepath.Join(root, "index.db")}},
+		AnswerProfiles: []engine.AnswerProfileInfo{{
+			Name:        "custom-review",
+			Description: "custom review",
+			Template:    engine.AnswerTemplateReview,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer eng.Close()
+	out, err = runAnswerProfilesTool(eng)
+	if err != nil {
+		t.Fatalf("run answer profiles tool custom: %v", err)
+	}
+	if !strings.Contains(out, "\"name\": \"custom-review\"") {
+		t.Fatalf("expected custom profile JSON, got:\n%s", out)
 	}
 }
 

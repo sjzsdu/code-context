@@ -198,6 +198,20 @@ answer:
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
+  profiles:
+    - name: project-review
+      description: Project-specific review profile
+      template: review
+      limit: 8
+      filter:
+        target_kinds: [symbol, file, document]
+      dedupe_context: true
+      max_per_file: 2
+      max_context_chars: 6000
+      require_citations: true
+      min_citation_coverage: 0.2
+      evaluate: true
+      min_evaluation_score: 0.6
 server:
   port: 9090
 watch:
@@ -384,11 +398,12 @@ Use `--evaluate` to include a deterministic local answer evaluation report with 
 evidence-overlap, and citation-grounding checks. `--min-evaluation-score 0.7` turns that local
 evaluation score into a CLI success gate without calling any extra model.
 Use `answer-templates` or `GET /api/answer-templates` to discover available built-in templates.
-Use `answer-profiles` or `GET /api/answer-profiles` to discover workflow profiles.
+Use `answer-profiles` or `GET /api/answer-profiles` to discover built-in and configured workflow profiles.
 
 ```bash
 code-context answer-templates
 code-context answer-profiles
+code-context answer "Where is status served?" --profile project-review --context-only --json
 code-context answer "Where is status served?" --context-only
 code-context answer "Where is status served?" --context-only --format markdown
 code-context answer "Where is status served?" --context-only --target-kind symbol --text-weight 0.7 --vector-weight 0.3
@@ -728,7 +743,10 @@ retrieval backend-neutral. They can also select reusable provider-neutral prompt
 when both are present, and `answer-templates` / `/api/answer-templates` / MCP
 `answer_templates` exposes the current catalog. Workflow profiles are discoverable via
 `answer-profiles` / `/api/answer-profiles` / MCP `answer_profiles`, and can be selected with
-`profile`. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
+`profile`. Built-in profiles can be extended or overridden from user/project config under
+`answer.profiles`; project config wins over user config for the same normalized profile name.
+Configured profiles can include retrieval, rerank, grounding, and evaluation defaults. Answer
+requests also accept `filter`, `text_weight`, `vector_weight`,
 `graph_weight`, `expand_from`, and `expand_max_depth` so callers can scope and tune retrieval
 without dropping to backend-specific APIs. They can then post-process the selected answer context
 through the provider-neutral `AnswerReranker` hook with `min_context_score`, `dedupe_context`,
@@ -782,7 +800,7 @@ Start the server with `code-context serve`, then:
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
 | POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `min_context_score?`, `dedupe_context?`, `max_per_file?`, `max_context_chars?`, `max_context_item_chars?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources`, `retrieval`, provider-backed `grounding`, and optional local `evaluation` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
-| GET | `/api/answer-profiles` | — | List built-in provider-neutral answer workflow profiles |
+| GET | `/api/answer-profiles` | — | List built-in and configured provider-neutral answer workflow profiles |
 | GET | `/api/provider-diagnostics` | — | Check embedding and answer provider configuration without network calls |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |

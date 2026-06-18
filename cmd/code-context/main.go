@@ -53,6 +53,7 @@ var (
 	answerTimeout       time.Duration
 	answerMaxTokens     int
 	answerTemperature   float64
+	answerProfiles      []engine.AnswerProfileInfo
 )
 
 type runtimeConfig struct {
@@ -289,14 +290,20 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			}
 		}
 	}
+	if loaded != nil {
+		answerProfiles = answerProfilesFromConfig(loaded.Config.Answer.Profiles)
+	} else {
+		answerProfiles = nil
+	}
 	_ = cfg
 }
 
 func newEngine() (*engine.Engine, error) {
 	return engine.NewWithOptions(root, engine.Options{
-		Store:     storeOptions(),
-		Embedding: embeddingOptions(),
-		Answer:    answerOptions(),
+		Store:          storeOptions(),
+		Embedding:      embeddingOptions(),
+		Answer:         answerOptions(),
+		AnswerProfiles: answerProfiles,
 	})
 }
 
@@ -337,6 +344,61 @@ func answerOptions() answerpkg.Options {
 		MaxTokens:   answerMaxTokens,
 		Temperature: answerTemperature,
 	}
+}
+
+func answerProfilesFromConfig(profiles []config.AnswerProfileConfig) []engine.AnswerProfileInfo {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make([]engine.AnswerProfileInfo, 0, len(profiles))
+	for _, profile := range profiles {
+		name := strings.TrimSpace(profile.Name)
+		if name == "" {
+			continue
+		}
+		info := engine.AnswerProfileInfo{
+			Name:                name,
+			Description:         strings.TrimSpace(profile.Description),
+			Template:            strings.TrimSpace(profile.Template),
+			Filter:              searchFilterFromConfig(profile.Filter),
+			Limit:               profile.Limit,
+			TextWeight:          profile.TextWeight,
+			VectorWeight:        profile.VectorWeight,
+			GraphWeight:         profile.GraphWeight,
+			ExpandMaxDepth:      profile.ExpandMaxDepth,
+			MinContextScore:     profile.MinContextScore,
+			DedupeContext:       profile.DedupeContext,
+			MaxPerFile:          profile.MaxPerFile,
+			MaxContextChars:     profile.MaxContextChars,
+			MaxContextItemChars: profile.MaxContextItemChars,
+			RequireCitations:    profile.RequireCitations,
+			MinCitationCoverage: profile.MinCitationCoverage,
+			Evaluate:            profile.Evaluate,
+			MinEvaluationScore:  profile.MinEvaluationScore,
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+func searchFilterFromConfig(filter config.SearchFilterConfig) store.SearchFilter {
+	out := store.SearchFilter{FilePattern: strings.TrimSpace(filter.FilePattern)}
+	for _, kind := range filter.TargetKinds {
+		kind = strings.TrimSpace(kind)
+		if kind != "" {
+			out.TargetKinds = append(out.TargetKinds, store.TargetKind(kind))
+		}
+	}
+	if len(filter.Metadata) > 0 {
+		out.Metadata = map[string]string{}
+		for k, v := range filter.Metadata {
+			key := strings.TrimSpace(k)
+			if key != "" {
+				out.Metadata[key] = v
+			}
+		}
+	}
+	return out
 }
 
 type configInspectOutput struct {
@@ -536,6 +598,28 @@ embedding:
   dimensions: 0
   timeout: 30s
   batch_size: 64
+answer:
+  provider: none
+  base_url: ""
+  api_key_env: ANSWER_API_KEY
+  model: ""
+  timeout: 60s
+  max_tokens: 1024
+  temperature: 0.2
+  profiles:
+    # - name: project-review
+    #   description: Project-specific review profile
+    #   template: review
+    #   limit: 8
+    #   filter:
+    #     target_kinds: [symbol, file, document]
+    #   dedupe_context: true
+    #   max_per_file: 2
+    #   max_context_chars: 6000
+    #   require_citations: true
+    #   min_citation_coverage: 0.2
+    #   evaluate: true
+    #   min_evaluation_score: 0.6
 server:
   port: 9090
 watch:
@@ -1343,9 +1427,9 @@ func newAnswerProfilesCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "answer-profiles",
-		Short: "List built-in provider-neutral answer workflow profiles",
+		Short: "List built-in and configured provider-neutral answer workflow profiles",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			profiles := engine.AnswerProfileCatalog()
+			profiles := engine.AnswerProfileCatalogWithCustom(answerProfiles)
 			if jsonOut {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -1365,8 +1449,20 @@ func newAnswerProfilesCmd() *cobra.Command {
 						profile.ExpandMaxDepth,
 					)
 				}
+				if profile.MinContextScore > 0 || profile.DedupeContext || profile.MaxPerFile > 0 || profile.MaxContextChars > 0 || profile.MaxContextItemChars > 0 {
+					fmt.Printf("  rerank: min_score=%.4f dedupe=%t max_per_file=%d max_context_chars=%d max_item_chars=%d\n",
+						profile.MinContextScore,
+						profile.DedupeContext,
+						profile.MaxPerFile,
+						profile.MaxContextChars,
+						profile.MaxContextItemChars,
+					)
+				}
 				if profile.RequireCitations || profile.MinCitationCoverage > 0 {
 					fmt.Printf("  grounding: require=%t min_coverage=%.2f\n", profile.RequireCitations, profile.MinCitationCoverage)
+				}
+				if profile.Evaluate || profile.MinEvaluationScore > 0 {
+					fmt.Printf("  evaluation: evaluate=%t min_score=%.2f\n", profile.Evaluate, profile.MinEvaluationScore)
 				}
 			}
 			return nil

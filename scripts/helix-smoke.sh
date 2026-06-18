@@ -86,6 +86,28 @@ cat > "$FIXTURE/docs/health.md" <<'EOF'
 The health endpoint is implemented by HealthHandler and returns HealthMessage.
 EOF
 
+mkdir -p "$FIXTURE/.code-context"
+cat > "$FIXTURE/.code-context/config.yaml" <<'EOF'
+answer:
+  profiles:
+    - name: smoke-custom
+      description: Smoke custom answer profile from project config
+      template: review
+      limit: 5
+      filter:
+        target_kinds: [symbol]
+      text_weight: 0.6
+      vector_weight: 0.4
+      dedupe_context: true
+      max_per_file: 2
+      max_context_item_chars: 800
+      max_context_chars: 2000
+      require_citations: true
+      min_citation_coverage: 0.1
+      evaluate: true
+      min_evaluation_score: 0.2
+EOF
+
 cd "$ROOT_DIR"
 
 cat > "$SMOKE_DIR/fake-embedding.py" <<'PY'
@@ -394,6 +416,8 @@ answer_profiles_cli="$(run_code_context answer-profiles --json)"
 printf '%s\n' "$answer_profiles_cli"
 grep -q '"name": "review-change"' <<<"$answer_profiles_cli"
 grep -q '"name": "plan-implementation"' <<<"$answer_profiles_cli"
+grep -q '"name": "smoke-custom"' <<<"$answer_profiles_cli"
+grep -q '"max_context_chars": 2000' <<<"$answer_profiles_cli"
 
 provider_doctor_cli="$(run_code_context provider-doctor --json)"
 printf '%s\n' "$provider_doctor_cli"
@@ -439,6 +463,15 @@ grep -q '"evaluation":' <<<"$answer_cli"
 grep -q '"evaluator": "local-rule"' <<<"$answer_cli"
 grep -q '"min_score": 0.2' <<<"$answer_cli"
 grep -q '"usage":' <<<"$answer_cli"
+
+answer_custom_cli="$(run_code_context answer "Where is HealthMessage used?" --profile smoke-custom --json)"
+printf '%s\n' "$answer_custom_cli"
+grep -q '"profile": "smoke-custom"' <<<"$answer_custom_cli"
+grep -q '"template": "review"' <<<"$answer_custom_cli"
+grep -q '"retrieval":' <<<"$answer_custom_cli"
+grep -q '"grounding":' <<<"$answer_custom_cli"
+grep -q '"evaluation":' <<<"$answer_custom_cli"
+grep -q "Smoke answer: HealthMessage" <<<"$answer_custom_cli"
 
 routes="$(run_code_context routes)"
 printf '%s\n' "$routes"
@@ -554,6 +587,8 @@ answer_profiles_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/answer-profi
 printf '%s\n' "$answer_profiles_api"
 grep -q '"name":"review-change"' <<<"$answer_profiles_api"
 grep -q '"name":"plan-implementation"' <<<"$answer_profiles_api"
+grep -q '"name":"smoke-custom"' <<<"$answer_profiles_api"
+grep -q '"max_context_chars":2000' <<<"$answer_profiles_api"
 
 provider_doctor_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/provider-diagnostics")"
 printf '%s\n' "$provider_doctor_api"

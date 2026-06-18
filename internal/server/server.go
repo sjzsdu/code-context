@@ -308,7 +308,7 @@ func (s *Server) handleAnswerProfiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("GET only"), http.StatusMethodNotAllowed)
 		return
 	}
-	profiles := engine.AnswerProfileCatalog()
+	profiles := s.eng.AnswerProfileCatalog()
 	writeJSON(w, map[string]any{"profiles": profiles, "count": len(profiles)})
 }
 

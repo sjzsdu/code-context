@@ -46,6 +46,7 @@ var (
 	answerTimeout       time.Duration
 	answerMaxTokens     int
 	answerTemperature   float64
+	answerProfiles      []engine.AnswerProfileInfo
 )
 
 type GraphArgs struct {
@@ -219,9 +220,10 @@ func main() {
 
 	// Initialize the engine
 	eng, err := engine.NewWithOptions(root, engine.Options{
-		Store:     mcpStoreOptions(),
-		Embedding: mcpEmbeddingOptions(),
-		Answer:    mcpAnswerOptions(),
+		Store:          mcpStoreOptions(),
+		Embedding:      mcpEmbeddingOptions(),
+		Answer:         mcpAnswerOptions(),
+		AnswerProfiles: answerProfiles,
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
@@ -261,8 +263,10 @@ func main() {
 func applyConfigDefaults() {
 	loaded, err := config.Load(root)
 	if err != nil {
+		answerProfiles = nil
 		return
 	}
+	answerProfiles = mcpAnswerProfilesFromConfig(loaded.Config.Answer.Profiles)
 
 	visited := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) {
@@ -379,6 +383,60 @@ func mcpAnswerOptions() answerpkg.Options {
 		MaxTokens:   answerMaxTokens,
 		Temperature: answerTemperature,
 	}
+}
+
+func mcpAnswerProfilesFromConfig(profiles []config.AnswerProfileConfig) []engine.AnswerProfileInfo {
+	if len(profiles) == 0 {
+		return nil
+	}
+	out := make([]engine.AnswerProfileInfo, 0, len(profiles))
+	for _, profile := range profiles {
+		name := strings.TrimSpace(profile.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, engine.AnswerProfileInfo{
+			Name:                name,
+			Description:         strings.TrimSpace(profile.Description),
+			Template:            strings.TrimSpace(profile.Template),
+			Filter:              mcpSearchFilterFromConfig(profile.Filter),
+			Limit:               profile.Limit,
+			TextWeight:          profile.TextWeight,
+			VectorWeight:        profile.VectorWeight,
+			GraphWeight:         profile.GraphWeight,
+			ExpandMaxDepth:      profile.ExpandMaxDepth,
+			MinContextScore:     profile.MinContextScore,
+			DedupeContext:       profile.DedupeContext,
+			MaxPerFile:          profile.MaxPerFile,
+			MaxContextChars:     profile.MaxContextChars,
+			MaxContextItemChars: profile.MaxContextItemChars,
+			RequireCitations:    profile.RequireCitations,
+			MinCitationCoverage: profile.MinCitationCoverage,
+			Evaluate:            profile.Evaluate,
+			MinEvaluationScore:  profile.MinEvaluationScore,
+		})
+	}
+	return out
+}
+
+func mcpSearchFilterFromConfig(filter config.SearchFilterConfig) store.SearchFilter {
+	out := store.SearchFilter{FilePattern: strings.TrimSpace(filter.FilePattern)}
+	for _, kind := range filter.TargetKinds {
+		kind = strings.TrimSpace(kind)
+		if kind != "" {
+			out.TargetKinds = append(out.TargetKinds, store.TargetKind(kind))
+		}
+	}
+	if len(filter.Metadata) > 0 {
+		out.Metadata = map[string]string{}
+		for k, v := range filter.Metadata {
+			key := strings.TrimSpace(k)
+			if key != "" {
+				out.Metadata[key] = v
+			}
+		}
+	}
+	return out
 }
 
 func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
@@ -564,9 +622,9 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(out), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer_profiles", Description: "List built-in provider-neutral answer workflow profiles"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer_profiles", Description: "List built-in and configured provider-neutral answer workflow profiles"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerProfilesArgs) (*mcp.CallToolResult, any, error) {
-			out, err := runAnswerProfilesTool()
+			out, err := runAnswerProfilesTool(eng)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -851,9 +909,9 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer_profiles",
-		Description: "List built-in provider-neutral answer workflow profiles",
+		Description: "List built-in and configured provider-neutral answer workflow profiles",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerProfilesArgs) (*mcp.CallToolResult, any, error) {
-		output, err := runAnswerProfilesTool()
+		output, err := runAnswerProfilesTool(eng)
 		if err != nil {
 			return nil, nil, fmt.Errorf("answer_profiles failed: %w", err)
 		}
@@ -1619,8 +1677,11 @@ func runAnswerTemplatesTool(args AnswerTemplatesArgs) (string, error) {
 	return marshalIndentedJSON(map[string]any{"templates": templates, "count": len(templates)})
 }
 
-func runAnswerProfilesTool() (string, error) {
+func runAnswerProfilesTool(eng *engine.Engine) (string, error) {
 	profiles := engine.AnswerProfileCatalog()
+	if eng != nil {
+		profiles = eng.AnswerProfileCatalog()
+	}
 	return marshalIndentedJSON(map[string]any{"profiles": profiles, "count": len(profiles)})
 }
 
