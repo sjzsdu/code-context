@@ -23,6 +23,8 @@ type HelixOptions struct {
 	APIKeyEnv          string
 	ProjectID          string
 	Timeout            time.Duration
+	ReadRetryAttempts  int
+	ReadRetryBackoff   time.Duration
 	WriteRetryAttempts int
 	WriteRetryBackoff  time.Duration
 }

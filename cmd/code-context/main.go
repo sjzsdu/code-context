@@ -30,34 +30,36 @@ import (
 )
 
 var (
-	root                string
-	dbPath              string
-	storeBackend        string
-	helixURL            string
-	helixAPIKey         string
-	helixAPIKeyEnv      string
-	helixProjectID      string
-	helixTimeout        time.Duration
-	helixRetryAttempts  int
-	helixRetryBackoff   time.Duration
-	embeddingProvider   string
-	embeddingBaseURL    string
-	embeddingAPIKey     string
-	embeddingAPIKeyEnv  string
-	embeddingModel      string
-	embeddingDimensions int
-	embeddingTimeout    time.Duration
-	embeddingBatchSize  int
-	answerProvider      string
-	answerBaseURL       string
-	answerAPIKey        string
-	answerAPIKeyEnv     string
-	answerModel         string
-	answerReranker      string
-	answerTimeout       time.Duration
-	answerMaxTokens     int
-	answerTemperature   float64
-	answerProfiles      []engine.AnswerProfileInfo
+	root                   string
+	dbPath                 string
+	storeBackend           string
+	helixURL               string
+	helixAPIKey            string
+	helixAPIKeyEnv         string
+	helixProjectID         string
+	helixTimeout           time.Duration
+	helixReadRetryAttempts int
+	helixReadRetryBackoff  time.Duration
+	helixRetryAttempts     int
+	helixRetryBackoff      time.Duration
+	embeddingProvider      string
+	embeddingBaseURL       string
+	embeddingAPIKey        string
+	embeddingAPIKeyEnv     string
+	embeddingModel         string
+	embeddingDimensions    int
+	embeddingTimeout       time.Duration
+	embeddingBatchSize     int
+	answerProvider         string
+	answerBaseURL          string
+	answerAPIKey           string
+	answerAPIKeyEnv        string
+	answerModel            string
+	answerReranker         string
+	answerTimeout          time.Duration
+	answerMaxTokens        int
+	answerTemperature      float64
+	answerProfiles         []engine.AnswerProfileInfo
 )
 
 type runtimeConfig struct {
@@ -92,8 +94,10 @@ func main() {
 	cmd.PersistentFlags().StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	cmd.PersistentFlags().StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
 	cmd.PersistentFlags().DurationVar(&helixTimeout, "helix-timeout", 0, "HelixDB HTTP request timeout")
-	cmd.PersistentFlags().IntVar(&helixRetryAttempts, "helix-write-retry-attempts", 0, "HelixDB write conflict attempts including the initial attempt")
-	cmd.PersistentFlags().DurationVar(&helixRetryBackoff, "helix-write-retry-backoff", 0, "HelixDB write conflict retry base backoff")
+	cmd.PersistentFlags().IntVar(&helixReadRetryAttempts, "helix-read-retry-attempts", 0, "HelixDB read transient-error attempts including the initial attempt")
+	cmd.PersistentFlags().DurationVar(&helixReadRetryBackoff, "helix-read-retry-backoff", 0, "HelixDB read transient-error retry base backoff")
+	cmd.PersistentFlags().IntVar(&helixRetryAttempts, "helix-write-retry-attempts", 0, "HelixDB write conflict/transient-error attempts including the initial attempt")
+	cmd.PersistentFlags().DurationVar(&helixRetryBackoff, "helix-write-retry-backoff", 0, "HelixDB write conflict/transient-error retry base backoff")
 	cmd.PersistentFlags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider (none|openai|openai-compatible; default: none)")
 	cmd.PersistentFlags().StringVar(&embeddingBaseURL, "embedding-base-url", "", "embedding API base URL (for openai-compatible, e.g. http://localhost:11434/v1)")
 	cmd.PersistentFlags().StringVar(&embeddingAPIKey, "embedding-api-key", "", "embedding API key")
@@ -208,7 +212,8 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 	if !cmd.Flags().Changed("db") || !cmd.Flags().Changed("store-backend") ||
 		!cmd.Flags().Changed("helix-url") || !cmd.Flags().Changed("helix-api-key") ||
 		!cmd.Flags().Changed("helix-api-key-env") || !cmd.Flags().Changed("helix-project-id") ||
-		!cmd.Flags().Changed("helix-timeout") || !cmd.Flags().Changed("helix-write-retry-attempts") ||
+		!cmd.Flags().Changed("helix-timeout") || !cmd.Flags().Changed("helix-read-retry-attempts") ||
+		!cmd.Flags().Changed("helix-read-retry-backoff") || !cmd.Flags().Changed("helix-write-retry-attempts") ||
 		!cmd.Flags().Changed("helix-write-retry-backoff") ||
 		!cmd.Flags().Changed("embedding-provider") || !cmd.Flags().Changed("embedding-base-url") ||
 		!cmd.Flags().Changed("embedding-api-key") || !cmd.Flags().Changed("embedding-api-key-env") ||
@@ -253,6 +258,12 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			}
 			if !cmd.Flags().Changed("helix-timeout") && loaded.Config.Store.Helix.Timeout > 0 {
 				helixTimeout = loaded.Config.Store.Helix.Timeout
+			}
+			if !cmd.Flags().Changed("helix-read-retry-attempts") && loaded.Config.Store.Helix.ReadRetryAttempts > 0 {
+				helixReadRetryAttempts = loaded.Config.Store.Helix.ReadRetryAttempts
+			}
+			if !cmd.Flags().Changed("helix-read-retry-backoff") && loaded.Config.Store.Helix.ReadRetryBackoff > 0 {
+				helixReadRetryBackoff = loaded.Config.Store.Helix.ReadRetryBackoff
 			}
 			if !cmd.Flags().Changed("helix-write-retry-attempts") && loaded.Config.Store.Helix.WriteRetryAttempts > 0 {
 				helixRetryAttempts = loaded.Config.Store.Helix.WriteRetryAttempts
@@ -341,6 +352,8 @@ func storeOptions() store.Options {
 			APIKeyEnv:          helixAPIKeyEnv,
 			ProjectID:          helixProjectID,
 			Timeout:            helixTimeout,
+			ReadRetryAttempts:  helixReadRetryAttempts,
+			ReadRetryBackoff:   helixReadRetryBackoff,
 			WriteRetryAttempts: helixRetryAttempts,
 			WriteRetryBackoff:  helixRetryBackoff,
 		},
@@ -513,6 +526,12 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 	if helixTimeout > 0 {
 		cfg.Store.Helix.Timeout = helixTimeout
 	}
+	if helixReadRetryAttempts > 0 {
+		cfg.Store.Helix.ReadRetryAttempts = helixReadRetryAttempts
+	}
+	if helixReadRetryBackoff > 0 {
+		cfg.Store.Helix.ReadRetryBackoff = helixReadRetryBackoff
+	}
 	if helixRetryAttempts > 0 {
 		cfg.Store.Helix.WriteRetryAttempts = helixRetryAttempts
 	}
@@ -630,6 +649,8 @@ store:
     api_key_env: HELIX_API_KEY
     project_id: ""
     # timeout: 30s
+    # read_retry_attempts: 2
+    # read_retry_backoff: 50ms
     # write_retry_attempts: 3
     # write_retry_backoff: 50ms
 embedding:

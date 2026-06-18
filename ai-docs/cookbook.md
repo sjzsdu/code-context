@@ -53,6 +53,8 @@ store:
     url: http://localhost:6969
     project_id: my-repo
     timeout: 30s
+    read_retry_attempts: 2
+    read_retry_backoff: 50ms
     write_retry_attempts: 3
     write_retry_backoff: 50ms
 embedding:
@@ -91,7 +93,8 @@ Operational notes:
 - Keep `store.helix.project_id` stable per repository/environment. It scopes Helix data.
 - Use a dedicated Helix instance or project id for smoke tests.
 - `store.helix.timeout` protects CLI/MCP/API operations from hanging on a slow endpoint.
-- `write_retry_attempts` and `write_retry_backoff` only affect Helix write-conflict retries.
+- `read_retry_attempts` / `read_retry_backoff` cover transient read/network failures.
+- `write_retry_attempts` / `write_retry_backoff` cover write conflicts and transient write/network failures.
 
 ## 3. Hosted OpenAI-compatible providers
 

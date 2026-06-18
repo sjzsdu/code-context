@@ -50,6 +50,8 @@ type HelixStoreConfig struct {
 	APIKeyEnv          string        `json:"api_key_env" yaml:"api_key_env"`
 	ProjectID          string        `json:"project_id" yaml:"project_id"`
 	Timeout            time.Duration `json:"timeout" yaml:"timeout"`
+	ReadRetryAttempts  int           `json:"read_retry_attempts" yaml:"read_retry_attempts"`
+	ReadRetryBackoff   time.Duration `json:"read_retry_backoff" yaml:"read_retry_backoff"`
 	WriteRetryAttempts int           `json:"write_retry_attempts" yaml:"write_retry_attempts"`
 	WriteRetryBackoff  time.Duration `json:"write_retry_backoff" yaml:"write_retry_backoff"`
 }
@@ -145,6 +147,8 @@ type configFields struct {
 	StoreHelixAPIKeyEnv          bool
 	StoreHelixProjectID          bool
 	StoreHelixTimeout            bool
+	StoreHelixReadRetryAttempts  bool
+	StoreHelixReadRetryBackoff   bool
 	StoreHelixWriteRetryAttempts bool
 	StoreHelixWriteRetryBackoff  bool
 	EmbeddingProvider            bool
@@ -380,6 +384,8 @@ func fieldsFromMap(raw map[string]any) configFields {
 			f.StoreHelixAPIKeyEnv = has(helix, "api_key_env")
 			f.StoreHelixProjectID = has(helix, "project_id")
 			f.StoreHelixTimeout = has(helix, "timeout")
+			f.StoreHelixReadRetryAttempts = has(helix, "read_retry_attempts")
+			f.StoreHelixReadRetryBackoff = has(helix, "read_retry_backoff")
 			f.StoreHelixWriteRetryAttempts = has(helix, "write_retry_attempts")
 			f.StoreHelixWriteRetryBackoff = has(helix, "write_retry_backoff")
 		}
@@ -472,6 +478,14 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 	if srcFields.StoreHelixTimeout {
 		dst.Store.Helix.Timeout = src.Store.Helix.Timeout
 		dstFields.StoreHelixTimeout = true
+	}
+	if srcFields.StoreHelixReadRetryAttempts {
+		dst.Store.Helix.ReadRetryAttempts = src.Store.Helix.ReadRetryAttempts
+		dstFields.StoreHelixReadRetryAttempts = true
+	}
+	if srcFields.StoreHelixReadRetryBackoff {
+		dst.Store.Helix.ReadRetryBackoff = src.Store.Helix.ReadRetryBackoff
+		dstFields.StoreHelixReadRetryBackoff = true
 	}
 	if srcFields.StoreHelixWriteRetryAttempts {
 		dst.Store.Helix.WriteRetryAttempts = src.Store.Helix.WriteRetryAttempts

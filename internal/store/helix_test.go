@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -387,10 +389,76 @@ func TestNewHelixStoreDefaultsProjectID(t *testing.T) {
 	if hs.projectID != "default" {
 		t.Fatalf("projectID = %q", hs.projectID)
 	}
+	if hs.readRetryAttempts != 2 {
+		t.Fatalf("readRetryAttempts = %d, want 2", hs.readRetryAttempts)
+	}
+	if hs.readRetryBackoff != 50*time.Millisecond {
+		t.Fatalf("readRetryBackoff = %s, want 50ms", hs.readRetryBackoff)
+	}
 	if hs.writeRetryAttempts != 3 {
 		t.Fatalf("writeRetryAttempts = %d, want 3", hs.writeRetryAttempts)
 	}
 	if hs.writeRetryBackoff != 50*time.Millisecond {
 		t.Fatalf("writeRetryBackoff = %s, want 50ms", hs.writeRetryBackoff)
 	}
+}
+
+func TestHelixExecReadRetriesTransientErrors(t *testing.T) {
+	executor := &fakeHelixExecutor{errors: []error{
+		&helix.HelixError{Kind: helix.ErrorRemote, StatusCode: http.StatusServiceUnavailable, Details: "warming"},
+		nil,
+	}}
+	st := &helixStore{client: executor, readRetryAttempts: 2}
+	req := helix.ReadQuery("test_read_retry").Returning()
+	if err := st.execRead(context.Background(), req, nil); err != nil {
+		t.Fatalf("execRead: %v", err)
+	}
+	if executor.calls != 2 {
+		t.Fatalf("read calls = %d, want 2", executor.calls)
+	}
+}
+
+func TestHelixExecReadDoesNotRetryPermanentErrors(t *testing.T) {
+	executor := &fakeHelixExecutor{errors: []error{
+		&helix.HelixError{Kind: helix.ErrorRemote, StatusCode: http.StatusBadRequest, Details: "bad query"},
+		nil,
+	}}
+	st := &helixStore{client: executor, readRetryAttempts: 2}
+	req := helix.ReadQuery("test_read_no_retry").Returning()
+	if err := st.execRead(context.Background(), req, nil); err == nil {
+		t.Fatalf("execRead succeeded, want error")
+	}
+	if executor.calls != 1 {
+		t.Fatalf("read calls = %d, want 1", executor.calls)
+	}
+}
+
+func TestHelixExecWriteRetriesConflictAndTransientErrors(t *testing.T) {
+	executor := &fakeHelixExecutor{errors: []error{
+		helix.ErrConflict,
+		&helix.HelixError{Kind: helix.ErrorNetwork, Details: "temporary network failure"},
+		nil,
+	}}
+	st := &helixStore{client: executor, writeRetryAttempts: 3}
+	if err := st.execWrite(context.Background(), func() helix.Request {
+		return helix.WriteQuery("test_write_retry").Returning()
+	}, nil); err != nil {
+		t.Fatalf("execWrite: %v", err)
+	}
+	if executor.calls != 3 {
+		t.Fatalf("write calls = %d, want 3", executor.calls)
+	}
+}
+
+type fakeHelixExecutor struct {
+	errors []error
+	calls  int
+}
+
+func (f *fakeHelixExecutor) Exec(context.Context, helix.Request, any, ...helix.ExecOption) error {
+	defer func() { f.calls++ }()
+	if f.calls < len(f.errors) {
+		return f.errors[f.calls]
+	}
+	return nil
 }

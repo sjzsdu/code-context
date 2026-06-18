@@ -41,10 +41,12 @@ func TestNewHelixStoreUsesSDKDefaultURL(t *testing.T) {
 	defer st.Close()
 }
 
-func TestNewHelixStoreAppliesTimeoutAndWriteRetryOptions(t *testing.T) {
+func TestNewHelixStoreAppliesTimeoutAndRetryOptions(t *testing.T) {
 	st, err := NewHelixStore(HelixOptions{
 		URL:                "http://localhost:6969",
 		Timeout:            15 * time.Second,
+		ReadRetryAttempts:  3,
+		ReadRetryBackoff:   40 * time.Millisecond,
 		WriteRetryAttempts: 4,
 		WriteRetryBackoff:  75 * time.Millisecond,
 	})
@@ -59,6 +61,12 @@ func TestNewHelixStoreAppliesTimeoutAndWriteRetryOptions(t *testing.T) {
 	if hs.requestTimeout != 15*time.Second {
 		t.Fatalf("requestTimeout = %s", hs.requestTimeout)
 	}
+	if hs.readRetryAttempts != 3 {
+		t.Fatalf("readRetryAttempts = %d", hs.readRetryAttempts)
+	}
+	if hs.readRetryBackoff != 40*time.Millisecond {
+		t.Fatalf("readRetryBackoff = %s", hs.readRetryBackoff)
+	}
 	if hs.writeRetryAttempts != 4 {
 		t.Fatalf("writeRetryAttempts = %d", hs.writeRetryAttempts)
 	}
@@ -70,6 +78,8 @@ func TestNewHelixStoreAppliesTimeoutAndWriteRetryOptions(t *testing.T) {
 func TestNewHelixStoreRejectsNegativeRuntimeOptions(t *testing.T) {
 	cases := []HelixOptions{
 		{URL: "http://localhost:6969", Timeout: -time.Second},
+		{URL: "http://localhost:6969", ReadRetryAttempts: -1},
+		{URL: "http://localhost:6969", ReadRetryBackoff: -time.Millisecond},
 		{URL: "http://localhost:6969", WriteRetryAttempts: -1},
 		{URL: "http://localhost:6969", WriteRetryBackoff: -time.Millisecond},
 	}

@@ -103,6 +103,8 @@ store:
     api_key_env: HELIX_API_KEY
     project_id: my-repo
     timeout: 30s
+    read_retry_attempts: 2
+    read_retry_backoff: 50ms
     write_retry_attempts: 3
     write_retry_backoff: 50ms
 embedding:
@@ -139,7 +141,8 @@ profiles, embedding migration, HTTP/MCP, and smoke validation, see `ai-docs/cook
 SQLite is the default storage backend; `store.backend: helix` enables the HelixDB-backed store.
 If no Helix URL is configured, the Helix Go SDK uses its local default endpoint (`http://localhost:6969`).
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.
-Helix HTTP timeout and write-conflict retry behavior are configurable with `store.helix.timeout`,
+Helix HTTP timeout plus read/write retry behavior are configurable with `store.helix.timeout`,
+`store.helix.read_retry_attempts`, `store.helix.read_retry_backoff`,
 `store.helix.write_retry_attempts`, and `store.helix.write_retry_backoff` or the matching CLI/MCP flags.
 For Helix runtime validation, prefer a dedicated temporary instance and run:
 `HELIX_URL=http://localhost:6970 HELIX_PROJECT_ID=code-context-smoke scripts/helix-smoke.sh`.

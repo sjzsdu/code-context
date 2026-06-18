@@ -23,34 +23,36 @@ import (
 )
 
 var (
-	root                string
-	db                  string
-	storeBackend        string
-	helixURL            string
-	helixAPIKey         string
-	helixAPIKeyEnv      string
-	helixProjectID      string
-	helixTimeout        time.Duration
-	helixRetryAttempts  int
-	helixRetryBackoff   time.Duration
-	embeddingProvider   string
-	embeddingBaseURL    string
-	embeddingAPIKey     string
-	embeddingAPIKeyEnv  string
-	embeddingModel      string
-	embeddingDimensions int
-	embeddingTimeout    time.Duration
-	embeddingBatchSize  int
-	answerProvider      string
-	answerBaseURL       string
-	answerAPIKey        string
-	answerAPIKeyEnv     string
-	answerModel         string
-	answerReranker      string
-	answerTimeout       time.Duration
-	answerMaxTokens     int
-	answerTemperature   float64
-	answerProfiles      []engine.AnswerProfileInfo
+	root                   string
+	db                     string
+	storeBackend           string
+	helixURL               string
+	helixAPIKey            string
+	helixAPIKeyEnv         string
+	helixProjectID         string
+	helixTimeout           time.Duration
+	helixReadRetryAttempts int
+	helixReadRetryBackoff  time.Duration
+	helixRetryAttempts     int
+	helixRetryBackoff      time.Duration
+	embeddingProvider      string
+	embeddingBaseURL       string
+	embeddingAPIKey        string
+	embeddingAPIKeyEnv     string
+	embeddingModel         string
+	embeddingDimensions    int
+	embeddingTimeout       time.Duration
+	embeddingBatchSize     int
+	answerProvider         string
+	answerBaseURL          string
+	answerAPIKey           string
+	answerAPIKeyEnv        string
+	answerModel            string
+	answerReranker         string
+	answerTimeout          time.Duration
+	answerMaxTokens        int
+	answerTemperature      float64
+	answerProfiles         []engine.AnswerProfileInfo
 )
 
 type GraphArgs struct {
@@ -204,8 +206,10 @@ func main() {
 	flag.StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	flag.StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
 	flag.DurationVar(&helixTimeout, "helix-timeout", 0, "HelixDB HTTP request timeout")
-	flag.IntVar(&helixRetryAttempts, "helix-write-retry-attempts", 0, "HelixDB write conflict attempts including the initial attempt")
-	flag.DurationVar(&helixRetryBackoff, "helix-write-retry-backoff", 0, "HelixDB write conflict retry base backoff")
+	flag.IntVar(&helixReadRetryAttempts, "helix-read-retry-attempts", 0, "HelixDB read transient-error attempts including the initial attempt")
+	flag.DurationVar(&helixReadRetryBackoff, "helix-read-retry-backoff", 0, "HelixDB read transient-error retry base backoff")
+	flag.IntVar(&helixRetryAttempts, "helix-write-retry-attempts", 0, "HelixDB write conflict/transient-error attempts including the initial attempt")
+	flag.DurationVar(&helixRetryBackoff, "helix-write-retry-backoff", 0, "HelixDB write conflict/transient-error retry base backoff")
 	flag.StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider (none|openai|openai-compatible; default: none)")
 	flag.StringVar(&embeddingBaseURL, "embedding-base-url", "", "embedding API base URL")
 	flag.StringVar(&embeddingAPIKey, "embedding-api-key", "", "embedding API key")
@@ -308,6 +312,12 @@ func applyConfigDefaults() {
 	if !visited["helix-timeout"] && loaded.Config.Store.Helix.Timeout > 0 {
 		helixTimeout = loaded.Config.Store.Helix.Timeout
 	}
+	if !visited["helix-read-retry-attempts"] && loaded.Config.Store.Helix.ReadRetryAttempts > 0 {
+		helixReadRetryAttempts = loaded.Config.Store.Helix.ReadRetryAttempts
+	}
+	if !visited["helix-read-retry-backoff"] && loaded.Config.Store.Helix.ReadRetryBackoff > 0 {
+		helixReadRetryBackoff = loaded.Config.Store.Helix.ReadRetryBackoff
+	}
 	if !visited["helix-write-retry-attempts"] && loaded.Config.Store.Helix.WriteRetryAttempts > 0 {
 		helixRetryAttempts = loaded.Config.Store.Helix.WriteRetryAttempts
 	}
@@ -377,6 +387,8 @@ func mcpStoreOptions() store.Options {
 			APIKeyEnv:          helixAPIKeyEnv,
 			ProjectID:          helixProjectID,
 			Timeout:            helixTimeout,
+			ReadRetryAttempts:  helixReadRetryAttempts,
+			ReadRetryBackoff:   helixReadRetryBackoff,
 			WriteRetryAttempts: helixRetryAttempts,
 			WriteRetryBackoff:  helixRetryBackoff,
 		},

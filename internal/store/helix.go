@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -39,16 +40,28 @@ const (
 )
 
 type helixStore struct {
-	client             *helix.Client
+	client             helixExecutor
 	projectID          string
 	requestTimeout     time.Duration
+	readRetryAttempts  int
+	readRetryBackoff   time.Duration
 	writeRetryAttempts int
 	writeRetryBackoff  time.Duration
+}
+
+type helixExecutor interface {
+	Exec(ctx context.Context, req helix.Request, out any, opts ...helix.ExecOption) error
 }
 
 func NewHelixStore(opts HelixOptions) (Store, error) {
 	if opts.Timeout < 0 {
 		return nil, fmt.Errorf("helix timeout must be non-negative")
+	}
+	if opts.ReadRetryAttempts < 0 {
+		return nil, fmt.Errorf("helix read retry attempts must be non-negative")
+	}
+	if opts.ReadRetryBackoff < 0 {
+		return nil, fmt.Errorf("helix read retry backoff must be non-negative")
 	}
 	if opts.WriteRetryAttempts < 0 {
 		return nil, fmt.Errorf("helix write retry attempts must be non-negative")
@@ -75,6 +88,14 @@ func NewHelixStore(opts HelixOptions) (Store, error) {
 	if projectID == "" {
 		projectID = "default"
 	}
+	readRetryAttempts := opts.ReadRetryAttempts
+	if readRetryAttempts <= 0 {
+		readRetryAttempts = 2
+	}
+	readRetryBackoff := opts.ReadRetryBackoff
+	if readRetryBackoff <= 0 {
+		readRetryBackoff = 50 * time.Millisecond
+	}
 	writeRetryAttempts := opts.WriteRetryAttempts
 	if writeRetryAttempts <= 0 {
 		writeRetryAttempts = 3
@@ -87,6 +108,8 @@ func NewHelixStore(opts HelixOptions) (Store, error) {
 		client:             client,
 		projectID:          projectID,
 		requestTimeout:     opts.Timeout,
+		readRetryAttempts:  readRetryAttempts,
+		readRetryBackoff:   readRetryBackoff,
 		writeRetryAttempts: writeRetryAttempts,
 		writeRetryBackoff:  writeRetryBackoff,
 	}, nil
@@ -240,7 +263,7 @@ func (s *helixStore) GetFile(ctx context.Context, path string) (*api.FileInfo, e
 	q := helix.ReadQuery("code_context_get_file")
 	keyParam := q.ParamString("key", helixKey(s.projectID, path))
 	req := q.VarAs("files", fileTraversal().Where(helix.PredEq("key", keyParam)).Limit(1).Project(fileProjections()...)).Returning("files")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 	if len(out.Files.Properties) == 0 {
@@ -278,7 +301,7 @@ func (s *helixStore) ListFiles(ctx context.Context, lang *api.Language) ([]*api.
 	if lang != nil {
 		tr = tr.Where(helix.PredEq("language", q.ParamString("language", string(*lang))))
 	}
-	if err := s.client.Exec(ctx, q.VarAs("files", tr.Project(fileProjections()...)).Returning("files"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("files", tr.Project(fileProjections()...)).Returning("files"), &out); err != nil {
 		return nil, err
 	}
 	result := make([]*api.FileInfo, 0, len(out.Files.Properties))
@@ -358,7 +381,7 @@ func (s *helixStore) SearchSymbols(ctx context.Context, query string, kind *api.
 	var out struct {
 		Symbols helixRows[api.Symbol] `json:"symbols"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("symbols", tr.Project(symbolProjections()...)).Returning("symbols"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("symbols", tr.Project(symbolProjections()...)).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
 	symbols := out.Symbols.Properties
@@ -386,7 +409,7 @@ func (s *helixStore) SearchText(ctx context.Context, query TextSearchQuery) ([]S
 		Symbols   helixRows[helixTextSymbolRow]   `json:"symbols"`
 		Documents helixRows[helixTextDocumentRow] `json:"documents"`
 	}
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 
@@ -419,7 +442,7 @@ func (s *helixStore) GetEmbedding(ctx context.Context, key string) (*EmbeddingCa
 		Limit(1).
 		Project(helixEmbeddingChunkProjections()...)).
 		Returning("chunks")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 	if len(out.Chunks.Properties) == 0 {
@@ -559,7 +582,7 @@ func (s *helixStore) ListEmbeddingNamespaces(ctx context.Context) ([]EmbeddingNa
 		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
 		Project(helixEmbeddingChunkProjections()...)).
 		Returning("chunks")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 
@@ -613,7 +636,7 @@ func (s *helixStore) SearchVector(ctx context.Context, query VectorSearchQuery) 
 	var out struct {
 		Chunks helixRows[helixVectorChunkRow] `json:"chunks"`
 	}
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 	hits := helixVectorRowsToHits(s.projectID, out.Chunks.Properties, query.Filter)
@@ -1171,7 +1194,7 @@ func (s *helixStore) FindDefinitions(ctx context.Context, name string) ([]api.Sy
 	var out struct {
 		Symbols helixRows[api.Symbol] `json:"symbols"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
 	symbols := out.Symbols.Properties
@@ -1189,7 +1212,7 @@ func (s *helixStore) FindReferences(ctx context.Context, name string) ([]api.Sym
 		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
 		Where(helix.PredEq("name", nameParam)).
 		Project(symbolProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
 	symbols := out.Symbols.Properties
@@ -1208,7 +1231,7 @@ func (s *helixStore) GetFileSymbols(ctx context.Context, path string) ([]api.Sym
 		Where(helix.PredEq("file_path", pathParam)).
 		OrderBy("line", helix.OrderAsc).
 		Project(symbolProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("symbols", tr).Returning("symbols"), &out); err != nil {
 		return nil, err
 	}
 	return out.Symbols.Properties, nil
@@ -1225,7 +1248,7 @@ func (s *helixStore) GetImports(ctx context.Context, filePath string) ([]api.Imp
 		Where(helix.PredEq("file_path", fileParam)).
 		OrderBy("line", helix.OrderAsc).
 		Project(importProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("imports", tr).Returning("imports"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("imports", tr).Returning("imports"), &out); err != nil {
 		return nil, err
 	}
 	return out.Imports.Properties, nil
@@ -1241,7 +1264,7 @@ func (s *helixStore) GetImporters(ctx context.Context, importSource string) ([]a
 		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
 		Where(helix.PredContainsExpr("source", sourceParam.Expr())).
 		Project(importProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("imports", tr).Returning("imports"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("imports", tr).Returning("imports"), &out); err != nil {
 		return nil, err
 	}
 	return out.Imports.Properties, nil
@@ -1258,7 +1281,7 @@ func (s *helixStore) GetCallees(ctx context.Context, fromSymbol string) ([]api.C
 		Where(helix.PredEq("from_symbol", fromParam)).
 		OrderBy("line", helix.OrderAsc).
 		Project(callProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("calls", tr).Returning("calls"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("calls", tr).Returning("calls"), &out); err != nil {
 		return nil, err
 	}
 	return out.Calls.Properties, nil
@@ -1274,7 +1297,7 @@ func (s *helixStore) GetCallers(ctx context.Context, toName string) ([]api.CallE
 		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
 		Where(helix.PredContainsExpr("to_name", toParam.Expr())).
 		Project(callProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("calls", tr).Returning("calls"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("calls", tr).Returning("calls"), &out); err != nil {
 		return nil, err
 	}
 	calls := out.Calls.Properties
@@ -1309,7 +1332,7 @@ func (s *helixStore) ListRoutes(ctx context.Context, query string) ([]api.Route,
 	var out struct {
 		Routes helixRows[api.Route] `json:"routes"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("routes", tr.Project(routeProjections()...)).Returning("routes"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("routes", tr.Project(routeProjections()...)).Returning("routes"), &out); err != nil {
 		return nil, err
 	}
 	routes := out.Routes.Properties
@@ -1337,7 +1360,7 @@ func (s *helixStore) Stats(ctx context.Context) (*api.IndexStats, error) {
 		VarAs("imports", helix.G().NWithLabel(helixImportLabel).Where(helix.PredEq("project_id", projectParam)).Count()).
 		VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("project_id", projectParam)).Count()).
 		Returning("files", "symbols", "imports", "documents")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 	files, err := s.ListFiles(ctx, nil)
@@ -1445,7 +1468,7 @@ func (s *helixStore) GetDocument(ctx context.Context, path string) (*api.Documen
 	var out struct {
 		Documents helixRows[api.Document] `json:"documents"`
 	}
-	if err := s.client.Exec(ctx, q.VarAs("documents", documentTraversal().Where(helix.PredEq("key", keyParam)).Limit(1).Project(documentProjections()...)).Returning("documents"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("documents", documentTraversal().Where(helix.PredEq("key", keyParam)).Limit(1).Project(documentProjections()...)).Returning("documents"), &out); err != nil {
 		return nil, err
 	}
 	if len(out.Documents.Properties) == 0 {
@@ -1477,7 +1500,7 @@ func (s *helixStore) ListDocuments(ctx context.Context) ([]*api.Document, error)
 		Documents helixRows[api.Document] `json:"documents"`
 	}
 	tr := documentTraversal().Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Project(documentProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("documents", tr).Returning("documents"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("documents", tr).Returning("documents"), &out); err != nil {
 		return nil, err
 	}
 	result := make([]*api.Document, 0, len(out.Documents.Properties))
@@ -1518,7 +1541,7 @@ func (s *helixStore) GetDocumentLinks(ctx context.Context, docPath string) ([]ap
 		Where(helix.PredEq("document_path", pathParam)).
 		OrderBy("line", helix.OrderAsc).
 		Project(documentLinkProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("links", tr).Returning("links"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("links", tr).Returning("links"), &out); err != nil {
 		return nil, err
 	}
 	return out.Links.Properties, nil
@@ -1534,7 +1557,7 @@ func (s *helixStore) GetDocumentsByTarget(ctx context.Context, targetType, targe
 		Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).
 		Where(helix.PredEq("target_key", targetKey)).
 		Project(documentLinkProjections()...)
-	if err := s.client.Exec(ctx, q.VarAs("links", tr).Returning("links"), &out); err != nil {
+	if err := s.execRead(ctx, q.VarAs("links", tr).Returning("links"), &out); err != nil {
 		return nil, err
 	}
 	return out.Links.Properties, nil
@@ -1546,7 +1569,7 @@ func (s *helixStore) GetDocumentStats(ctx context.Context) (total, indexed int, 
 	}
 	q := helix.ReadQuery("code_context_document_stats")
 	req := q.VarAs("documents", helix.G().NWithLabel(helixDocumentLabel).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Count()).Returning("documents")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return 0, 0, err
 	}
 	return out.Documents.Count, out.Documents.Count, nil
@@ -1573,7 +1596,7 @@ func (s *helixStore) getFileByID(ctx context.Context, id int64) (*api.FileInfo, 
 	req := q.
 		VarAs("files", helix.G().N(helix.NodeID(uint64(id))).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Project(fileProjections()...)).
 		Returning("files")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 	if len(out.Files.Properties) == 0 {
@@ -1590,7 +1613,7 @@ func (s *helixStore) getDocumentByID(ctx context.Context, id int64) (*api.Docume
 	req := q.
 		VarAs("documents", helix.G().N(helix.NodeID(uint64(id))).Where(helix.PredEq("project_id", q.ParamString("project_id", s.projectID))).Project(documentProjections()...)).
 		Returning("documents")
-	if err := s.client.Exec(ctx, req, &out); err != nil {
+	if err := s.execRead(ctx, req, &out); err != nil {
 		return nil, err
 	}
 	if len(out.Documents.Properties) == 0 {
@@ -1600,18 +1623,34 @@ func (s *helixStore) getDocumentByID(ctx context.Context, id int64) (*api.Docume
 }
 
 func (s *helixStore) execWrite(ctx context.Context, build func() helix.Request, out any) error {
-	var err error
-	attempts := s.writeRetryAttempts
+	return helixExecWithRetry(ctx, s.writeRetryAttempts, s.writeRetryBackoff, func() error {
+		return s.client.Exec(ctx, build(), out, helix.WriterOnly(), helix.AwaitDurability(true))
+	}, helixShouldRetryWrite)
+}
+
+func (s *helixStore) execRead(ctx context.Context, req helix.Request, out any) error {
+	return helixExecWithRetry(ctx, s.readRetryAttempts, s.readRetryBackoff, func() error {
+		return s.client.Exec(ctx, req, out)
+	}, helixShouldRetryRead)
+}
+
+func helixExecWithRetry(ctx context.Context, attempts int, backoff time.Duration, exec func() error, shouldRetry func(error) bool) error {
 	if attempts <= 0 {
 		attempts = 1
 	}
-	backoff := s.writeRetryBackoff
 	if backoff < 0 {
 		backoff = 0
 	}
+	var err error
 	for attempt := 0; attempt < attempts; attempt++ {
-		err = s.client.Exec(ctx, build(), out, helix.WriterOnly(), helix.AwaitDurability(true))
-		if err == nil || !helix.IsConflict(err) || attempt == attempts-1 {
+		err = exec()
+		if err == nil {
+			return nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if attempt == attempts-1 || shouldRetry == nil || !shouldRetry(err) {
 			return err
 		}
 		if backoff == 0 {
@@ -1624,6 +1663,37 @@ func (s *helixStore) execWrite(ctx context.Context, build func() helix.Request, 
 		}
 	}
 	return err
+}
+
+func helixShouldRetryRead(err error) bool {
+	return helixIsTransient(err)
+}
+
+func helixShouldRetryWrite(err error) bool {
+	return helix.IsConflict(err) || helixIsTransient(err)
+}
+
+func helixIsTransient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var helixErr *helix.HelixError
+	if !errors.As(err, &helixErr) {
+		return false
+	}
+	switch helixErr.Kind {
+	case helix.ErrorNetwork:
+		return true
+	case helix.ErrorRemote:
+		switch helixErr.StatusCode {
+		case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 type idRow struct {

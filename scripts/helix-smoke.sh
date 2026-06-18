@@ -241,6 +241,8 @@ run_code_context_model() {
     --helix-url "$HELIX_URL" \
     --helix-project-id "$HELIX_PROJECT_ID" \
     --helix-timeout 20s \
+    --helix-read-retry-attempts 3 \
+    --helix-read-retry-backoff 25ms \
     --helix-write-retry-attempts 4 \
     --helix-write-retry-backoff 25ms \
     --embedding-provider openai-compatible \

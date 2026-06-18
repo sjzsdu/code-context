@@ -1087,7 +1087,7 @@ func TestConfigInspectCmdPrintsMergedConfigAndSources(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	userConfigPath := filepath.Join(homeDir, ".code-context", "config.yaml")
-	if err := os.WriteFile(userConfigPath, []byte("store:\n  backend: helix\n  helix:\n    timeout: 12s\n    write_retry_attempts: 4\n    write_retry_backoff: 80ms\nserver:\n  port: 7070\n"), 0o644); err != nil {
+	if err := os.WriteFile(userConfigPath, []byte("store:\n  backend: helix\n  helix:\n    timeout: 12s\n    read_retry_attempts: 3\n    read_retry_backoff: 40ms\n    write_retry_attempts: 4\n    write_retry_backoff: 80ms\nserver:\n  port: 7070\n"), 0o644); err != nil {
 		t.Fatalf("write user config: %v", err)
 	}
 	projectConfigPath := filepath.Join(projectDir, ".code-context", "config.yaml")
@@ -1115,6 +1115,8 @@ func TestConfigInspectCmdPrintsMergedConfigAndSources(t *testing.T) {
 				Backend string `json:"backend"`
 				Helix   struct {
 					Timeout            time.Duration `json:"timeout"`
+					ReadRetryAttempts  int           `json:"read_retry_attempts"`
+					ReadRetryBackoff   time.Duration `json:"read_retry_backoff"`
 					WriteRetryAttempts int           `json:"write_retry_attempts"`
 					WriteRetryBackoff  time.Duration `json:"write_retry_backoff"`
 				} `json:"helix"`
@@ -1139,6 +1141,12 @@ func TestConfigInspectCmdPrintsMergedConfigAndSources(t *testing.T) {
 	}
 	if decoded.Config.Store.Helix.Timeout != 12*time.Second {
 		t.Fatalf("store.helix.timeout = %s", decoded.Config.Store.Helix.Timeout)
+	}
+	if decoded.Config.Store.Helix.ReadRetryAttempts != 3 {
+		t.Fatalf("store.helix.read_retry_attempts = %d", decoded.Config.Store.Helix.ReadRetryAttempts)
+	}
+	if decoded.Config.Store.Helix.ReadRetryBackoff != 40*time.Millisecond {
+		t.Fatalf("store.helix.read_retry_backoff = %s", decoded.Config.Store.Helix.ReadRetryBackoff)
 	}
 	if decoded.Config.Store.Helix.WriteRetryAttempts != 4 {
 		t.Fatalf("store.helix.write_retry_attempts = %d", decoded.Config.Store.Helix.WriteRetryAttempts)
