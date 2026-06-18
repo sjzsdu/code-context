@@ -559,6 +559,26 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestProviderDiagnosticsEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := http.Get(ts.URL + "/api/provider-diagnostics")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload api.ProviderDiagnosticsReport
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !payload.OK || len(payload.Checks) != 2 {
+		t.Fatalf("expected ok provider diagnostics, got %+v", payload)
+	}
+}
+
 func TestEmbeddingPlanEndpoint(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

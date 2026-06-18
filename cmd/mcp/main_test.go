@@ -180,6 +180,21 @@ func TestRunEmbeddingPlanToolDisabled(t *testing.T) {
 	}
 }
 
+func TestRunProviderDiagnosticsTool(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runProviderDiagnosticsTool(context.Background(), eng)
+	if err != nil {
+		t.Fatalf("run provider diagnostics: %v", err)
+	}
+	if !strings.Contains(out, "\"ok\": true") ||
+		!strings.Contains(out, "\"kind\": \"embedding\"") ||
+		!strings.Contains(out, "\"kind\": \"answer\"") {
+		t.Fatalf("expected provider diagnostics output, got:\n%s", out)
+	}
+}
+
 func TestRunHybridSearchTool(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()

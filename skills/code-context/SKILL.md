@@ -53,6 +53,7 @@ code-context embedding-namespaces
 code-context embedding-prune --model text-embedding-old --dimensions 768  # dry run
 code-context embedding-backfill          # dry run
 code-context embedding-backfill --apply  # writes cache entries
+code-context provider-doctor
 
 # 5. Search provider-backed vectors when Helix + embeddings are configured
 code-context vector-search "handler health check"
@@ -502,6 +503,7 @@ Start server: `code-context serve --port 9090`
 | POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | | List built-in provider-neutral answer workflow profiles |
+| GET | `/api/provider-diagnostics` | | Local embedding/answer provider configuration checks |
 
 ### Symbol Endpoints
 
@@ -572,6 +574,7 @@ Use MCP server to expose code-context capabilities to AI agents (Claude Desktop,
 - `GET /api/graph/subgraph?target=...&depth=...` — focused local graph
 - `POST /api/graph/traverse` — provider-backed graph traversal with `GraphTraversalQuery`
 - `POST /api/answer` — provider-neutral RAG context/answer endpoint (`context_only` avoids external model calls)
+- `GET /api/provider-diagnostics` — local embedding/answer provider configuration checks
 - `GET /api/stats` — index stats with version metadata
 - `GET /api/status` — workflow/service status with provider capabilities and watch metadata
 - `GET /api/embedding-status` — embedding lifecycle summary with recommendations

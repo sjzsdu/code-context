@@ -135,6 +135,7 @@ func main() {
 		newEmbeddingPruneCmd(),
 		newFreshnessCmd(),
 		newDoctorCmd(),
+		newProviderDoctorCmd(),
 		newCICmd(),
 		newRebuildCmd(),
 		newMapCmd(),
@@ -782,6 +783,50 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON report")
+	return cmd
+}
+
+func newProviderDoctorCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "provider-doctor",
+		Short: "Check embedding and answer provider configuration without network calls",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			eng, err := newEngine()
+			if err != nil {
+				return err
+			}
+			defer eng.Close()
+			report, err := eng.ProviderDiagnostics(context.Background())
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(report)
+			}
+			fmt.Println(report.Summary)
+			for _, c := range report.Checks {
+				fmt.Printf("  [%s] %s", c.Status, c.Kind)
+				if c.Provider != "" {
+					fmt.Printf(" provider=%s", c.Provider)
+				}
+				if c.Model != "" {
+					fmt.Printf(" model=%s", c.Model)
+				}
+				if c.BaseURL != "" {
+					fmt.Printf(" base_url=%s", c.BaseURL)
+				}
+				fmt.Printf(": %s\n", c.Message)
+				for _, action := range c.Actions {
+					fmt.Printf("    - %s\n", action)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON provider diagnostics")
 	return cmd
 }
 

@@ -568,6 +568,17 @@ code-context status
 Shows root/database metadata, graph version, provider capabilities, index version, last indexed time,
 and current watch refresh state.
 
+### `provider-doctor` — Check provider configuration
+
+```bash
+code-context provider-doctor
+code-context provider-doctor --json
+```
+
+Runs deterministic local checks for embedding and answer provider configuration without making
+network calls or exposing secrets. It reports disabled providers, missing hosted API keys, resolved
+models/base URLs, and suggested follow-up actions.
+
 ### `freshness` / `doctor` / `rebuild` — Index health and repair
 
 ```bash
@@ -756,6 +767,7 @@ Start the server with `code-context serve`, then:
 | POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources` and provider-backed `grounding` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | — | List built-in provider-neutral answer workflow profiles |
+| GET | `/api/provider-diagnostics` | — | Check embedding and answer provider configuration without network calls |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

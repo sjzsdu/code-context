@@ -31,6 +31,7 @@ type Engine struct {
 	store       store.Store
 	embedder    store.Embedder
 	answerer    store.Answerer
+	options     Options
 	parser      parser.Parser
 	indexer     *indexer.Indexer
 	search      *search.Searcher
@@ -122,6 +123,7 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 		store:    s,
 		embedder: embedder,
 		answerer: answerer,
+		options:  opts,
 		parser:   p,
 		indexer:  idx,
 		search:   sr,
@@ -3341,6 +3343,112 @@ func (e *Engine) answerStatus() *api.AnswerStatus {
 	}
 }
 
+func (e *Engine) ProviderDiagnostics(ctx context.Context) (*api.ProviderDiagnosticsReport, error) {
+	checks := []api.ProviderConfigCheck{
+		e.embeddingProviderCheck(),
+		e.answerProviderCheck(),
+	}
+	ok := true
+	warns := 0
+	for _, check := range checks {
+		switch check.Status {
+		case "error":
+			ok = false
+		case "warn":
+			warns++
+		}
+	}
+	summary := "provider configuration ok"
+	if !ok {
+		summary = "provider configuration has errors"
+	} else if warns > 0 {
+		summary = fmt.Sprintf("provider configuration ok with %d warnings", warns)
+	}
+	return &api.ProviderDiagnosticsReport{OK: ok, Summary: summary, Checks: checks}, nil
+}
+
+func (e *Engine) embeddingProviderCheck() api.ProviderConfigCheck {
+	opts := e.options.Embedding
+	provider := opts.ProviderOrDefault()
+	check := api.ProviderConfigCheck{
+		Kind:     "embedding",
+		Provider: provider,
+		Status:   "ok",
+	}
+	if provider == embeddingpkg.ProviderNone {
+		check.Enabled = false
+		check.Message = "embedding provider disabled"
+		check.Actions = []string{"set --embedding-provider openai-compatible with --embedding-base-url and --embedding-model to enable vector search"}
+		return check
+	}
+	if e.embedder == nil {
+		check.Status = "error"
+		check.Message = "embedding provider configured but not available"
+		check.Actions = []string{"run code-context config inspect", "verify embedding provider settings"}
+		return check
+	}
+	info := e.embedder.EmbeddingModel()
+	check.Enabled = true
+	check.Provider = info.Provider
+	check.Model = info.Model
+	check.BaseURL = info.BaseURL
+	check.Message = fmt.Sprintf("embedding provider %s model=%s", info.Provider, info.Model)
+	if provider == embeddingpkg.ProviderOpenAI && strings.TrimSpace(opts.ResolvedAPIKey()) == "" {
+		check.Status = "error"
+		check.Message = "OpenAI embedding provider requires an API key"
+		check.Actions = []string{"set --embedding-api-key-env OPENAI_API_KEY or --embedding-api-key"}
+		return check
+	}
+	if provider == embeddingpkg.ProviderOpenAICompatible && strings.TrimSpace(opts.ResolvedAPIKey()) == "" {
+		check.Status = "warn"
+		check.Message = "openai-compatible embedding provider has no API key; assuming local or unauthenticated endpoint"
+		check.Actions = []string{"set --embedding-api-key or --embedding-api-key-env if the endpoint requires authentication"}
+		return check
+	}
+	return check
+}
+
+func (e *Engine) answerProviderCheck() api.ProviderConfigCheck {
+	opts := e.options.Answer
+	provider := opts.ProviderOrDefault()
+	check := api.ProviderConfigCheck{
+		Kind:     "answer",
+		Provider: provider,
+		Status:   "ok",
+	}
+	if provider == answerpkg.ProviderNone {
+		check.Enabled = false
+		check.Message = "answer provider disabled"
+		check.Actions = []string{"set --answer-provider openai-compatible with --answer-base-url and --answer-model to enable provider-backed answers"}
+		return check
+	}
+	if e.answerer == nil {
+		check.Status = "error"
+		check.Message = "answer provider configured but not available"
+		check.Actions = []string{"run code-context config inspect", "verify answer provider settings"}
+		return check
+	}
+	info := e.answerer.AnswerModel()
+	check.Enabled = true
+	check.Provider = info.Provider
+	check.Model = info.Model
+	check.BaseURL = info.BaseURL
+	check.Message = fmt.Sprintf("answer provider %s model=%s", info.Provider, info.Model)
+	if provider == answerpkg.ProviderOpenAI && strings.TrimSpace(opts.ResolvedAPIKey()) == "" {
+		check.Status = "error"
+		check.Message = "OpenAI answer provider requires an API key"
+		check.Actions = []string{"set --answer-api-key-env OPENAI_API_KEY or --answer-api-key"}
+		return check
+	}
+	if provider == answerpkg.ProviderOpenAICompatible && strings.TrimSpace(opts.ResolvedAPIKey()) == "" {
+		check.Status = "warn"
+		check.Message = "openai-compatible answer provider has no API key; assuming local or unauthenticated endpoint"
+		check.Actions = []string{"set --answer-api-key or --answer-api-key-env if the endpoint requires authentication"}
+		return check
+	}
+	return check
+}
+
 type EmbeddingPlan struct {
 	Enabled          bool                     `json:"enabled"`
 	CacheSupported   bool                     `json:"cache_supported"`
@@ -3969,6 +4077,14 @@ func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
 	} else {
 		add("freshness", "ok", freshness.Summary)
 	}
+	providers, providerErr := e.ProviderDiagnostics(ctx)
+	if providerErr != nil {
+		add("providers", "error", providerErr.Error())
+	} else {
+		for _, check := range providers.Checks {
+			add(check.Kind+"_provider", check.Status, check.Message)
+		}
+	}
 	ok := true
 	warns := 0
 	for _, c := range checks {
@@ -3985,7 +4101,7 @@ func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
 	} else if warns > 0 {
 		summary = fmt.Sprintf("doctor passed with %d warnings", warns)
 	}
-	return &api.DoctorReport{OK: ok, Summary: summary, Root: e.root, DatabasePath: e.dbPath, Schema: *schema, Freshness: freshness, Index: stats, Checks: checks}, nil
+	return &api.DoctorReport{OK: ok, Summary: summary, Root: e.root, DatabasePath: e.dbPath, Schema: *schema, Freshness: freshness, Index: stats, Providers: providers, Checks: checks}, nil
 }
 
 func (e *Engine) Rebuild(ctx context.Context, verbose bool) (*api.IndexStats, error) {

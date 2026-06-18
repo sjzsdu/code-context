@@ -144,6 +144,63 @@ func TestStatusIncludesAnswerCapability(t *testing.T) {
 	}
 }
 
+func TestProviderDiagnosticsDisabled(t *testing.T) {
+	root := t.TempDir()
+	eng, err := New(root, filepath.Join(root, "index.db"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer eng.Close()
+
+	report, err := eng.ProviderDiagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("ProviderDiagnostics: %v", err)
+	}
+	if !report.OK || len(report.Checks) != 2 {
+		t.Fatalf("report = %#v, want ok disabled provider checks", report)
+	}
+	for _, check := range report.Checks {
+		if check.Enabled || check.Status != "ok" || len(check.Actions) == 0 {
+			t.Fatalf("check = %#v, want disabled ok check with action", check)
+		}
+	}
+}
+
+func TestProviderDiagnosticsReportsOpenAIAPIKeyErrors(t *testing.T) {
+	root := t.TempDir()
+	eng, err := NewWithOptions(root, Options{
+		Store: store.Options{
+			Backend: store.BackendSQLite,
+			SQLite:  store.SQLiteOptions{Path: filepath.Join(root, "index.db")},
+		},
+		Embedding: embeddingpkg.Options{
+			Provider: embeddingpkg.ProviderOpenAI,
+			Model:    "text-embedding-test",
+		},
+		Answer: answerpkg.Options{
+			Provider: answerpkg.ProviderOpenAI,
+			Model:    "chat-test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+	defer eng.Close()
+
+	report, err := eng.ProviderDiagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("ProviderDiagnostics: %v", err)
+	}
+	if report.OK {
+		t.Fatalf("report.OK = true, want false for missing OpenAI API keys: %#v", report)
+	}
+	for _, check := range report.Checks {
+		if check.Status != "error" || !strings.Contains(check.Message, "requires an API key") {
+			t.Fatalf("check = %#v, want missing API key error", check)
+		}
+	}
+}
+
 func TestEmbedUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))

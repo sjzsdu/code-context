@@ -419,6 +419,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(out), nil, nil
 		})
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_provider_diagnostics", Description: "Check embedding and answer provider configuration without network calls"},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			out, err := runProviderDiagnosticsTool(ctx, eng)
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_freshness", Description: "Show indexed files/documents that differ from the filesystem"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args FreshnessArgs) (*mcp.CallToolResult, any, error) {
 			limit := args.Limit
@@ -1468,6 +1477,14 @@ func runEmbeddingStatusTool(ctx context.Context, eng *engine.Engine, args Freshn
 		limit = 25
 	}
 	report, err := eng.EmbeddingLifecycle(ctx, limit)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentedJSON(report)
+}
+
+func runProviderDiagnosticsTool(ctx context.Context, eng *engine.Engine) (string, error) {
+	report, err := eng.ProviderDiagnostics(ctx)
 	if err != nil {
 		return "", err
 	}

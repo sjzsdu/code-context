@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/symbol-impact", s.handleSymbolImpact)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/provider-diagnostics", s.handleProviderDiagnostics)
 	mux.HandleFunc("/api/embedding-status", s.handleEmbeddingStatus)
 	mux.HandleFunc("/api/embedding-lifecycle", s.handleEmbeddingStatus)
 	mux.HandleFunc("/api/embedding-plan", s.handleEmbeddingPlan)
@@ -439,6 +440,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, status)
+}
+
+func (s *Server) handleProviderDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, fmt.Errorf("GET only"), http.StatusMethodNotAllowed)
+		return
+	}
+	report, err := s.eng.ProviderDiagnostics(r.Context())
+	if err != nil {
+		writeError(w, err, 500)
+		return
+	}
+	writeJSON(w, report)
 }
 
 func (s *Server) handleEmbeddingStatus(w http.ResponseWriter, r *http.Request) {

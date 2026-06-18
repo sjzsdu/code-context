@@ -286,6 +286,27 @@ type DoctorCheck struct {
 	Message string `json:"message"`
 }
 
+// ProviderConfigCheck reports local provider configuration health without
+// making network calls or exposing secrets.
+type ProviderConfigCheck struct {
+	Kind     string   `json:"kind"`
+	Enabled  bool     `json:"enabled"`
+	Provider string   `json:"provider,omitempty"`
+	Model    string   `json:"model,omitempty"`
+	BaseURL  string   `json:"base_url,omitempty"`
+	Status   string   `json:"status"` // ok, warn, error
+	Message  string   `json:"message"`
+	Actions  []string `json:"actions,omitempty"`
+}
+
+// ProviderDiagnosticsReport summarizes embedding/answer provider configuration
+// health. It is deterministic and local: it does not call external providers.
+type ProviderDiagnosticsReport struct {
+	OK      bool                  `json:"ok"`
+	Summary string                `json:"summary"`
+	Checks  []ProviderConfigCheck `json:"checks"`
+}
+
 // SchemaStatus reports SQLite schema capabilities.
 type SchemaStatus struct {
 	ExpectedVersion string   `json:"expected_version"`
@@ -299,14 +320,15 @@ type SchemaStatus struct {
 
 // DoctorReport summarizes repository/index health.
 type DoctorReport struct {
-	OK           bool             `json:"ok"`
-	Summary      string           `json:"summary"`
-	Root         string           `json:"root"`
-	DatabasePath string           `json:"database_path"`
-	Schema       SchemaStatus     `json:"schema"`
-	Freshness    *FreshnessReport `json:"freshness,omitempty"`
-	Index        *IndexStats      `json:"index,omitempty"`
-	Checks       []DoctorCheck    `json:"checks"`
+	OK           bool                       `json:"ok"`
+	Summary      string                     `json:"summary"`
+	Root         string                     `json:"root"`
+	DatabasePath string                     `json:"database_path"`
+	Schema       SchemaStatus               `json:"schema"`
+	Freshness    *FreshnessReport           `json:"freshness,omitempty"`
+	Index        *IndexStats                `json:"index,omitempty"`
+	Providers    *ProviderDiagnosticsReport `json:"providers,omitempty"`
+	Checks       []DoctorCheck              `json:"checks"`
 }
 
 // Document represents a document file.
