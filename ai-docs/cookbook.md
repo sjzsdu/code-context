@@ -23,6 +23,7 @@ embedding:
 answer:
   provider: none
   reranker: local
+  evaluator: local
 ```
 
 Recommended commands:
@@ -70,6 +71,8 @@ answer:
   model: qwen2.5-coder
   # Use semantic when embedding.provider is configured; local is deterministic/offline.
   reranker: semantic
+  # Use llm when answer.provider is configured and you want semantic judging.
+  evaluator: llm
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -123,6 +126,7 @@ answer:
   api_key_env: ANSWER_API_KEY
   model: gpt-4.1-mini
   reranker: semantic
+  evaluator: llm
   timeout: 60s
   max_tokens: 2048
   temperature: 0.2
@@ -149,9 +153,15 @@ with the configured `Embedder`, reorders hits by semantic similarity, and then a
 dedupe/per-file/context-budget constraints. Use `answer.reranker: local` when no embedding provider
 is configured.
 
+If `answer.evaluator: llm` is configured, `answer --evaluate` asks the configured answer provider for
+a JSON faithfulness/completeness/citation-quality judgment while retaining local deterministic
+guardrails. Use `answer.evaluator: local` when no answer provider is configured or when evaluation
+must stay fully offline.
+
 ```yaml
 answer:
   reranker: semantic
+  evaluator: llm
   profiles:
     - name: project-review
       description: Project review with concise evidence and local gates

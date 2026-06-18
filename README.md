@@ -164,6 +164,7 @@ Supported options:
 | `answer.api_key_env` | string | Environment variable containing the answer API key |
 | `answer.model` | string | Chat/answer model name |
 | `answer.reranker` | string | Answer context reranker: `local` or `semantic` (semantic uses the configured embedder) |
+| `answer.evaluator` | string | Answer evaluator: `local` or `llm` (LLM uses the configured answer provider) |
 | `answer.timeout` | duration | Answer request timeout |
 | `answer.max_tokens` | int | Default max completion tokens |
 | `answer.temperature` | number | Default answer sampling temperature |
@@ -211,6 +212,7 @@ answer:
   # model: qwen2.5-coder
   api_key_env: ANSWER_API_KEY
   reranker: local
+  evaluator: local
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -414,8 +416,10 @@ machine-readable payloads. Provider-backed answers include a local citation grou
 missing/unknown retrieved-source citations into a CLI failure after printing the result.
 `--min-citation-coverage 0.5` can require a minimum cited-source coverage ratio.
 Use `--evaluate` to include a deterministic local answer evaluation report with answer presence,
-evidence-overlap, and citation-grounding checks. `--min-evaluation-score 0.7` turns that local
-evaluation score into a CLI success gate without calling any extra model.
+evidence-overlap, and citation-grounding checks. Set `answer.evaluator: llm` or
+`--answer-evaluator llm` to ask the configured answer provider for a JSON faithfulness,
+completeness, and citation-quality judgment while retaining local guardrails.
+`--min-evaluation-score 0.7` turns the evaluation score into a CLI success gate.
 Use `answer-templates` or `GET /api/answer-templates` to discover available built-in templates.
 Use `answer-profiles` or `GET /api/answer-profiles` to discover built-in and configured workflow profiles.
 
@@ -705,6 +709,7 @@ code-context test-impact --state unstaged
 | `--answer-api-key-env` | | | Environment variable containing the answer API key |
 | `--answer-model` | | | Chat/answer model name |
 | `--answer-reranker` | | `local` | Answer context reranker (`local` or `semantic`) |
+| `--answer-evaluator` | | `local` | Answer evaluator (`local` or `llm`) |
 | `--answer-timeout` | | `60s` | Answer request timeout when provider is enabled |
 | `--answer-max-tokens` | | `1024` | Default answer max completion tokens |
 | `--answer-temperature` | | `0.2` | Default answer sampling temperature |
@@ -789,9 +794,11 @@ a deterministic citation-label audit that reports valid, missing, and uncited so
 `grounding`; `require_citations` or `min_citation_coverage` marks this audit as required for callers
 that want a hard gate. Callers can also set `evaluate` / `--evaluate` to run the built-in local
 `AnswerEvaluator` hook, which scores answer presence, evidence-overlap, and citation grounding under
-`evaluation`; `min_evaluation_score` / `--min-evaluation-score` makes that score a caller-visible
-quality gate. The hook is provider-neutral, so future semantic or LLM judge implementations can plug
-in without changing Answer callers.
+`evaluation`; or set `answer.evaluator: llm` / `--answer-evaluator llm` to use the configured
+answer provider as a faithfulness/completeness/citation-quality judge while keeping local guardrails.
+`min_evaluation_score` / `--min-evaluation-score` makes that score a caller-visible quality gate.
+The hook is provider-neutral, so additional judge implementations can plug in without changing
+Answer callers.
 The built-in
 `openai-compatible` answer adapter posts to
 `{base_url}/chat/completions`; additional answer providers can implement `store.Answerer` without

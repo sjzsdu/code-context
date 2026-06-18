@@ -49,6 +49,7 @@ var (
 	answerAPIKeyEnv        string
 	answerModel            string
 	answerReranker         string
+	answerEvaluator        string
 	answerTimeout          time.Duration
 	answerMaxTokens        int
 	answerTemperature      float64
@@ -224,6 +225,7 @@ func main() {
 	flag.StringVar(&answerAPIKeyEnv, "answer-api-key-env", "", "environment variable containing the answer API key")
 	flag.StringVar(&answerModel, "answer-model", "", "answer model name")
 	flag.StringVar(&answerReranker, "answer-reranker", "", "answer context reranker (local|semantic; default: local)")
+	flag.StringVar(&answerEvaluator, "answer-evaluator", "", "answer evaluator (local|llm; default: local)")
 	flag.DurationVar(&answerTimeout, "answer-timeout", 0, "answer request timeout")
 	flag.IntVar(&answerMaxTokens, "answer-max-tokens", 0, "answer max completion tokens")
 	flag.Float64Var(&answerTemperature, "answer-temperature", 0, "answer sampling temperature")
@@ -232,11 +234,12 @@ func main() {
 
 	// Initialize the engine
 	eng, err := engine.NewWithOptions(root, engine.Options{
-		Store:                  mcpStoreOptions(),
-		Embedding:              mcpEmbeddingOptions(),
-		Answer:                 mcpAnswerOptions(),
-		AnswerRerankerProvider: answerReranker,
-		AnswerProfiles:         answerProfiles,
+		Store:                   mcpStoreOptions(),
+		Embedding:               mcpEmbeddingOptions(),
+		Answer:                  mcpAnswerOptions(),
+		AnswerRerankerProvider:  answerReranker,
+		AnswerEvaluatorProvider: answerEvaluator,
+		AnswerProfiles:          answerProfiles,
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
@@ -365,6 +368,9 @@ func applyConfigDefaults() {
 	}
 	if !visited["answer-reranker"] && loaded.Config.Answer.Reranker != "" {
 		answerReranker = loaded.Config.Answer.Reranker
+	}
+	if !visited["answer-evaluator"] && loaded.Config.Answer.Evaluator != "" {
+		answerEvaluator = loaded.Config.Answer.Evaluator
 	}
 	if !visited["answer-timeout"] && loaded.Config.Answer.Timeout > 0 {
 		answerTimeout = loaded.Config.Answer.Timeout
@@ -637,7 +643,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_context", "code_context_graph_traverse"))), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; use min_context_score/dedupe_context/max_per_file/max_context_chars for retrieval post-processing, require_citations/min_citation_coverage for grounding gates, or evaluate/min_evaluation_score for local answer evaluation"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; use min_context_score/dedupe_context/max_per_file/max_context_chars for retrieval post-processing, require_citations/min_citation_coverage for grounding gates, or evaluate/min_evaluation_score for configured answer evaluation"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 			if strings.TrimSpace(args.Format) == "" {
 				args.Format = "markdown"
@@ -923,7 +929,7 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer",
-		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; use min_context_score/dedupe_context/max_per_file/max_context_chars for retrieval post-processing, require_citations/min_citation_coverage for grounding gates, or evaluate/min_evaluation_score for local answer evaluation",
+		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; use min_context_score/dedupe_context/max_per_file/max_context_chars for retrieval post-processing, require_citations/min_citation_coverage for grounding gates, or evaluate/min_evaluation_score for configured answer evaluation",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 		output, err := runAnswerTool(ctx, eng, args)
 		if err != nil {

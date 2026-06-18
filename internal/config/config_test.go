@@ -96,7 +96,7 @@ func TestLoadStoreConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
 	configPath := filepath.Join(tmpDir, ".code-context.yaml")
-	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\n    timeout: 15s\n    read_retry_attempts: 3\n    read_retry_backoff: 40ms\n    write_retry_attempts: 4\n    write_retry_backoff: 75ms\nembedding:\n  provider: openai-compatible\n  base_url: http://localhost:8080/v1\n  api_key_env: EMBEDDING_API_KEY\n  model: text-embedding-test\n  dimensions: 384\n  timeout: 10s\n  batch_size: 32\nanswer:\n  provider: openai-compatible\n  base_url: http://localhost:8081/v1\n  api_key_env: ANSWER_API_KEY\n  model: chat-test\n  reranker: semantic\n  timeout: 20s\n  max_tokens: 2048\n  temperature: 0.3\n  profiles:\n    - name: custom-review\n      description: Review with local gates\n      template: review\n      filter:\n        target_kinds: [symbol, file]\n        file_pattern: internal/*\n        metadata:\n          layer: core\n      limit: 6\n      text_weight: 0.7\n      vector_weight: 0.2\n      graph_weight: 0.1\n      expand_max_depth: 1\n      min_context_score: 0.2\n      dedupe_context: true\n      max_per_file: 2\n      max_context_chars: 4096\n      max_context_item_chars: 512\n      require_citations: true\n      min_citation_coverage: 0.2\n      evaluate: true\n      min_evaluation_score: 0.6\n")
+	content := []byte("store:\n  backend: helix\n  sqlite:\n    db: ./.cache/index.db\n  helix:\n    url: http://localhost:6969\n    api_key_env: HELIX_API_KEY\n    project_id: custom-project\n    timeout: 15s\n    read_retry_attempts: 3\n    read_retry_backoff: 40ms\n    write_retry_attempts: 4\n    write_retry_backoff: 75ms\nembedding:\n  provider: openai-compatible\n  base_url: http://localhost:8080/v1\n  api_key_env: EMBEDDING_API_KEY\n  model: text-embedding-test\n  dimensions: 384\n  timeout: 10s\n  batch_size: 32\nanswer:\n  provider: openai-compatible\n  base_url: http://localhost:8081/v1\n  api_key_env: ANSWER_API_KEY\n  model: chat-test\n  reranker: semantic\n  evaluator: llm\n  timeout: 20s\n  max_tokens: 2048\n  temperature: 0.3\n  profiles:\n    - name: custom-review\n      description: Review with local gates\n      template: review\n      filter:\n        target_kinds: [symbol, file]\n        file_pattern: internal/*\n        metadata:\n          layer: core\n      limit: 6\n      text_weight: 0.7\n      vector_weight: 0.2\n      graph_weight: 0.1\n      expand_max_depth: 1\n      min_context_score: 0.2\n      dedupe_context: true\n      max_per_file: 2\n      max_context_chars: 4096\n      max_context_item_chars: 512\n      require_citations: true\n      min_citation_coverage: 0.2\n      evaluate: true\n      min_evaluation_score: 0.6\n")
 	if err := os.WriteFile(configPath, content, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -172,6 +172,9 @@ func TestLoadStoreConfig(t *testing.T) {
 	if loaded.Config.Answer.Reranker != "semantic" {
 		t.Fatalf("answer.reranker = %q", loaded.Config.Answer.Reranker)
 	}
+	if loaded.Config.Answer.Evaluator != "llm" {
+		t.Fatalf("answer.evaluator = %q", loaded.Config.Answer.Evaluator)
+	}
 	if loaded.Config.Answer.Timeout != 20*time.Second {
 		t.Fatalf("answer.timeout = %s", loaded.Config.Answer.Timeout)
 	}
@@ -221,13 +224,13 @@ func TestLoadMergesUserAndProjectConfig(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	userConfigPath := filepath.Join(homeDir, ".code-context", "config.yaml")
-	userConfig := []byte("store:\n  backend: helix\n  helix:\n    url: http://user-helix:6969\n    api_key_env: USER_HELIX_KEY\n    timeout: 20s\n    read_retry_attempts: 4\n    read_retry_backoff: 60ms\n    write_retry_attempts: 5\n    write_retry_backoff: 100ms\nembedding:\n  provider: openai-compatible\n  base_url: http://user-embedding/v1\n  model: user-model\n  batch_size: 16\nanswer:\n  provider: openai-compatible\n  base_url: http://user-answer/v1\n  model: user-chat\n  reranker: local\n  max_tokens: 1024\n  profiles:\n    - name: shared-profile\n      description: user shared\n      template: explain\n      limit: 4\n    - name: user-only\n      description: user only\n      template: plan\n      evaluate: true\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 5s\ndocs:\n  fail_on_broken: true\n")
+	userConfig := []byte("store:\n  backend: helix\n  helix:\n    url: http://user-helix:6969\n    api_key_env: USER_HELIX_KEY\n    timeout: 20s\n    read_retry_attempts: 4\n    read_retry_backoff: 60ms\n    write_retry_attempts: 5\n    write_retry_backoff: 100ms\nembedding:\n  provider: openai-compatible\n  base_url: http://user-embedding/v1\n  model: user-model\n  batch_size: 16\nanswer:\n  provider: openai-compatible\n  base_url: http://user-answer/v1\n  model: user-chat\n  reranker: local\n  evaluator: local\n  max_tokens: 1024\n  profiles:\n    - name: shared-profile\n      description: user shared\n      template: explain\n      limit: 4\n    - name: user-only\n      description: user only\n      template: plan\n      evaluate: true\nserver:\n  port: 7070\nwatch:\n  enabled: true\n  interval: 5s\ndocs:\n  fail_on_broken: true\n")
 	if err := os.WriteFile(userConfigPath, userConfig, 0o644); err != nil {
 		t.Fatalf("write user config: %v", err)
 	}
 
 	projectConfigPath := filepath.Join(projectDir, ".code-context", "config.yaml")
-	projectConfig := []byte("root: .\ndb: .code-context/index.db\nstore:\n  helix:\n    project_id: project-a\n    read_retry_attempts: 2\n    write_retry_attempts: 2\nembedding:\n  model: project-model\nanswer:\n  model: project-chat\n  reranker: semantic\n  temperature: 0.1\n  profiles:\n    - name: shared_profile\n      description: project override\n      template: review\n      limit: 8\n    - name: project-only\n      description: project only\n      template: plan\n      max_context_chars: 2048\nserver:\n  port: 9090\nwatch:\n  enabled: false\ndocs:\n  fail_on_broken: false\n")
+	projectConfig := []byte("root: .\ndb: .code-context/index.db\nstore:\n  helix:\n    project_id: project-a\n    read_retry_attempts: 2\n    write_retry_attempts: 2\nembedding:\n  model: project-model\nanswer:\n  model: project-chat\n  reranker: semantic\n  evaluator: llm\n  temperature: 0.1\n  profiles:\n    - name: shared_profile\n      description: project override\n      template: review\n      limit: 8\n    - name: project-only\n      description: project only\n      template: plan\n      max_context_chars: 2048\nserver:\n  port: 9090\nwatch:\n  enabled: false\ndocs:\n  fail_on_broken: false\n")
 	if err := os.WriteFile(projectConfigPath, projectConfig, 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
@@ -302,6 +305,9 @@ func TestLoadMergesUserAndProjectConfig(t *testing.T) {
 	}
 	if loaded.Config.Answer.Reranker != "semantic" {
 		t.Fatalf("answer.reranker = %q", loaded.Config.Answer.Reranker)
+	}
+	if loaded.Config.Answer.Evaluator != "llm" {
+		t.Fatalf("answer.evaluator = %q", loaded.Config.Answer.Evaluator)
 	}
 	if loaded.Config.Answer.MaxTokens != 1024 {
 		t.Fatalf("answer.max_tokens = %d", loaded.Config.Answer.MaxTokens)

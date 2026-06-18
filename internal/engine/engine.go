@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -63,13 +64,14 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 }
 
 type Options struct {
-	Store                  store.Options
-	Embedding              embeddingpkg.Options
-	Answer                 answerpkg.Options
-	AnswerRerankerProvider string
-	AnswerReranker         AnswerReranker
-	AnswerEvaluator        AnswerEvaluator
-	AnswerProfiles         []AnswerProfileInfo
+	Store                   store.Options
+	Embedding               embeddingpkg.Options
+	Answer                  answerpkg.Options
+	AnswerRerankerProvider  string
+	AnswerReranker          AnswerReranker
+	AnswerEvaluatorProvider string
+	AnswerEvaluator         AnswerEvaluator
+	AnswerProfiles          []AnswerProfileInfo
 }
 
 func NewWithOptions(root string, opts Options) (*Engine, error) {
@@ -117,7 +119,11 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 	}
 	evaluator := opts.AnswerEvaluator
 	if evaluator == nil {
-		evaluator = LocalAnswerEvaluator{}
+		evaluator, err = newAnswerEvaluator(opts.AnswerEvaluatorProvider, answerer)
+		if err != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("configure answer evaluator: %w", err)
+		}
 	}
 	reranker := opts.AnswerReranker
 	if reranker == nil {
@@ -1106,6 +1112,15 @@ func AnswerRerankers() []string {
 	return []string{AnswerRerankerLocal, AnswerRerankerSemantic}
 }
 
+const (
+	AnswerEvaluatorLocal = "local"
+	AnswerEvaluatorLLM   = "llm"
+)
+
+func AnswerEvaluators() []string {
+	return []string{AnswerEvaluatorLocal, AnswerEvaluatorLLM}
+}
+
 func AnswerTemplates() []string {
 	infos := AnswerTemplateCatalog(false)
 	names := make([]string, 0, len(infos))
@@ -1423,6 +1438,22 @@ func newAnswerReranker(provider string, embedder store.Embedder) (AnswerReranker
 }
 
 func normalizeAnswerRerankerProvider(provider string) string {
+	return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(provider, "_", "-")))
+}
+
+func newAnswerEvaluator(provider string, answerer store.Answerer) (AnswerEvaluator, error) {
+	provider = normalizeAnswerEvaluatorProvider(provider)
+	switch provider {
+	case "", AnswerEvaluatorLocal:
+		return LocalAnswerEvaluator{}, nil
+	case AnswerEvaluatorLLM:
+		return LLMAnswerEvaluator{Answerer: answerer}, nil
+	default:
+		return nil, fmt.Errorf("unsupported answer evaluator %q (supported: %s)", provider, strings.Join(AnswerEvaluators(), ", "))
+	}
+}
+
+func normalizeAnswerEvaluatorProvider(provider string) string {
 	return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(provider, "_", "-")))
 }
 
@@ -1920,6 +1951,249 @@ func (LocalAnswerEvaluator) EvaluateAnswer(_ context.Context, input AnswerEvalua
 		Summary:   summary,
 		Checks:    checks,
 	}, nil
+}
+
+// LLMAnswerEvaluator asks the configured Answerer to judge faithfulness,
+// completeness, and citation quality while preserving local deterministic
+// guardrails. It depends only on the provider-neutral Answerer interface.
+type LLMAnswerEvaluator struct {
+	Answerer store.Answerer
+}
+
+func (e LLMAnswerEvaluator) EvaluateAnswer(ctx context.Context, input AnswerEvaluationInput) (*AnswerEvaluation, error) {
+	minScore, err := normalizeAnswerMinEvaluationScore(input.MinScore)
+	if err != nil {
+		return nil, err
+	}
+	localInput := input
+	localInput.MinScore = 0
+	localEval, err := (LocalAnswerEvaluator{}).EvaluateAnswer(ctx, localInput)
+	if err != nil {
+		return nil, err
+	}
+	if e.Answerer == nil {
+		return nil, fmt.Errorf("llm answer evaluator requires an answer provider")
+	}
+	temperature := 0.0
+	response, err := e.Answerer.Answer(ctx, store.AnswerRequest{
+		Question:     llmAnswerEvaluationPrompt(input, localEval),
+		SystemPrompt: llmAnswerEvaluationSystemPrompt(),
+		Context:      input.Context,
+		MaxTokens:    700,
+		Temperature:  &temperature,
+		Metadata: map[string]string{
+			"purpose": "answer_evaluation",
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, err := parseLLMAnswerEvaluation(response.Answer)
+	if err != nil {
+		return nil, err
+	}
+	return llmAnswerEvaluationFromPayload(payload, localEval, minScore, e.Answerer.AnswerModel()), nil
+}
+
+type llmAnswerEvaluationPayload struct {
+	Score   *float64                `json:"score"`
+	Passed  *bool                   `json:"passed"`
+	Summary string                  `json:"summary"`
+	Checks  []AnswerEvaluationCheck `json:"checks"`
+}
+
+func llmAnswerEvaluationSystemPrompt() string {
+	return strings.Join([]string{
+		"You are a strict evaluator for code-context answers.",
+		"Judge only whether the generated answer is supported by the supplied code-context evidence.",
+		"Return JSON only. Do not include markdown fences or prose outside JSON.",
+		`Schema: {"score":0.0,"passed":true,"summary":"...","checks":[{"name":"faithfulness","status":"pass|warn|fail","score":0.0,"message":"..."},{"name":"completeness","status":"pass|warn|fail","score":0.0,"message":"..."},{"name":"citation_quality","status":"pass|warn|fail","score":0.0,"message":"..."}]}`,
+	}, "\n")
+}
+
+func llmAnswerEvaluationPrompt(input AnswerEvaluationInput, localEval *AnswerEvaluation) string {
+	var b strings.Builder
+	b.WriteString("Evaluate the generated answer against the provided context.\n\n")
+	if q := strings.TrimSpace(input.Question); q != "" {
+		fmt.Fprintf(&b, "Original question:\n%s\n\n", q)
+	}
+	answer := strings.TrimSpace(input.Answer)
+	if answer == "" {
+		answer = "(no generated answer)"
+	}
+	fmt.Fprintf(&b, "Generated answer:\n%s\n\n", answerTrimToRunes(answer, 6000))
+	if input.Grounding != nil {
+		fmt.Fprintf(&b, "Citation grounding report:\n%s\n", input.Grounding.Summary)
+		if len(input.Grounding.ValidCitations) > 0 {
+			fmt.Fprintf(&b, "Valid citations: %s\n", strings.Join(input.Grounding.ValidCitations, ", "))
+		}
+		if len(input.Grounding.MissingCitations) > 0 {
+			fmt.Fprintf(&b, "Unknown citations: %s\n", strings.Join(input.Grounding.MissingCitations, ", "))
+		}
+		if len(input.Grounding.UncitedCitations) > 0 {
+			fmt.Fprintf(&b, "Uncited sources: %s\n", strings.Join(input.Grounding.UncitedCitations, ", "))
+		}
+		b.WriteByte('\n')
+	}
+	if localEval != nil {
+		fmt.Fprintf(&b, "Local deterministic guardrail score: %.2f, passed=%t, summary=%s\n\n", localEval.Score, localEval.Passed, localEval.Summary)
+	}
+	b.WriteString("Rubric:\n")
+	b.WriteString("- faithfulness: claims must be directly supported by the context.\n")
+	b.WriteString("- completeness: answer should address the question using available evidence and state uncertainty when evidence is missing.\n")
+	b.WriteString("- citation_quality: citations should point to supplied labels and important claims should be cited.\n")
+	b.WriteString("Return the JSON schema from the system prompt.")
+	return b.String()
+}
+
+func parseLLMAnswerEvaluation(text string) (llmAnswerEvaluationPayload, error) {
+	var payload llmAnswerEvaluationPayload
+	raw := extractFirstJSONObject(strings.TrimSpace(text))
+	if raw == "" {
+		return payload, fmt.Errorf("evaluation response did not contain a JSON object")
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return payload, fmt.Errorf("decode evaluation JSON: %w", err)
+	}
+	return payload, nil
+}
+
+func extractFirstJSONObject(text string) string {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return text[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func llmAnswerEvaluationFromPayload(payload llmAnswerEvaluationPayload, localEval *AnswerEvaluation, minScore float64, info store.AnswerModelInfo) *AnswerEvaluation {
+	score := 0.0
+	if payload.Score != nil {
+		score = clampAnswerEvaluationScore(*payload.Score)
+	} else if len(payload.Checks) > 0 {
+		score = weightedAnswerEvaluationScore(payload.Checks)
+	} else if localEval != nil {
+		score = localEval.Score
+	}
+	checks := normalizeLLMAnswerEvaluationChecks(payload.Checks)
+	if len(checks) == 0 {
+		checks = append(checks, AnswerEvaluationCheck{
+			Name:    "llm_judge",
+			Status:  answerEvaluationStatusForScore(score),
+			Score:   score,
+			Message: strings.TrimSpace(payload.Summary),
+		})
+	}
+	if localEval != nil {
+		checks = append(checks, AnswerEvaluationCheck{
+			Name:    "local_guardrails",
+			Status:  answerEvaluationStatus(localEval.Passed, localEval.Score),
+			Score:   localEval.Score,
+			Message: localEval.Summary,
+		})
+	}
+
+	passed := score >= minScore && !hasAnswerEvaluationFailure(checks)
+	if payload.Passed != nil {
+		passed = *payload.Passed && passed
+	}
+	if localEval != nil && !localEval.Passed && minScore > 0 {
+		passed = false
+	}
+	summary := strings.TrimSpace(payload.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("LLM answer evaluation score %.0f%%.", score*100)
+	}
+	if minScore > 0 {
+		if passed {
+			summary = fmt.Sprintf("%s Meets required %.0f%%.", strings.TrimRight(summary, "."), minScore*100)
+		} else {
+			summary = fmt.Sprintf("%s Below required %.0f%%.", strings.TrimRight(summary, "."), minScore*100)
+		}
+	}
+	evaluator := AnswerEvaluatorLLM
+	if strings.TrimSpace(info.Provider) != "" || strings.TrimSpace(info.Model) != "" {
+		evaluator = fmt.Sprintf("%s:%s/%s", AnswerEvaluatorLLM, strings.TrimSpace(info.Provider), strings.TrimSpace(info.Model))
+	}
+	return &AnswerEvaluation{
+		Evaluator: evaluator,
+		Score:     score,
+		MinScore:  minScore,
+		Passed:    passed,
+		Summary:   summary,
+		Checks:    checks,
+	}
+}
+
+func normalizeLLMAnswerEvaluationChecks(checks []AnswerEvaluationCheck) []AnswerEvaluationCheck {
+	out := make([]AnswerEvaluationCheck, 0, len(checks))
+	for _, check := range checks {
+		name := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(check.Name, " ", "_")))
+		if name == "" {
+			name = "llm_check"
+		}
+		status := strings.TrimSpace(strings.ToLower(check.Status))
+		switch status {
+		case "pass", "warn", "fail":
+		default:
+			status = answerEvaluationStatusForScore(check.Score)
+		}
+		out = append(out, AnswerEvaluationCheck{
+			Name:    name,
+			Status:  status,
+			Score:   clampAnswerEvaluationScore(check.Score),
+			Message: strings.TrimSpace(check.Message),
+		})
+	}
+	return out
+}
+
+func answerEvaluationStatus(passed bool, score float64) string {
+	if passed {
+		return "pass"
+	}
+	return "fail"
+}
+
+func answerEvaluationStatusForScore(score float64) string {
+	switch {
+	case score >= 0.75:
+		return "pass"
+	case score > 0:
+		return "warn"
+	default:
+		return "fail"
+	}
 }
 
 func normalizeAnswerMinEvaluationScore(score float64) (float64, error) {
@@ -4207,6 +4481,9 @@ func (e *Engine) ProviderDiagnostics(ctx context.Context) (*api.ProviderDiagnost
 	if check := e.answerRerankerCheck(); check != nil {
 		checks = append(checks, *check)
 	}
+	if check := e.answerEvaluatorCheck(); check != nil {
+		checks = append(checks, *check)
+	}
 	checks = append(checks, e.answerProfileChecks()...)
 	ok := true
 	warns := 0
@@ -4341,6 +4618,43 @@ func (e *Engine) answerRerankerCheck() *api.ProviderConfigCheck {
 		check.Status = "error"
 		check.Message = fmt.Sprintf("unsupported answer reranker %q", provider)
 		check.Actions = []string{"set answer.reranker to local or semantic"}
+	}
+	return &check
+}
+
+func (e *Engine) answerEvaluatorCheck() *api.ProviderConfigCheck {
+	if e == nil {
+		return nil
+	}
+	provider := normalizeAnswerEvaluatorProvider(e.options.AnswerEvaluatorProvider)
+	if provider == "" {
+		return nil
+	}
+	check := api.ProviderConfigCheck{
+		Kind:     "answer_evaluator",
+		Enabled:  true,
+		Provider: provider,
+		Status:   "ok",
+	}
+	switch provider {
+	case AnswerEvaluatorLocal:
+		check.Message = "local answer evaluator configured"
+	case AnswerEvaluatorLLM:
+		if e.answerer == nil {
+			check.Status = "error"
+			check.Message = "llm answer evaluator requires an answer provider"
+			check.Actions = []string{"configure answer.provider before selecting answer.evaluator=llm", "or set answer.evaluator=local"}
+			return &check
+		}
+		info := e.answerer.AnswerModel()
+		check.Provider = provider
+		check.Model = info.Model
+		check.BaseURL = info.BaseURL
+		check.Message = fmt.Sprintf("llm answer evaluator uses answer provider %s model=%s", info.Provider, info.Model)
+	default:
+		check.Status = "error"
+		check.Message = fmt.Sprintf("unsupported answer evaluator %q", provider)
+		check.Actions = []string{"set answer.evaluator to local or llm"}
 	}
 	return &check
 }

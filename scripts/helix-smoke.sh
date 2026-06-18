@@ -206,7 +206,18 @@ class Handler(BaseHTTPRequestHandler):
         model = body.get("model") or "smoke-answer"
         messages = body.get("messages") or []
         prompt = "\n".join(str(m.get("content", "")) for m in messages)
-        if "HealthMessage" in prompt:
+        if "strict evaluator" in prompt or "faithfulness" in prompt and "citation_quality" in prompt:
+            answer = json.dumps({
+                "score": 0.92,
+                "passed": True,
+                "summary": "Smoke LLM evaluator found the answer grounded.",
+                "checks": [
+                    {"name": "faithfulness", "status": "pass", "score": 0.95, "message": "Claims are supported by smoke context."},
+                    {"name": "completeness", "status": "pass", "score": 0.90, "message": "The answer addresses the question."},
+                    {"name": "citation_quality", "status": "pass", "score": 0.90, "message": "The answer cites supplied labels."},
+                ],
+            })
+        elif "HealthMessage" in prompt:
             answer = "Smoke answer: HealthMessage returns the health response and is reached from HealthHandler [1]."
         elif "HealthHandler" in prompt:
             answer = "Smoke answer: HealthHandler handles /health and delegates to HealthMessage [1]."
@@ -253,6 +264,7 @@ run_code_context_model() {
     --answer-base-url "http://127.0.0.1:${ANSWER_PORT}/v1" \
     --answer-model smoke-answer \
     --answer-reranker semantic \
+    --answer-evaluator llm \
     "$@"
 }
 
@@ -431,7 +443,9 @@ grep -q '"kind": "embedding"' <<<"$provider_doctor_cli"
 grep -q '"kind": "answer"' <<<"$provider_doctor_cli"
 grep -q '"kind": "answer_profile"' <<<"$provider_doctor_cli"
 grep -q '"kind": "answer_reranker"' <<<"$provider_doctor_cli"
+grep -q '"kind": "answer_evaluator"' <<<"$provider_doctor_cli"
 grep -q '"provider": "semantic"' <<<"$provider_doctor_cli"
+grep -q '"provider": "llm"' <<<"$provider_doctor_cli"
 grep -q '"profile": "smoke-custom"' <<<"$provider_doctor_cli"
 grep -q '"provider": "openai-compatible"' <<<"$provider_doctor_cli"
 
@@ -462,7 +476,7 @@ grep -q '"template": "plan"' <<<"$answer_cli"
 grep -q "Smoke answer: HealthMessage" <<<"$answer_cli"
 grep -q '"sources":' <<<"$answer_cli"
 grep -q '"retrieval":' <<<"$answer_cli"
-grep -q '"retriever": "local-reranker"' <<<"$answer_cli"
+grep -q '"retriever": "semantic-reranker"' <<<"$answer_cli"
 grep -q '"citation": "\[1\]"' <<<"$answer_cli"
 grep -q '"grounding":' <<<"$answer_cli"
 grep -q '"required": true' <<<"$answer_cli"
@@ -470,7 +484,8 @@ grep -q '"min_coverage": 0.1' <<<"$answer_cli"
 grep -q '"passed": true' <<<"$answer_cli"
 grep -q '"valid_citations":' <<<"$answer_cli"
 grep -q '"evaluation":' <<<"$answer_cli"
-grep -q '"evaluator": "local-rule"' <<<"$answer_cli"
+grep -q '"evaluator": "llm:openai-compatible/smoke-answer"' <<<"$answer_cli"
+grep -q '"faithfulness"' <<<"$answer_cli"
 grep -q '"min_score": 0.2' <<<"$answer_cli"
 grep -q '"usage":' <<<"$answer_cli"
 
@@ -575,7 +590,7 @@ grep -q '"template":"review"' <<<"$answer_api"
 grep -q "Smoke answer: HealthMessage" <<<"$answer_api"
 grep -q '"sources":' <<<"$answer_api"
 grep -q '"retrieval":' <<<"$answer_api"
-grep -q '"retriever":"local-reranker"' <<<"$answer_api"
+grep -q '"retriever":"semantic-reranker"' <<<"$answer_api"
 grep -q '"citation":"\[1\]"' <<<"$answer_api"
 grep -q '"grounding":' <<<"$answer_api"
 grep -q '"required":true' <<<"$answer_api"
@@ -583,7 +598,8 @@ grep -q '"min_coverage":0.1' <<<"$answer_api"
 grep -q '"passed":true' <<<"$answer_api"
 grep -q '"valid_citations":' <<<"$answer_api"
 grep -q '"evaluation":' <<<"$answer_api"
-grep -q '"evaluator":"local-rule"' <<<"$answer_api"
+grep -q '"evaluator":"llm:openai-compatible/smoke-answer"' <<<"$answer_api"
+grep -q '"faithfulness"' <<<"$answer_api"
 grep -q '"min_score":0.2' <<<"$answer_api"
 grep -q '"usage":' <<<"$answer_api"
 
@@ -606,7 +622,9 @@ grep -q '"kind":"embedding"' <<<"$provider_doctor_api"
 grep -q '"kind":"answer"' <<<"$provider_doctor_api"
 grep -q '"kind":"answer_profile"' <<<"$provider_doctor_api"
 grep -q '"kind":"answer_reranker"' <<<"$provider_doctor_api"
+grep -q '"kind":"answer_evaluator"' <<<"$provider_doctor_api"
 grep -q '"provider":"semantic"' <<<"$provider_doctor_api"
+grep -q '"provider":"llm"' <<<"$provider_doctor_api"
 grep -q '"profile":"smoke-custom"' <<<"$provider_doctor_api"
 grep -q '"provider":"openai-compatible"' <<<"$provider_doctor_api"
 

@@ -122,6 +122,7 @@ answer:
   # model: qwen2.5-coder
   api_key_env: ANSWER_API_KEY
   reranker: local
+  evaluator: local
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -215,9 +216,11 @@ structured consumers. Provider-backed answers include a deterministic `grounding
 audit (not semantic fact-checking) with valid/missing/uncited source labels; CLI
 `--require-citations` / `--min-citation-coverage` or JSON/MCP `require_citations` /
 `min_citation_coverage` marks the audit as required for hard-gate callers. CLI `--evaluate` or
-JSON/MCP `evaluate` runs the local provider-neutral `AnswerEvaluator` hook, which reports answer
-presence, evidence-overlap, and citation-grounding checks under `evaluation`; `--min-evaluation-score`
-or `min_evaluation_score` makes that score a caller-visible gate.
+JSON/MCP `evaluate` runs the provider-neutral `AnswerEvaluator` hook. `answer.evaluator: local`
+reports answer presence, evidence-overlap, and citation-grounding checks; `answer.evaluator: llm`
+or CLI `--answer-evaluator llm` uses the configured answer provider for
+faithfulness/completeness/citation-quality judging while retaining local guardrails.
+`--min-evaluation-score` or `min_evaluation_score` makes that score a caller-visible gate.
 
 ## Recommended Dogfood Workflow
 

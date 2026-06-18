@@ -325,6 +325,23 @@ func TestProviderDiagnosticsIncludesSemanticRerankerCheck(t *testing.T) {
 	}
 }
 
+func TestProviderDiagnosticsIncludesLLMEvaluatorCheck(t *testing.T) {
+	eng := &Engine{
+		answerer: &fakeAnswerer{},
+		options:  Options{AnswerEvaluatorProvider: AnswerEvaluatorLLM},
+	}
+	check := eng.answerEvaluatorCheck()
+	if check == nil || check.Kind != "answer_evaluator" || check.Provider != AnswerEvaluatorLLM || check.Status != "ok" {
+		t.Fatalf("llm evaluator check = %#v", check)
+	}
+
+	eng = &Engine{options: Options{AnswerEvaluatorProvider: AnswerEvaluatorLLM}}
+	check = eng.answerEvaluatorCheck()
+	if check == nil || check.Status != "error" || !strings.Contains(check.Message, "requires an answer provider") {
+		t.Fatalf("llm evaluator missing answerer check = %#v", check)
+	}
+}
+
 func TestEmbedUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))
@@ -708,6 +725,37 @@ func TestAnswerEvaluationUsesInjectedEvaluator(t *testing.T) {
 	}
 }
 
+func TestLLMAnswerEvaluatorUsesAnswerProviderJSON(t *testing.T) {
+	answerer := &fakeLLMEvaluatorAnswerer{}
+	eng := &Engine{
+		store:     &fakeHybridStore{},
+		embedder:  fakeEmbedder{},
+		answerer:  answerer,
+		evaluator: LLMAnswerEvaluator{Answerer: answerer},
+	}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:           "hello",
+		Evaluate:           true,
+		MinEvaluationScore: 0.7,
+		RequireCitations:   true,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if result.Evaluation == nil || !strings.HasPrefix(result.Evaluation.Evaluator, "llm:fake/fake-chat") {
+		t.Fatalf("evaluation = %#v", result.Evaluation)
+	}
+	if !result.Evaluation.Passed || result.Evaluation.Score < 0.7 {
+		t.Fatalf("evaluation = %#v, want passing llm score", result.Evaluation)
+	}
+	if !answerer.evaluationCalled {
+		t.Fatalf("llm evaluator did not call answer provider for evaluation")
+	}
+	if !answerEvaluationHasCheck(result.Evaluation, "faithfulness") || !answerEvaluationHasCheck(result.Evaluation, "local_guardrails") {
+		t.Fatalf("checks = %#v, want llm and local guardrail checks", result.Evaluation.Checks)
+	}
+}
+
 func TestAnswerRejectsInvalidMinEvaluationScore(t *testing.T) {
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: &fakeAnswerer{}}
 	_, err := eng.Answer(context.Background(), AnswerOptions{
@@ -1080,6 +1128,42 @@ func (a *fakeAnswerer) Answer(_ context.Context, req store.AnswerRequest) (*stor
 
 func (a *fakeAnswerer) AnswerModel() store.AnswerModelInfo {
 	return store.AnswerModelInfo{Provider: "fake", Model: "fake-chat"}
+}
+
+type fakeLLMEvaluatorAnswerer struct {
+	requests         []store.AnswerRequest
+	evaluationCalled bool
+}
+
+func (a *fakeLLMEvaluatorAnswerer) Answer(_ context.Context, req store.AnswerRequest) (*store.AnswerResponse, error) {
+	a.requests = append(a.requests, req)
+	if req.Metadata["purpose"] == "answer_evaluation" {
+		a.evaluationCalled = true
+		return &store.AnswerResponse{
+			Answer: `{"score":0.92,"passed":true,"summary":"LLM judge found the answer grounded.","checks":[{"name":"faithfulness","status":"pass","score":0.95,"message":"Claims are supported by context."},{"name":"completeness","status":"pass","score":0.9,"message":"The answer addresses the question."},{"name":"citation_quality","status":"pass","score":0.9,"message":"Citations use supplied labels."}]}`,
+			Model:  "fake-chat",
+		}, nil
+	}
+	return &store.AnswerResponse{
+		Answer: "Result uses text evidence from the retrieved symbol [1].",
+		Model:  "fake-chat",
+	}, nil
+}
+
+func (a *fakeLLMEvaluatorAnswerer) AnswerModel() store.AnswerModelInfo {
+	return store.AnswerModelInfo{Provider: "fake", Model: "fake-chat"}
+}
+
+func answerEvaluationHasCheck(eval *AnswerEvaluation, name string) bool {
+	if eval == nil {
+		return false
+	}
+	for _, check := range eval.Checks {
+		if check.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeAnswerEvaluator struct {

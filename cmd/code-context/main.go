@@ -56,6 +56,7 @@ var (
 	answerAPIKeyEnv        string
 	answerModel            string
 	answerReranker         string
+	answerEvaluator        string
 	answerTimeout          time.Duration
 	answerMaxTokens        int
 	answerTemperature      float64
@@ -112,6 +113,7 @@ func main() {
 	cmd.PersistentFlags().StringVar(&answerAPIKeyEnv, "answer-api-key-env", "", "environment variable containing the answer API key")
 	cmd.PersistentFlags().StringVar(&answerModel, "answer-model", "", "answer model name")
 	cmd.PersistentFlags().StringVar(&answerReranker, "answer-reranker", "", "answer context reranker (local|semantic; default: local)")
+	cmd.PersistentFlags().StringVar(&answerEvaluator, "answer-evaluator", "", "answer evaluator (local|llm; default: local)")
 	cmd.PersistentFlags().DurationVar(&answerTimeout, "answer-timeout", 0, "answer request timeout")
 	cmd.PersistentFlags().IntVar(&answerMaxTokens, "answer-max-tokens", 0, "answer max completion tokens")
 	cmd.PersistentFlags().Float64Var(&answerTemperature, "answer-temperature", 0, "answer sampling temperature")
@@ -222,7 +224,7 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 		!cmd.Flags().Changed("answer-provider") || !cmd.Flags().Changed("answer-base-url") ||
 		!cmd.Flags().Changed("answer-api-key") || !cmd.Flags().Changed("answer-api-key-env") ||
 		!cmd.Flags().Changed("answer-model") || !cmd.Flags().Changed("answer-reranker") ||
-		!cmd.Flags().Changed("answer-timeout") ||
+		!cmd.Flags().Changed("answer-evaluator") || !cmd.Flags().Changed("answer-timeout") ||
 		!cmd.Flags().Changed("answer-max-tokens") || !cmd.Flags().Changed("answer-temperature") {
 
 		if loaded == nil && loadErr != config.ErrNotFound {
@@ -313,6 +315,9 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			if !cmd.Flags().Changed("answer-reranker") && loaded.Config.Answer.Reranker != "" {
 				answerReranker = loaded.Config.Answer.Reranker
 			}
+			if !cmd.Flags().Changed("answer-evaluator") && loaded.Config.Answer.Evaluator != "" {
+				answerEvaluator = loaded.Config.Answer.Evaluator
+			}
 			if !cmd.Flags().Changed("answer-timeout") && loaded.Config.Answer.Timeout > 0 {
 				answerTimeout = loaded.Config.Answer.Timeout
 			}
@@ -334,11 +339,12 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 
 func newEngine() (*engine.Engine, error) {
 	return engine.NewWithOptions(root, engine.Options{
-		Store:                  storeOptions(),
-		Embedding:              embeddingOptions(),
-		Answer:                 answerOptions(),
-		AnswerRerankerProvider: answerReranker,
-		AnswerProfiles:         answerProfiles,
+		Store:                   storeOptions(),
+		Embedding:               embeddingOptions(),
+		Answer:                  answerOptions(),
+		AnswerRerankerProvider:  answerReranker,
+		AnswerEvaluatorProvider: answerEvaluator,
+		AnswerProfiles:          answerProfiles,
 	})
 }
 
@@ -580,6 +586,9 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 	if answerReranker != "" {
 		cfg.Answer.Reranker = answerReranker
 	}
+	if answerEvaluator != "" {
+		cfg.Answer.Evaluator = answerEvaluator
+	}
 	if answerTimeout > 0 {
 		cfg.Answer.Timeout = answerTimeout
 	}
@@ -667,6 +676,7 @@ answer:
   api_key_env: ANSWER_API_KEY
   model: ""
   reranker: local
+  evaluator: local
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -1438,8 +1448,8 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
 	cmd.Flags().BoolVar(&requireCitations, "require-citations", false, "mark citation grounding as required and fail when generated answers lack valid retrieved-source citations")
 	cmd.Flags().Float64Var(&minCitationCoverage, "min-citation-coverage", 0, "minimum fraction of retrieved sources that must be cited by a generated answer (0..1)")
-	cmd.Flags().BoolVar(&evaluate, "evaluate", false, "run local provider-neutral answer evaluation and include the report")
-	cmd.Flags().Float64Var(&minEvaluationScore, "min-evaluation-score", 0, "minimum local answer evaluation score required for success (0..1)")
+	cmd.Flags().BoolVar(&evaluate, "evaluate", false, "run configured provider-neutral answer evaluation and include the report")
+	cmd.Flags().Float64Var(&minEvaluationScore, "min-evaluation-score", 0, "minimum answer evaluation score required for success (0..1)")
 	cmd.Flags().StringVar(&profile, "profile", "", "answer workflow profile (general|explain-code|review-change|plan-implementation|risk-analysis|test-plan); explicit flags override profile defaults")
 	cmd.Flags().StringVar(&template, "template", "", "answer prompt template (general|explain|review|plan); overridden by --system-prompt")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")
