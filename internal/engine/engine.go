@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -582,21 +583,22 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 }
 
 type AnswerOptions struct {
-	Query          string                `json:"query,omitempty"`
-	Question       string                `json:"question,omitempty"`
-	Template       string                `json:"template,omitempty"`
-	SystemPrompt   string                `json:"system_prompt,omitempty"`
-	Messages       []store.AnswerMessage `json:"messages,omitempty"`
-	Filter         store.SearchFilter    `json:"filter,omitempty"`
-	Limit          int                   `json:"limit,omitempty"`
-	TextWeight     float64               `json:"text_weight,omitempty"`
-	VectorWeight   float64               `json:"vector_weight,omitempty"`
-	GraphWeight    float64               `json:"graph_weight,omitempty"`
-	ExpandFrom     []store.TargetRef     `json:"expand_from,omitempty"`
-	ExpandMaxDepth int                   `json:"expand_max_depth,omitempty"`
-	ContextOnly    bool                  `json:"context_only,omitempty"`
-	MaxTokens      int                   `json:"max_tokens,omitempty"`
-	Temperature    *float64              `json:"temperature,omitempty"`
+	Query            string                `json:"query,omitempty"`
+	Question         string                `json:"question,omitempty"`
+	Template         string                `json:"template,omitempty"`
+	SystemPrompt     string                `json:"system_prompt,omitempty"`
+	Messages         []store.AnswerMessage `json:"messages,omitempty"`
+	Filter           store.SearchFilter    `json:"filter,omitempty"`
+	Limit            int                   `json:"limit,omitempty"`
+	TextWeight       float64               `json:"text_weight,omitempty"`
+	VectorWeight     float64               `json:"vector_weight,omitempty"`
+	GraphWeight      float64               `json:"graph_weight,omitempty"`
+	ExpandFrom       []store.TargetRef     `json:"expand_from,omitempty"`
+	ExpandMaxDepth   int                   `json:"expand_max_depth,omitempty"`
+	ContextOnly      bool                  `json:"context_only,omitempty"`
+	RequireCitations bool                  `json:"require_citations,omitempty"`
+	MaxTokens        int                   `json:"max_tokens,omitempty"`
+	Temperature      *float64              `json:"temperature,omitempty"`
 }
 
 type AnswerSource struct {
@@ -618,8 +620,22 @@ type AnswerResult struct {
 	Context     []store.AnswerContext `json:"context,omitempty"`
 	Sources     []AnswerSource        `json:"sources,omitempty"`
 	Hits        []store.SearchHit     `json:"hits,omitempty"`
+	Grounding   *AnswerGrounding      `json:"grounding,omitempty"`
 	Usage       *store.AnswerUsage    `json:"usage,omitempty"`
 	Summary     string                `json:"summary"`
+}
+
+type AnswerGrounding struct {
+	Required         bool     `json:"required,omitempty"`
+	SourceCount      int      `json:"source_count"`
+	HasCitations     bool     `json:"has_citations"`
+	Grounded         bool     `json:"grounded"`
+	Passed           bool     `json:"passed"`
+	Coverage         float64  `json:"coverage,omitempty"`
+	ValidCitations   []string `json:"valid_citations,omitempty"`
+	MissingCitations []string `json:"missing_citations,omitempty"`
+	UncitedCitations []string `json:"uncited_citations,omitempty"`
+	Summary          string   `json:"summary"`
 }
 
 func FormatAnswerMarkdown(result *AnswerResult) string {
@@ -672,6 +688,19 @@ func FormatAnswerMarkdown(result *AnswerResult) string {
 				fmt.Fprintf(&b, "\n  - %s", snippet)
 			}
 			b.WriteByte('\n')
+		}
+	}
+	if result.Grounding != nil {
+		b.WriteString("\n## Grounding\n")
+		fmt.Fprintf(&b, "- %s\n", result.Grounding.Summary)
+		if len(result.Grounding.ValidCitations) > 0 {
+			fmt.Fprintf(&b, "- cited: %s\n", strings.Join(result.Grounding.ValidCitations, ", "))
+		}
+		if len(result.Grounding.MissingCitations) > 0 {
+			fmt.Fprintf(&b, "- unknown citations: %s\n", strings.Join(result.Grounding.MissingCitations, ", "))
+		}
+		if len(result.Grounding.UncitedCitations) > 0 {
+			fmt.Fprintf(&b, "- uncited sources: %s\n", strings.Join(result.Grounding.UncitedCitations, ", "))
 		}
 	}
 	if result.Usage != nil && (result.Usage.PromptTokens > 0 || result.Usage.CompletionTokens > 0 || result.Usage.TotalTokens > 0) {
@@ -732,6 +761,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	if result.Model == "" {
 		result.Model = info.Model
 	}
+	result.Grounding = auditAnswerGrounding(result.Answer, contextItems, opts.RequireCitations)
 	result.Usage = response.Usage
 	result.Summary = fmt.Sprintf("Answered question %q using %d retrieved context items", question, len(contextItems))
 	return result, nil
@@ -847,6 +877,76 @@ func answerTemplatePrompt(template string) (string, bool) {
 		return "Create an implementation plan from the supplied code-context evidence. Include ordered steps, files or symbols likely involved, risks, and validation commands when evidence supports them. Cite sources with the provided labels such as [1].", true
 	default:
 		return "", false
+	}
+}
+
+var answerCitationPattern = regexp.MustCompile(`\[(\d+)\]`)
+
+func auditAnswerGrounding(answer string, contextItems []store.AnswerContext, required bool) *AnswerGrounding {
+	answer = strings.TrimSpace(answer)
+	report := &AnswerGrounding{
+		Required:    required,
+		SourceCount: len(contextItems),
+	}
+	known := make(map[string]bool, len(contextItems))
+	orderedKnown := make([]string, 0, len(contextItems))
+	for i, item := range contextItems {
+		citation := strings.TrimSpace(item.Citation)
+		if citation == "" {
+			citation = answerCitationLabel(i + 1)
+		}
+		if citation == "" || known[citation] {
+			continue
+		}
+		known[citation] = true
+		orderedKnown = append(orderedKnown, citation)
+	}
+
+	seen := map[string]bool{}
+	for _, match := range answerCitationPattern.FindAllStringSubmatch(answer, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		citation := "[" + match[1] + "]"
+		if seen[citation] {
+			continue
+		}
+		seen[citation] = true
+		report.HasCitations = true
+		if known[citation] {
+			report.ValidCitations = append(report.ValidCitations, citation)
+		} else {
+			report.MissingCitations = append(report.MissingCitations, citation)
+		}
+	}
+	for _, citation := range orderedKnown {
+		if !seen[citation] {
+			report.UncitedCitations = append(report.UncitedCitations, citation)
+		}
+	}
+	if report.SourceCount > 0 {
+		report.Coverage = float64(len(report.ValidCitations)) / float64(report.SourceCount)
+	}
+	report.Grounded = len(report.ValidCitations) > 0 && len(report.MissingCitations) == 0
+	report.Passed = report.Grounded
+	report.Summary = answerGroundingSummary(report, answer)
+	return report
+}
+
+func answerGroundingSummary(report *AnswerGrounding, answer string) string {
+	switch {
+	case strings.TrimSpace(answer) == "":
+		return "No answer text was available for citation audit."
+	case report.SourceCount == 0 && !report.HasCitations:
+		return "No retrieved sources were available for citation audit."
+	case !report.HasCitations:
+		return "Answer did not cite any retrieved sources."
+	case len(report.MissingCitations) > 0:
+		return fmt.Sprintf("Answer cited unknown sources: %s.", strings.Join(report.MissingCitations, ", "))
+	case len(report.ValidCitations) > 0:
+		return fmt.Sprintf("Answer cited %d of %d retrieved sources.", len(report.ValidCitations), report.SourceCount)
+	default:
+		return "Answer citation audit found no valid retrieved-source citations."
 	}
 }
 

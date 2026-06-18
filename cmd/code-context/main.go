@@ -1112,6 +1112,7 @@ func newHybridSearchCmd() *cobra.Command {
 func newAnswerCmd() *cobra.Command {
 	var limit int
 	var contextOnly bool
+	var requireCitations bool
 	var jsonOut bool
 	var maxTokens int
 	var temperature float64
@@ -1153,19 +1154,20 @@ func newAnswerCmd() *cobra.Command {
 				}
 			}
 			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
-				Question:       strings.TrimSpace(strings.Join(args, " ")),
-				Template:       strings.TrimSpace(template),
-				SystemPrompt:   strings.TrimSpace(systemPrompt),
-				Filter:         filter,
-				Limit:          limit,
-				TextWeight:     textWeight,
-				VectorWeight:   vectorWeight,
-				GraphWeight:    graphWeight,
-				ExpandFrom:     expandFrom,
-				ExpandMaxDepth: expandDepth,
-				ContextOnly:    contextOnly,
-				MaxTokens:      maxTokens,
-				Temperature:    tempPtr,
+				Question:         strings.TrimSpace(strings.Join(args, " ")),
+				Template:         strings.TrimSpace(template),
+				SystemPrompt:     strings.TrimSpace(systemPrompt),
+				Filter:           filter,
+				Limit:            limit,
+				TextWeight:       textWeight,
+				VectorWeight:     vectorWeight,
+				GraphWeight:      graphWeight,
+				ExpandFrom:       expandFrom,
+				ExpandMaxDepth:   expandDepth,
+				ContextOnly:      contextOnly,
+				RequireCitations: requireCitations,
+				MaxTokens:        maxTokens,
+				Temperature:      tempPtr,
 			})
 			if err != nil {
 				if errors.Is(err, engine.ErrCapabilityUnsupported) {
@@ -1188,20 +1190,30 @@ func newAnswerCmd() *cobra.Command {
 					fmt.Println("Sources:")
 					fmt.Println(formatAnswerContextPlain(result.Context))
 				}
+				if result.Grounding != nil {
+					fmt.Println()
+					fmt.Println("Grounding:", result.Grounding.Summary)
+				}
 			case "markdown", "md":
 				fmt.Println(engine.FormatAnswerMarkdown(result))
 			case "json":
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(result)
+				if err := enc.Encode(result); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("unsupported answer output format %q (supported: text, markdown, json)", format)
+			}
+			if requireCitations && result.Grounding != nil && !result.Grounding.Passed {
+				return fmt.Errorf("answer citation requirement failed: %s", result.Grounding.Summary)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 8, "max retrieved context items")
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
+	cmd.Flags().BoolVar(&requireCitations, "require-citations", false, "mark citation grounding as required and fail when generated answers lack valid retrieved-source citations")
 	cmd.Flags().StringVar(&template, "template", "", "answer prompt template (general|explain|review|plan); overridden by --system-prompt")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")
 	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "filter retrieval target kinds; repeat or comma-separate (symbol,document,file,text)")

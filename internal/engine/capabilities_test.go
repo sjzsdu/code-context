@@ -249,6 +249,33 @@ func TestAnswerTemplatePassesPresetPrompt(t *testing.T) {
 	}
 }
 
+func TestAnswerGroundingAuditsCitations(t *testing.T) {
+	answerer := &fakeAnswerer{answer: "Use Result for the answer [1], but this citation is unknown [9]."}
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:         "hello",
+		RequireCitations: true,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if result.Grounding == nil {
+		t.Fatalf("grounding = nil")
+	}
+	if !result.Grounding.Required || result.Grounding.Passed || result.Grounding.Grounded {
+		t.Fatalf("grounding flags = %#v", result.Grounding)
+	}
+	if !reflect.DeepEqual(result.Grounding.ValidCitations, []string{"[1]"}) {
+		t.Fatalf("valid citations = %#v", result.Grounding.ValidCitations)
+	}
+	if !reflect.DeepEqual(result.Grounding.MissingCitations, []string{"[9]"}) {
+		t.Fatalf("missing citations = %#v", result.Grounding.MissingCitations)
+	}
+	if !strings.Contains(result.Grounding.Summary, "unknown sources") {
+		t.Fatalf("grounding summary = %q", result.Grounding.Summary)
+	}
+}
+
 func TestAnswerRejectsUnknownTemplate(t *testing.T) {
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
 	_, err := eng.Answer(context.Background(), AnswerOptions{
@@ -277,6 +304,14 @@ func TestFormatAnswerMarkdown(t *testing.T) {
 			Citation: "[1]",
 			Content:  "func Foo() {}",
 		}},
+		Grounding: &AnswerGrounding{
+			SourceCount:    1,
+			HasCitations:   true,
+			Grounded:       true,
+			Passed:         true,
+			ValidCitations: []string{"[1]"},
+			Summary:        "Answer cited 1 of 1 retrieved sources.",
+		},
 		Usage: &store.AnswerUsage{PromptTokens: 10, CompletionTokens: 4, TotalTokens: 14},
 	})
 	if !strings.Contains(out, "# Answer") ||
@@ -285,6 +320,8 @@ func TestFormatAnswerMarkdown(t *testing.T) {
 		!strings.Contains(out, "## Sources") ||
 		!strings.Contains(out, "- [1] `a.go:3 Foo` (hybrid, 0.9000)") ||
 		!strings.Contains(out, "func Foo() {}") ||
+		!strings.Contains(out, "## Grounding") ||
+		!strings.Contains(out, "Answer cited 1 of 1 retrieved sources.") ||
 		!strings.Contains(out, "prompt_tokens: 10") {
 		t.Fatalf("unexpected markdown:\n%s", out)
 	}
@@ -457,11 +494,16 @@ func (fakeEmbedder) EmbeddingModel() store.EmbeddingModelInfo {
 
 type fakeAnswerer struct {
 	request store.AnswerRequest
+	answer  string
 }
 
 func (a *fakeAnswerer) Answer(_ context.Context, req store.AnswerRequest) (*store.AnswerResponse, error) {
 	a.request = req
-	return &store.AnswerResponse{Answer: "fake answer", Model: "fake-chat"}, nil
+	answer := a.answer
+	if answer == "" {
+		answer = "fake answer"
+	}
+	return &store.AnswerResponse{Answer: answer, Model: "fake-chat"}, nil
 }
 
 func (a *fakeAnswerer) AnswerModel() store.AnswerModelInfo {

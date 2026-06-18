@@ -105,22 +105,23 @@ type HybridSearchArgs struct {
 }
 
 type AnswerArgs struct {
-	Query          string                `json:"query,omitempty"`
-	Question       string                `json:"question,omitempty"`
-	Format         string                `json:"format,omitempty"`
-	Template       string                `json:"template,omitempty"`
-	SystemPrompt   string                `json:"system_prompt,omitempty"`
-	Messages       []store.AnswerMessage `json:"messages,omitempty"`
-	Filter         store.SearchFilter    `json:"filter,omitempty"`
-	Limit          int                   `json:"limit,omitempty"`
-	TextWeight     float64               `json:"text_weight,omitempty"`
-	VectorWeight   float64               `json:"vector_weight,omitempty"`
-	GraphWeight    float64               `json:"graph_weight,omitempty"`
-	ExpandFrom     []store.TargetRef     `json:"expand_from,omitempty"`
-	ExpandMaxDepth int                   `json:"expand_max_depth,omitempty"`
-	ContextOnly    bool                  `json:"context_only,omitempty"`
-	MaxTokens      int                   `json:"max_tokens,omitempty"`
-	Temperature    *float64              `json:"temperature,omitempty"`
+	Query            string                `json:"query,omitempty"`
+	Question         string                `json:"question,omitempty"`
+	Format           string                `json:"format,omitempty"`
+	Template         string                `json:"template,omitempty"`
+	SystemPrompt     string                `json:"system_prompt,omitempty"`
+	Messages         []store.AnswerMessage `json:"messages,omitempty"`
+	Filter           store.SearchFilter    `json:"filter,omitempty"`
+	Limit            int                   `json:"limit,omitempty"`
+	TextWeight       float64               `json:"text_weight,omitempty"`
+	VectorWeight     float64               `json:"vector_weight,omitempty"`
+	GraphWeight      float64               `json:"graph_weight,omitempty"`
+	ExpandFrom       []store.TargetRef     `json:"expand_from,omitempty"`
+	ExpandMaxDepth   int                   `json:"expand_max_depth,omitempty"`
+	ContextOnly      bool                  `json:"context_only,omitempty"`
+	RequireCitations bool                  `json:"require_citations,omitempty"`
+	MaxTokens        int                   `json:"max_tokens,omitempty"`
+	Temperature      *float64              `json:"temperature,omitempty"`
 }
 
 type SearchArgs struct {
@@ -518,7 +519,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_context", "code_context_graph_traverse"))), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true to mark citation grounding as required"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 			if strings.TrimSpace(args.Format) == "" {
 				args.Format = "markdown"
@@ -786,7 +787,7 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer",
-		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls",
+		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true to mark citation grounding as required",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 		output, err := runAnswerTool(ctx, eng, args)
 		if err != nil {
@@ -1503,20 +1504,21 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 		return "", fmt.Errorf("missing required parameter: question or query")
 	}
 	result, err := eng.Answer(ctx, engine.AnswerOptions{
-		Question:       question,
-		Template:       strings.TrimSpace(args.Template),
-		SystemPrompt:   strings.TrimSpace(args.SystemPrompt),
-		Messages:       args.Messages,
-		Filter:         args.Filter,
-		Limit:          args.Limit,
-		TextWeight:     args.TextWeight,
-		VectorWeight:   args.VectorWeight,
-		GraphWeight:    args.GraphWeight,
-		ExpandFrom:     args.ExpandFrom,
-		ExpandMaxDepth: args.ExpandMaxDepth,
-		ContextOnly:    args.ContextOnly,
-		MaxTokens:      args.MaxTokens,
-		Temperature:    args.Temperature,
+		Question:         question,
+		Template:         strings.TrimSpace(args.Template),
+		SystemPrompt:     strings.TrimSpace(args.SystemPrompt),
+		Messages:         args.Messages,
+		Filter:           args.Filter,
+		Limit:            args.Limit,
+		TextWeight:       args.TextWeight,
+		VectorWeight:     args.VectorWeight,
+		GraphWeight:      args.GraphWeight,
+		ExpandFrom:       args.ExpandFrom,
+		ExpandMaxDepth:   args.ExpandMaxDepth,
+		ContextOnly:      args.ContextOnly,
+		RequireCitations: args.RequireCitations,
+		MaxTokens:        args.MaxTokens,
+		Temperature:      args.Temperature,
 	})
 	if err != nil {
 		return "", err
