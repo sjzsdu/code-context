@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	pathpkg "path"
 	"sort"
@@ -38,11 +39,23 @@ const (
 )
 
 type helixStore struct {
-	client    *helix.Client
-	projectID string
+	client             *helix.Client
+	projectID          string
+	requestTimeout     time.Duration
+	writeRetryAttempts int
+	writeRetryBackoff  time.Duration
 }
 
 func NewHelixStore(opts HelixOptions) (Store, error) {
+	if opts.Timeout < 0 {
+		return nil, fmt.Errorf("helix timeout must be non-negative")
+	}
+	if opts.WriteRetryAttempts < 0 {
+		return nil, fmt.Errorf("helix write retry attempts must be non-negative")
+	}
+	if opts.WriteRetryBackoff < 0 {
+		return nil, fmt.Errorf("helix write retry backoff must be non-negative")
+	}
 	apiKey := opts.APIKey
 	if apiKey == "" && opts.APIKeyEnv != "" {
 		apiKey = os.Getenv(opts.APIKeyEnv)
@@ -50,6 +63,9 @@ func NewHelixStore(opts HelixOptions) (Store, error) {
 	var clientOpts []helix.ClientOption
 	if apiKey != "" {
 		clientOpts = append(clientOpts, helix.WithAPIKey(apiKey))
+	}
+	if opts.Timeout > 0 {
+		clientOpts = append(clientOpts, helix.WithHTTPClient(&http.Client{Timeout: opts.Timeout}))
 	}
 	client, err := helix.NewClient(strings.TrimSpace(opts.URL), clientOpts...)
 	if err != nil {
@@ -59,7 +75,21 @@ func NewHelixStore(opts HelixOptions) (Store, error) {
 	if projectID == "" {
 		projectID = "default"
 	}
-	return &helixStore{client: client, projectID: projectID}, nil
+	writeRetryAttempts := opts.WriteRetryAttempts
+	if writeRetryAttempts <= 0 {
+		writeRetryAttempts = 3
+	}
+	writeRetryBackoff := opts.WriteRetryBackoff
+	if writeRetryBackoff <= 0 {
+		writeRetryBackoff = 50 * time.Millisecond
+	}
+	return &helixStore{
+		client:             client,
+		projectID:          projectID,
+		requestTimeout:     opts.Timeout,
+		writeRetryAttempts: writeRetryAttempts,
+		writeRetryBackoff:  writeRetryBackoff,
+	}, nil
 }
 
 func (s *helixStore) Init(ctx context.Context) error {
@@ -1571,15 +1601,26 @@ func (s *helixStore) getDocumentByID(ctx context.Context, id int64) (*api.Docume
 
 func (s *helixStore) execWrite(ctx context.Context, build func() helix.Request, out any) error {
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	attempts := s.writeRetryAttempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+	backoff := s.writeRetryBackoff
+	if backoff < 0 {
+		backoff = 0
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
 		err = s.client.Exec(ctx, build(), out, helix.WriterOnly(), helix.AwaitDurability(true))
-		if err == nil || !helix.IsConflict(err) || attempt == 2 {
+		if err == nil || !helix.IsConflict(err) || attempt == attempts-1 {
 			return err
+		}
+		if backoff == 0 {
+			continue
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 50 * time.Millisecond):
+		case <-time.After(time.Duration(attempt+1) * backoff):
 		}
 	}
 	return err

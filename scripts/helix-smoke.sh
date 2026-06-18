@@ -240,6 +240,9 @@ run_code_context_model() {
     --store-backend helix \
     --helix-url "$HELIX_URL" \
     --helix-project-id "$HELIX_PROJECT_ID" \
+    --helix-timeout 20s \
+    --helix-write-retry-attempts 4 \
+    --helix-write-retry-backoff 25ms \
     --embedding-provider openai-compatible \
     --embedding-base-url "http://127.0.0.1:${EMBEDDING_PORT}/v1" \
     --embedding-model "$model" \

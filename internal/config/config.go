@@ -45,10 +45,13 @@ type SQLiteStoreConfig struct {
 }
 
 type HelixStoreConfig struct {
-	URL       string `json:"url" yaml:"url"`
-	APIKey    string `json:"api_key" yaml:"api_key"`
-	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`
-	ProjectID string `json:"project_id" yaml:"project_id"`
+	URL                string        `json:"url" yaml:"url"`
+	APIKey             string        `json:"api_key" yaml:"api_key"`
+	APIKeyEnv          string        `json:"api_key_env" yaml:"api_key_env"`
+	ProjectID          string        `json:"project_id" yaml:"project_id"`
+	Timeout            time.Duration `json:"timeout" yaml:"timeout"`
+	WriteRetryAttempts int           `json:"write_retry_attempts" yaml:"write_retry_attempts"`
+	WriteRetryBackoff  time.Duration `json:"write_retry_backoff" yaml:"write_retry_backoff"`
 }
 
 type EmbeddingConfig struct {
@@ -132,38 +135,41 @@ type Source struct {
 }
 
 type configFields struct {
-	Root                  bool
-	DB                    bool
-	StoreBackend          bool
-	StoreSQLiteDB         bool
-	StoreHelixURL         bool
-	StoreHelixAPIKey      bool
-	StoreHelixAPIKeyEnv   bool
-	StoreHelixProjectID   bool
-	EmbeddingProvider     bool
-	EmbeddingBaseURL      bool
-	EmbeddingAPIKey       bool
-	EmbeddingAPIKeyEnv    bool
-	EmbeddingModel        bool
-	EmbeddingDimensions   bool
-	EmbeddingTimeout      bool
-	EmbeddingBatchSize    bool
-	AnswerProvider        bool
-	AnswerBaseURL         bool
-	AnswerAPIKey          bool
-	AnswerAPIKeyEnv       bool
-	AnswerModel           bool
-	AnswerTimeout         bool
-	AnswerMaxTokens       bool
-	AnswerTemperature     bool
-	AnswerProfiles        bool
-	ServerPort            bool
-	WatchEnabled          bool
-	WatchInterval         bool
-	WatchDebounce         bool
-	DocsFailOnBroken      bool
-	DocsMinRouteCoverage  bool
-	DocsMinSymbolCoverage bool
+	Root                         bool
+	DB                           bool
+	StoreBackend                 bool
+	StoreSQLiteDB                bool
+	StoreHelixURL                bool
+	StoreHelixAPIKey             bool
+	StoreHelixAPIKeyEnv          bool
+	StoreHelixProjectID          bool
+	StoreHelixTimeout            bool
+	StoreHelixWriteRetryAttempts bool
+	StoreHelixWriteRetryBackoff  bool
+	EmbeddingProvider            bool
+	EmbeddingBaseURL             bool
+	EmbeddingAPIKey              bool
+	EmbeddingAPIKeyEnv           bool
+	EmbeddingModel               bool
+	EmbeddingDimensions          bool
+	EmbeddingTimeout             bool
+	EmbeddingBatchSize           bool
+	AnswerProvider               bool
+	AnswerBaseURL                bool
+	AnswerAPIKey                 bool
+	AnswerAPIKeyEnv              bool
+	AnswerModel                  bool
+	AnswerTimeout                bool
+	AnswerMaxTokens              bool
+	AnswerTemperature            bool
+	AnswerProfiles               bool
+	ServerPort                   bool
+	WatchEnabled                 bool
+	WatchInterval                bool
+	WatchDebounce                bool
+	DocsFailOnBroken             bool
+	DocsMinRouteCoverage         bool
+	DocsMinSymbolCoverage        bool
 }
 
 func Load(startDir string) (*Loaded, error) {
@@ -371,6 +377,9 @@ func fieldsFromMap(raw map[string]any) configFields {
 			f.StoreHelixAPIKey = has(helix, "api_key")
 			f.StoreHelixAPIKeyEnv = has(helix, "api_key_env")
 			f.StoreHelixProjectID = has(helix, "project_id")
+			f.StoreHelixTimeout = has(helix, "timeout")
+			f.StoreHelixWriteRetryAttempts = has(helix, "write_retry_attempts")
+			f.StoreHelixWriteRetryBackoff = has(helix, "write_retry_backoff")
 		}
 	}
 	if embedding := nested(raw, "embedding"); embedding != nil {
@@ -456,6 +465,18 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 	if srcFields.StoreHelixProjectID {
 		dst.Store.Helix.ProjectID = src.Store.Helix.ProjectID
 		dstFields.StoreHelixProjectID = true
+	}
+	if srcFields.StoreHelixTimeout {
+		dst.Store.Helix.Timeout = src.Store.Helix.Timeout
+		dstFields.StoreHelixTimeout = true
+	}
+	if srcFields.StoreHelixWriteRetryAttempts {
+		dst.Store.Helix.WriteRetryAttempts = src.Store.Helix.WriteRetryAttempts
+		dstFields.StoreHelixWriteRetryAttempts = true
+	}
+	if srcFields.StoreHelixWriteRetryBackoff {
+		dst.Store.Helix.WriteRetryBackoff = src.Store.Helix.WriteRetryBackoff
+		dstFields.StoreHelixWriteRetryBackoff = true
 	}
 	if srcFields.EmbeddingProvider {
 		dst.Embedding.Provider = src.Embedding.Provider

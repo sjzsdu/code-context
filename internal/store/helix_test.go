@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	helix "github.com/helixdb/helix-db/sdks/go"
 
@@ -385,5 +386,11 @@ func TestNewHelixStoreDefaultsProjectID(t *testing.T) {
 	}
 	if hs.projectID != "default" {
 		t.Fatalf("projectID = %q", hs.projectID)
+	}
+	if hs.writeRetryAttempts != 3 {
+		t.Fatalf("writeRetryAttempts = %d, want 3", hs.writeRetryAttempts)
+	}
+	if hs.writeRetryBackoff != 50*time.Millisecond {
+		t.Fatalf("writeRetryBackoff = %s, want 50ms", hs.writeRetryBackoff)
 	}
 }

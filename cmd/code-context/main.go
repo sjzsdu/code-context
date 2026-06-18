@@ -37,6 +37,9 @@ var (
 	helixAPIKey         string
 	helixAPIKeyEnv      string
 	helixProjectID      string
+	helixTimeout        time.Duration
+	helixRetryAttempts  int
+	helixRetryBackoff   time.Duration
 	embeddingProvider   string
 	embeddingBaseURL    string
 	embeddingAPIKey     string
@@ -87,6 +90,9 @@ func main() {
 	cmd.PersistentFlags().StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
 	cmd.PersistentFlags().StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	cmd.PersistentFlags().StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
+	cmd.PersistentFlags().DurationVar(&helixTimeout, "helix-timeout", 0, "HelixDB HTTP request timeout")
+	cmd.PersistentFlags().IntVar(&helixRetryAttempts, "helix-write-retry-attempts", 0, "HelixDB write conflict attempts including the initial attempt")
+	cmd.PersistentFlags().DurationVar(&helixRetryBackoff, "helix-write-retry-backoff", 0, "HelixDB write conflict retry base backoff")
 	cmd.PersistentFlags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider (none|openai|openai-compatible; default: none)")
 	cmd.PersistentFlags().StringVar(&embeddingBaseURL, "embedding-base-url", "", "embedding API base URL (for openai-compatible, e.g. http://localhost:11434/v1)")
 	cmd.PersistentFlags().StringVar(&embeddingAPIKey, "embedding-api-key", "", "embedding API key")
@@ -200,6 +206,8 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 	if !cmd.Flags().Changed("db") || !cmd.Flags().Changed("store-backend") ||
 		!cmd.Flags().Changed("helix-url") || !cmd.Flags().Changed("helix-api-key") ||
 		!cmd.Flags().Changed("helix-api-key-env") || !cmd.Flags().Changed("helix-project-id") ||
+		!cmd.Flags().Changed("helix-timeout") || !cmd.Flags().Changed("helix-write-retry-attempts") ||
+		!cmd.Flags().Changed("helix-write-retry-backoff") ||
 		!cmd.Flags().Changed("embedding-provider") || !cmd.Flags().Changed("embedding-base-url") ||
 		!cmd.Flags().Changed("embedding-api-key") || !cmd.Flags().Changed("embedding-api-key-env") ||
 		!cmd.Flags().Changed("embedding-model") || !cmd.Flags().Changed("embedding-dimensions") ||
@@ -239,6 +247,15 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			}
 			if !cmd.Flags().Changed("helix-project-id") && loaded.Config.Store.Helix.ProjectID != "" {
 				helixProjectID = loaded.Config.Store.Helix.ProjectID
+			}
+			if !cmd.Flags().Changed("helix-timeout") && loaded.Config.Store.Helix.Timeout > 0 {
+				helixTimeout = loaded.Config.Store.Helix.Timeout
+			}
+			if !cmd.Flags().Changed("helix-write-retry-attempts") && loaded.Config.Store.Helix.WriteRetryAttempts > 0 {
+				helixRetryAttempts = loaded.Config.Store.Helix.WriteRetryAttempts
+			}
+			if !cmd.Flags().Changed("helix-write-retry-backoff") && loaded.Config.Store.Helix.WriteRetryBackoff > 0 {
+				helixRetryBackoff = loaded.Config.Store.Helix.WriteRetryBackoff
 			}
 			if !cmd.Flags().Changed("embedding-provider") && loaded.Config.Embedding.Provider != "" {
 				embeddingProvider = loaded.Config.Embedding.Provider
@@ -312,10 +329,13 @@ func storeOptions() store.Options {
 		Backend: store.Backend(storeBackend),
 		SQLite:  store.SQLiteOptions{Path: dbPath},
 		Helix: store.HelixOptions{
-			URL:       helixURL,
-			APIKey:    helixAPIKey,
-			APIKeyEnv: helixAPIKeyEnv,
-			ProjectID: helixProjectID,
+			URL:                helixURL,
+			APIKey:             helixAPIKey,
+			APIKeyEnv:          helixAPIKeyEnv,
+			ProjectID:          helixProjectID,
+			Timeout:            helixTimeout,
+			WriteRetryAttempts: helixRetryAttempts,
+			WriteRetryBackoff:  helixRetryBackoff,
 		},
 	}
 }
@@ -483,6 +503,15 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 	if helixProjectID != "" {
 		cfg.Store.Helix.ProjectID = helixProjectID
 	}
+	if helixTimeout > 0 {
+		cfg.Store.Helix.Timeout = helixTimeout
+	}
+	if helixRetryAttempts > 0 {
+		cfg.Store.Helix.WriteRetryAttempts = helixRetryAttempts
+	}
+	if helixRetryBackoff > 0 {
+		cfg.Store.Helix.WriteRetryBackoff = helixRetryBackoff
+	}
 	if embeddingProvider != "" {
 		cfg.Embedding.Provider = embeddingProvider
 	}
@@ -590,6 +619,9 @@ store:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
     project_id: ""
+    # timeout: 30s
+    # write_retry_attempts: 3
+    # write_retry_backoff: 50ms
 embedding:
   provider: none
   base_url: ""

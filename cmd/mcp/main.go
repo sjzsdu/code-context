@@ -30,6 +30,9 @@ var (
 	helixAPIKey         string
 	helixAPIKeyEnv      string
 	helixProjectID      string
+	helixTimeout        time.Duration
+	helixRetryAttempts  int
+	helixRetryBackoff   time.Duration
 	embeddingProvider   string
 	embeddingBaseURL    string
 	embeddingAPIKey     string
@@ -199,6 +202,9 @@ func main() {
 	flag.StringVar(&helixAPIKey, "helix-api-key", "", "HelixDB API key for --store-backend=helix")
 	flag.StringVar(&helixAPIKeyEnv, "helix-api-key-env", "", "environment variable containing the HelixDB API key")
 	flag.StringVar(&helixProjectID, "helix-project-id", "", "Helix project namespace for --store-backend=helix (default: absolute root)")
+	flag.DurationVar(&helixTimeout, "helix-timeout", 0, "HelixDB HTTP request timeout")
+	flag.IntVar(&helixRetryAttempts, "helix-write-retry-attempts", 0, "HelixDB write conflict attempts including the initial attempt")
+	flag.DurationVar(&helixRetryBackoff, "helix-write-retry-backoff", 0, "HelixDB write conflict retry base backoff")
 	flag.StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider (none|openai|openai-compatible; default: none)")
 	flag.StringVar(&embeddingBaseURL, "embedding-base-url", "", "embedding API base URL")
 	flag.StringVar(&embeddingAPIKey, "embedding-api-key", "", "embedding API key")
@@ -296,6 +302,15 @@ func applyConfigDefaults() {
 	if !visited["helix-project-id"] && loaded.Config.Store.Helix.ProjectID != "" {
 		helixProjectID = loaded.Config.Store.Helix.ProjectID
 	}
+	if !visited["helix-timeout"] && loaded.Config.Store.Helix.Timeout > 0 {
+		helixTimeout = loaded.Config.Store.Helix.Timeout
+	}
+	if !visited["helix-write-retry-attempts"] && loaded.Config.Store.Helix.WriteRetryAttempts > 0 {
+		helixRetryAttempts = loaded.Config.Store.Helix.WriteRetryAttempts
+	}
+	if !visited["helix-write-retry-backoff"] && loaded.Config.Store.Helix.WriteRetryBackoff > 0 {
+		helixRetryBackoff = loaded.Config.Store.Helix.WriteRetryBackoff
+	}
 	if !visited["embedding-provider"] && loaded.Config.Embedding.Provider != "" {
 		embeddingProvider = loaded.Config.Embedding.Provider
 	}
@@ -351,10 +366,13 @@ func mcpStoreOptions() store.Options {
 		Backend: store.Backend(storeBackend),
 		SQLite:  store.SQLiteOptions{Path: db},
 		Helix: store.HelixOptions{
-			URL:       helixURL,
-			APIKey:    helixAPIKey,
-			APIKeyEnv: helixAPIKeyEnv,
-			ProjectID: helixProjectID,
+			URL:                helixURL,
+			APIKey:             helixAPIKey,
+			APIKeyEnv:          helixAPIKeyEnv,
+			ProjectID:          helixProjectID,
+			Timeout:            helixTimeout,
+			WriteRetryAttempts: helixRetryAttempts,
+			WriteRetryBackoff:  helixRetryBackoff,
 		},
 	}
 }

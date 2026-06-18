@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Backend string
@@ -17,10 +18,13 @@ type SQLiteOptions struct {
 }
 
 type HelixOptions struct {
-	URL       string
-	APIKey    string
-	APIKeyEnv string
-	ProjectID string
+	URL                string
+	APIKey             string
+	APIKeyEnv          string
+	ProjectID          string
+	Timeout            time.Duration
+	WriteRetryAttempts int
+	WriteRetryBackoff  time.Duration
 }
 
 type Options struct {

@@ -141,6 +141,9 @@ Supported options:
 | `store.helix.api_key` | string | HelixDB API key |
 | `store.helix.api_key_env` | string | Environment variable containing the HelixDB API key |
 | `store.helix.project_id` | string | Helix project namespace (default: absolute root) |
+| `store.helix.timeout` | duration | Optional Helix HTTP request timeout |
+| `store.helix.write_retry_attempts` | int | Helix write-conflict attempts including the initial attempt (default: 3) |
+| `store.helix.write_retry_backoff` | duration | Base backoff for Helix write-conflict retries (default: 50ms) |
 | `embedding.provider` | string | Embedding provider: `none`, `openai`, or `openai-compatible` |
 | `embedding.base_url` | string | Embedding API base URL (`/embeddings` is appended for OpenAI-compatible providers) |
 | `embedding.api_key` | string | Embedding API key |
@@ -178,6 +181,9 @@ store:
     url: http://localhost:6969
     api_key_env: HELIX_API_KEY
     project_id: my-repo
+    timeout: 30s
+    write_retry_attempts: 3
+    write_retry_backoff: 50ms
 embedding:
   provider: none
   # OpenAI-compatible local examples:
@@ -667,6 +673,9 @@ code-context test-impact --state unstaged
 | `--helix-api-key` | | | HelixDB API key |
 | `--helix-api-key-env` | | | Environment variable containing the HelixDB API key |
 | `--helix-project-id` | | `<absolute root>` | Helix project namespace |
+| `--helix-timeout` | | | HelixDB HTTP request timeout |
+| `--helix-write-retry-attempts` | | `3` | Helix write-conflict attempts including the initial attempt |
+| `--helix-write-retry-backoff` | | `50ms` | Helix write-conflict retry base backoff |
 | `--embedding-provider` | | `none` | Embedding provider (`none`, `openai`, `openai-compatible`) |
 | `--embedding-base-url` | | | Embedding API base URL |
 | `--embedding-api-key` | | | Embedding API key |
