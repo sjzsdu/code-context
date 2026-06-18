@@ -230,11 +230,13 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 	defer cleanup()
 
 	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{
-		Question:    "Foo",
-		Profile:     engine.AnswerProfileExplainCode,
-		ContextOnly: true,
-		Format:      "json",
-		Limit:       3,
+		Question:            "Foo",
+		Profile:             engine.AnswerProfileExplainCode,
+		ContextOnly:         true,
+		Format:              "json",
+		Limit:               3,
+		DedupeContext:       true,
+		MaxContextItemChars: 80,
 	})
 	if err != nil {
 		t.Fatalf("run answer tool json: %v", err)
@@ -242,6 +244,8 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 	if !strings.Contains(out, "\"question\": \"Foo\"") ||
 		!strings.Contains(out, "\"profile\": \"explain-code\"") ||
 		!strings.Contains(out, "\"template\": \"explain\"") ||
+		!strings.Contains(out, "\"retrieval\"") ||
+		!strings.Contains(out, "\"dedupe_context\": true") ||
 		!strings.Contains(out, "\"sources\"") {
 		t.Fatalf("expected JSON answer context, got:\n%s", out)
 	}

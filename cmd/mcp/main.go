@@ -119,6 +119,11 @@ type AnswerArgs struct {
 	GraphWeight         float64               `json:"graph_weight,omitempty"`
 	ExpandFrom          []store.TargetRef     `json:"expand_from,omitempty"`
 	ExpandMaxDepth      int                   `json:"expand_max_depth,omitempty"`
+	MinContextScore     float64               `json:"min_context_score,omitempty"`
+	DedupeContext       bool                  `json:"dedupe_context,omitempty"`
+	MaxPerFile          int                   `json:"max_per_file,omitempty"`
+	MaxContextChars     int                   `json:"max_context_chars,omitempty"`
+	MaxContextItemChars int                   `json:"max_context_item_chars,omitempty"`
 	ContextOnly         bool                  `json:"context_only,omitempty"`
 	RequireCitations    bool                  `json:"require_citations,omitempty"`
 	MinCitationCoverage float64               `json:"min_citation_coverage,omitempty"`
@@ -538,7 +543,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_context", "code_context_graph_traverse"))), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true/min_citation_coverage for grounding gates or evaluate=true/min_evaluation_score for local answer evaluation"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; use min_context_score/dedupe_context/max_per_file/max_context_chars for retrieval post-processing, require_citations/min_citation_coverage for grounding gates, or evaluate/min_evaluation_score for local answer evaluation"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 			if strings.TrimSpace(args.Format) == "" {
 				args.Format = "markdown"
@@ -824,7 +829,7 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer",
-		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true/min_citation_coverage for grounding gates or evaluate=true/min_evaluation_score for local answer evaluation",
+		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; use min_context_score/dedupe_context/max_per_file/max_context_chars for retrieval post-processing, require_citations/min_citation_coverage for grounding gates, or evaluate/min_evaluation_score for local answer evaluation",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 		output, err := runAnswerTool(ctx, eng, args)
 		if err != nil {
@@ -1583,6 +1588,11 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 		GraphWeight:         args.GraphWeight,
 		ExpandFrom:          args.ExpandFrom,
 		ExpandMaxDepth:      args.ExpandMaxDepth,
+		MinContextScore:     args.MinContextScore,
+		DedupeContext:       args.DedupeContext,
+		MaxPerFile:          args.MaxPerFile,
+		MaxContextChars:     args.MaxContextChars,
+		MaxContextItemChars: args.MaxContextItemChars,
 		ContextOnly:         args.ContextOnly,
 		RequireCitations:    args.RequireCitations,
 		MinCitationCoverage: args.MinCitationCoverage,

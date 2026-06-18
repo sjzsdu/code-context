@@ -65,6 +65,7 @@ code-context hybrid-search "handler health check"
 code-context answer-templates
 code-context answer-profiles
 code-context answer "How is status served?" --context-only
+code-context answer "How is status served?" --context-only --dedupe --max-per-file 2 --max-context-chars 6000 --json
 code-context answer "How is status served?" --template explain --format markdown
 code-context answer "How is status served?" --profile review-change --format markdown
 code-context answer "How is status served?" --require-citations --json
@@ -184,7 +185,11 @@ overrides the preset text. Use CLI `answer-templates`, HTTP `/api/answer-templat
 `test-plan`) to preconfigure template, retrieval defaults, and grounding policy. Use CLI
 `answer-profiles`, HTTP `/api/answer-profiles`, or MCP `answer_profiles` to discover profiles.
 Answer retrieval can be scoped/tuned with provider-neutral `filter`,
-source weights, and graph `expand_from`/`expand_max_depth` controls. Use CLI `--format markdown` or
+source weights, and graph `expand_from`/`expand_max_depth` controls. Retrieved context can then be
+post-processed through the provider-neutral `AnswerReranker` hook with CLI `--min-score`,
+`--dedupe`, `--max-per-file`, `--max-context-item-chars`, and `--max-context-chars` or JSON/MCP
+`min_context_score`, `dedupe_context`, `max_per_file`, `max_context_item_chars`, and
+`max_context_chars`; results include a `retrieval` report. Use CLI `--format markdown` or
 MCP `format: "markdown"` for agent-readable answers with a `Sources` section; use JSON for
 structured consumers. Provider-backed answers include a deterministic `grounding` citation-label
 audit (not semantic fact-checking) with valid/missing/uncited source labels; CLI
@@ -504,7 +509,7 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/text` | `q`, `file?`, `limit?` | Text search |
 | POST | `/api/vector` | JSON `VectorSearchQuery` | Provider-backed vector search |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer`; optional local evaluation appears under `evaluation` |
+| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `profile?`, `template?`, `min_context_score?`, `dedupe_context?`, `max_per_file?`, `max_context_chars?`, `max_context_item_chars?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer`; retrieval report appears under `retrieval`, optional local evaluation under `evaluation` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | | List built-in provider-neutral answer workflow profiles |
 | GET | `/api/provider-diagnostics` | | Local embedding/answer provider configuration checks |

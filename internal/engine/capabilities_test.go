@@ -524,6 +524,104 @@ func TestAnswerRejectsInvalidMinEvaluationScore(t *testing.T) {
 	}
 }
 
+func TestAnswerRetrievalPostProcessing(t *testing.T) {
+	hybridStore := &fakeAnswerRerankStore{hits: []store.SearchHit{
+		{
+			Target:   testTarget(store.TargetSymbol, "a.go", "Result", 3),
+			Score:    0.9,
+			Source:   store.SearchSourceText,
+			Evidence: "alpha beta gamma delta epsilon zeta eta theta",
+		},
+		{
+			Target:   testTarget(store.TargetSymbol, "a.go", "Result", 3),
+			Score:    0.8,
+			Source:   store.SearchSourceVector,
+			Evidence: "duplicate evidence should be dropped",
+		},
+		{
+			Target:   testTarget(store.TargetSymbol, "a.go", "Other", 9),
+			Score:    0.7,
+			Source:   store.SearchSourceText,
+			Evidence: "same file should be dropped by max per file",
+		},
+		{
+			Target:   testTarget(store.TargetSymbol, "b.go", "Low", 2),
+			Score:    0.1,
+			Source:   store.SearchSourceText,
+			Evidence: "low score should be dropped",
+		},
+		{
+			Target:   testTarget(store.TargetSymbol, "b.go", "Keep", 4),
+			Score:    0.6,
+			Source:   store.SearchSourceText,
+			Evidence: "bravo charlie delta echo foxtrot",
+		},
+	}}
+	eng := &Engine{store: hybridStore}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:            "hello",
+		ContextOnly:         true,
+		Limit:               10,
+		MinContextScore:     0.5,
+		DedupeContext:       true,
+		MaxPerFile:          1,
+		MaxContextItemChars: 20,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if len(result.Context) != 2 {
+		t.Fatalf("context len = %d, want 2: %#v", len(result.Context), result.Context)
+	}
+	if result.Context[0].Target.Path != "a.go" || result.Context[1].Target.Path != "b.go" {
+		t.Fatalf("context targets = %#v", result.Context)
+	}
+	if len([]rune(result.Context[0].Content)) > 20 || result.Context[0].Metadata["context_truncated"] != "true" {
+		t.Fatalf("first context content/metadata = %q %#v", result.Context[0].Content, result.Context[0].Metadata)
+	}
+	if result.Retrieval == nil || result.Retrieval.Selected != 2 || result.Retrieval.Dropped != 3 || !result.Retrieval.Truncated {
+		t.Fatalf("retrieval = %#v", result.Retrieval)
+	}
+	if !strings.Contains(FormatAnswerMarkdown(result), "## Retrieval") {
+		t.Fatalf("markdown did not include retrieval section")
+	}
+}
+
+func TestAnswerRetrievalUsesInjectedReranker(t *testing.T) {
+	reranker := &fakeAnswerReranker{}
+	eng := &Engine{store: &fakeAnswerRerankStore{hits: []store.SearchHit{{
+		Target:   testTarget(store.TargetSymbol, "a.go", "Result", 3),
+		Score:    0.9,
+		Source:   store.SearchSourceText,
+		Evidence: "result evidence",
+	}}}, reranker: reranker}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:    "hello",
+		ContextOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !reranker.called {
+		t.Fatalf("custom reranker was not called")
+	}
+	if result.Retrieval == nil || result.Retrieval.Retriever != "fake-reranker" {
+		t.Fatalf("retrieval = %#v", result.Retrieval)
+	}
+}
+
+func TestAnswerRejectsInvalidRetrievalOptions(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}}
+	_, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:        "hello",
+		ContextOnly:     true,
+		MinContextScore: -0.1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "min context score") {
+		t.Fatalf("Answer error = %v, want min context score validation", err)
+	}
+}
+
 func TestAnswerRejectsUnknownProfile(t *testing.T) {
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
 	_, err := eng.Answer(context.Background(), AnswerOptions{
@@ -784,6 +882,39 @@ func (e *fakeAnswerEvaluator) EvaluateAnswer(_ context.Context, input AnswerEval
 		Passed:    true,
 		Summary:   "fake evaluation passed",
 	}, nil
+}
+
+type fakeAnswerReranker struct {
+	called bool
+	input  AnswerRerankInput
+}
+
+func (r *fakeAnswerReranker) RerankAnswerHits(_ context.Context, input AnswerRerankInput) (*AnswerRerankResult, error) {
+	r.called = true
+	r.input = input
+	return &AnswerRerankResult{
+		Hits: input.Hits,
+		Retrieval: &AnswerRetrieval{
+			Retriever:      "fake-reranker",
+			RequestedLimit: input.Options.Limit,
+			Retrieved:      len(input.Hits),
+			Selected:       len(input.Hits),
+			Summary:        "fake reranker selected all hits.",
+		},
+	}, nil
+}
+
+type fakeAnswerRerankStore struct {
+	store.Store
+	hits []store.SearchHit
+}
+
+func (s *fakeAnswerRerankStore) SearchHybrid(_ context.Context, query store.HybridSearchQuery) ([]store.SearchHit, error) {
+	return append([]store.SearchHit(nil), s.hits...), nil
+}
+
+func testTarget(kind store.TargetKind, path string, name string, line int) store.TargetRef {
+	return store.TargetRef{Kind: kind, Path: path, Name: name, Line: line}
 }
 
 type fakeVectorStore struct {

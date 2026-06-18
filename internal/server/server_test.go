@@ -230,7 +230,7 @@ func TestAnswerEndpointContextOnly(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Post(ts.URL+"/api/answer", "application/json", strings.NewReader(`{"question":"Where is Foo handled?","context_only":true,"limit":3}`))
+	resp, err := http.Post(ts.URL+"/api/answer", "application/json", strings.NewReader(`{"question":"Where is Foo handled?","context_only":true,"limit":3,"dedupe_context":true,"max_context_item_chars":80}`))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -248,6 +248,9 @@ func TestAnswerEndpointContextOnly(t *testing.T) {
 	}
 	if payload.Question != "Where is Foo handled?" {
 		t.Fatalf("question = %q", payload.Question)
+	}
+	if payload.Retrieval == nil || !payload.Retrieval.DedupeContext || payload.Retrieval.MaxContextItemChars != 80 {
+		t.Fatalf("retrieval = %#v", payload.Retrieval)
 	}
 }
 

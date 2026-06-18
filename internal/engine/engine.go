@@ -31,6 +31,7 @@ type Engine struct {
 	store       store.Store
 	embedder    store.Embedder
 	answerer    store.Answerer
+	reranker    AnswerReranker
 	evaluator   AnswerEvaluator
 	options     Options
 	parser      parser.Parser
@@ -63,6 +64,7 @@ type Options struct {
 	Store           store.Options
 	Embedding       embeddingpkg.Options
 	Answer          answerpkg.Options
+	AnswerReranker  AnswerReranker
 	AnswerEvaluator AnswerEvaluator
 }
 
@@ -113,6 +115,10 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 	if evaluator == nil {
 		evaluator = LocalAnswerEvaluator{}
 	}
+	reranker := opts.AnswerReranker
+	if reranker == nil {
+		reranker = LocalAnswerReranker{}
+	}
 
 	if err := s.Init(context.Background()); err != nil {
 		return nil, fmt.Errorf("init store: %w", err)
@@ -129,6 +135,7 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 		store:     s,
 		embedder:  embedder,
 		answerer:  answerer,
+		reranker:  reranker,
 		evaluator: evaluator,
 		options:   opts,
 		parser:    p,
@@ -605,6 +612,11 @@ type AnswerOptions struct {
 	GraphWeight         float64               `json:"graph_weight,omitempty"`
 	ExpandFrom          []store.TargetRef     `json:"expand_from,omitempty"`
 	ExpandMaxDepth      int                   `json:"expand_max_depth,omitempty"`
+	MinContextScore     float64               `json:"min_context_score,omitempty"`
+	DedupeContext       bool                  `json:"dedupe_context,omitempty"`
+	MaxPerFile          int                   `json:"max_per_file,omitempty"`
+	MaxContextChars     int                   `json:"max_context_chars,omitempty"`
+	MaxContextItemChars int                   `json:"max_context_item_chars,omitempty"`
 	ContextOnly         bool                  `json:"context_only,omitempty"`
 	RequireCitations    bool                  `json:"require_citations,omitempty"`
 	MinCitationCoverage float64               `json:"min_citation_coverage,omitempty"`
@@ -634,6 +646,7 @@ type AnswerResult struct {
 	Context     []store.AnswerContext `json:"context,omitempty"`
 	Sources     []AnswerSource        `json:"sources,omitempty"`
 	Hits        []store.SearchHit     `json:"hits,omitempty"`
+	Retrieval   *AnswerRetrieval      `json:"retrieval,omitempty"`
 	Grounding   *AnswerGrounding      `json:"grounding,omitempty"`
 	Evaluation  *AnswerEvaluation     `json:"evaluation,omitempty"`
 	Usage       *store.AnswerUsage    `json:"usage,omitempty"`
@@ -652,6 +665,49 @@ type AnswerGrounding struct {
 	MissingCitations []string `json:"missing_citations,omitempty"`
 	UncitedCitations []string `json:"uncited_citations,omitempty"`
 	Summary          string   `json:"summary"`
+}
+
+type AnswerRetrieval struct {
+	Retriever           string  `json:"retriever,omitempty"`
+	RequestedLimit      int     `json:"requested_limit,omitempty"`
+	Retrieved           int     `json:"retrieved"`
+	Selected            int     `json:"selected"`
+	Dropped             int     `json:"dropped,omitempty"`
+	MinContextScore     float64 `json:"min_context_score,omitempty"`
+	DedupeContext       bool    `json:"dedupe_context,omitempty"`
+	MaxPerFile          int     `json:"max_per_file,omitempty"`
+	MaxContextChars     int     `json:"max_context_chars,omitempty"`
+	MaxContextItemChars int     `json:"max_context_item_chars,omitempty"`
+	TotalContextChars   int     `json:"total_context_chars,omitempty"`
+	Truncated           bool    `json:"truncated,omitempty"`
+	Summary             string  `json:"summary"`
+}
+
+type AnswerRerankOptions struct {
+	Limit               int
+	MinContextScore     float64
+	DedupeContext       bool
+	MaxPerFile          int
+	MaxContextChars     int
+	MaxContextItemChars int
+}
+
+type AnswerRerankInput struct {
+	Question string
+	Hits     []store.SearchHit
+	Options  AnswerRerankOptions
+}
+
+type AnswerRerankResult struct {
+	Hits      []store.SearchHit
+	Retrieval *AnswerRetrieval
+}
+
+// AnswerReranker is a provider-neutral hook for post-processing retrieved
+// answer context. The default implementation preserves ranking while applying
+// optional score filters, dedupe/diversity, and context-budget compression.
+type AnswerReranker interface {
+	RerankAnswerHits(ctx context.Context, input AnswerRerankInput) (*AnswerRerankResult, error)
 }
 
 type AnswerEvaluation struct {
@@ -758,6 +814,20 @@ func FormatAnswerMarkdown(result *AnswerResult) string {
 			b.WriteByte('\n')
 		}
 	}
+	if result.Retrieval != nil {
+		b.WriteString("\n## Retrieval\n")
+		fmt.Fprintf(&b, "- %s\n", result.Retrieval.Summary)
+		if result.Retrieval.MinContextScore > 0 {
+			fmt.Fprintf(&b, "- min score: %.4f\n", result.Retrieval.MinContextScore)
+		}
+		if result.Retrieval.MaxContextChars > 0 {
+			fmt.Fprintf(&b, "- context budget: %d chars", result.Retrieval.MaxContextChars)
+			if result.Retrieval.Truncated {
+				b.WriteString(" (truncated)")
+			}
+			b.WriteByte('\n')
+		}
+	}
 	if result.Grounding != nil {
 		b.WriteString("\n## Grounding\n")
 		fmt.Fprintf(&b, "- %s\n", result.Grounding.Summary)
@@ -820,7 +890,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 		return nil, err
 	}
 
-	contextItems, hits, err := e.AnswerContextWithOptions(ctx, opts)
+	contextItems, hits, retrieval, err := e.answerContextWithOptions(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -832,6 +902,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 		Context:     contextItems,
 		Sources:     answerSourcesFromContext(contextItems),
 		Hits:        hits,
+		Retrieval:   retrieval,
 		Summary:     fmt.Sprintf("Prepared %d retrieved context items for question %q", len(contextItems), question),
 	}
 	if opts.ContextOnly {
@@ -904,15 +975,20 @@ func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) 
 }
 
 func (e *Engine) AnswerContextWithOptions(ctx context.Context, opts AnswerOptions) ([]store.AnswerContext, []store.SearchHit, error) {
+	contextItems, hits, _, err := e.answerContextWithOptions(ctx, opts)
+	return contextItems, hits, err
+}
+
+func (e *Engine) answerContextWithOptions(ctx context.Context, opts AnswerOptions) ([]store.AnswerContext, []store.SearchHit, *AnswerRetrieval, error) {
 	question := answerQuestion(opts)
 	question = strings.TrimSpace(question)
 	if question == "" {
-		return nil, nil, fmt.Errorf("answer question is required")
+		return nil, nil, nil, fmt.Errorf("answer question is required")
 	}
 	var err error
 	_, opts, err = applyAnswerProfile(opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	limit := opts.Limit
 	if limit <= 0 {
@@ -929,17 +1005,17 @@ func (e *Engine) AnswerContextWithOptions(ctx context.Context, opts AnswerOption
 		ExpandMaxDepth: opts.ExpandMaxDepth,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	reranked, err := e.rerankAnswerHits(ctx, question, hits, opts, limit)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	hits = reranked.Hits
+	retrieval := reranked.Retrieval
 	contextItems := make([]store.AnswerContext, 0, len(hits))
 	for i, hit := range hits {
-		content := strings.TrimSpace(hit.Evidence)
-		if content == "" {
-			content = answerContentFromHighlights(hit.Highlights)
-		}
-		if content == "" {
-			content = answerTargetLabel(hit.Target)
-		}
+		content := answerHitContent(hit)
 		citation := answerCitationLabel(i + 1)
 		metadata := map[string]string{"rank": fmt.Sprint(i + 1), "citation": citation}
 		for k, v := range hit.Metadata {
@@ -956,7 +1032,30 @@ func (e *Engine) AnswerContextWithOptions(ctx context.Context, opts AnswerOption
 			Metadata: metadata,
 		})
 	}
-	return contextItems, hits, nil
+	if retrieval == nil {
+		retrieval = &AnswerRetrieval{}
+	}
+	retrieval.Selected = len(contextItems)
+	if retrieval.Summary == "" {
+		retrieval.Summary = answerRetrievalSummary(retrieval)
+	}
+	return contextItems, hits, retrieval, nil
+}
+
+func (e *Engine) rerankAnswerHits(ctx context.Context, question string, hits []store.SearchHit, opts AnswerOptions, limit int) (*AnswerRerankResult, error) {
+	reranker := e.reranker
+	if reranker == nil {
+		reranker = LocalAnswerReranker{}
+	}
+	rerankOpts, err := answerRerankOptions(opts, limit)
+	if err != nil {
+		return nil, err
+	}
+	return reranker.RerankAnswerHits(ctx, AnswerRerankInput{
+		Question: question,
+		Hits:     hits,
+		Options:  rerankOpts,
+	})
 }
 
 func answerQuestion(opts AnswerOptions) string {
@@ -1278,6 +1377,197 @@ func answerGroundingSummary(report *AnswerGrounding, answer string) string {
 	default:
 		return "Answer citation audit found no valid retrieved-source citations."
 	}
+}
+
+// LocalAnswerReranker is a deterministic, offline answer-context post-processor.
+// It preserves upstream ranking and only applies explicit caller constraints.
+type LocalAnswerReranker struct{}
+
+func (LocalAnswerReranker) RerankAnswerHits(_ context.Context, input AnswerRerankInput) (*AnswerRerankResult, error) {
+	opts := input.Options
+	if err := validateAnswerRerankOptions(opts); err != nil {
+		return nil, err
+	}
+	report := &AnswerRetrieval{
+		Retriever:           "local-reranker",
+		RequestedLimit:      opts.Limit,
+		Retrieved:           len(input.Hits),
+		MinContextScore:     opts.MinContextScore,
+		DedupeContext:       opts.DedupeContext,
+		MaxPerFile:          opts.MaxPerFile,
+		MaxContextChars:     opts.MaxContextChars,
+		MaxContextItemChars: opts.MaxContextItemChars,
+	}
+
+	selected := make([]store.SearchHit, 0, len(input.Hits))
+	seenTargets := map[string]struct{}{}
+	perFile := map[string]int{}
+	totalContextChars := 0
+	for _, hit := range input.Hits {
+		if opts.MinContextScore > 0 && hit.Score < opts.MinContextScore {
+			report.Dropped++
+			continue
+		}
+		targetKey := answerHitTargetKey(hit)
+		if opts.DedupeContext && targetKey != "" {
+			if _, ok := seenTargets[targetKey]; ok {
+				report.Dropped++
+				continue
+			}
+			seenTargets[targetKey] = struct{}{}
+		}
+		fileKey := answerHitFileKey(hit)
+		if opts.MaxPerFile > 0 && fileKey != "" {
+			if perFile[fileKey] >= opts.MaxPerFile {
+				report.Dropped++
+				continue
+			}
+			perFile[fileKey]++
+		}
+
+		content := answerHitContent(hit)
+		originalChars := len([]rune(content))
+		truncated := false
+		if opts.MaxContextItemChars > 0 && originalChars > opts.MaxContextItemChars {
+			content = answerTrimToRunes(content, opts.MaxContextItemChars)
+			truncated = true
+			report.Truncated = true
+		}
+		if opts.MaxContextChars > 0 {
+			remaining := opts.MaxContextChars - totalContextChars
+			if remaining <= 0 {
+				report.Dropped++
+				report.Truncated = true
+				continue
+			}
+			if len([]rune(content)) > remaining {
+				content = answerTrimToRunes(content, remaining)
+				truncated = true
+				report.Truncated = true
+			}
+		}
+		contentChars := len([]rune(content))
+		totalContextChars += contentChars
+		hit = answerHitWithContextContent(hit, content, originalChars, contentChars, truncated)
+		selected = append(selected, hit)
+	}
+	report.Selected = len(selected)
+	report.TotalContextChars = totalContextChars
+	report.Summary = answerRetrievalSummary(report)
+	return &AnswerRerankResult{Hits: selected, Retrieval: report}, nil
+}
+
+func answerRerankOptions(opts AnswerOptions, limit int) (AnswerRerankOptions, error) {
+	out := AnswerRerankOptions{
+		Limit:               limit,
+		MinContextScore:     opts.MinContextScore,
+		DedupeContext:       opts.DedupeContext,
+		MaxPerFile:          opts.MaxPerFile,
+		MaxContextChars:     opts.MaxContextChars,
+		MaxContextItemChars: opts.MaxContextItemChars,
+	}
+	return out, validateAnswerRerankOptions(out)
+}
+
+func validateAnswerRerankOptions(opts AnswerRerankOptions) error {
+	switch {
+	case opts.MinContextScore < 0:
+		return fmt.Errorf("min context score must be non-negative")
+	case opts.MaxPerFile < 0:
+		return fmt.Errorf("max per file must be non-negative")
+	case opts.MaxContextChars < 0:
+		return fmt.Errorf("max context chars must be non-negative")
+	case opts.MaxContextItemChars < 0:
+		return fmt.Errorf("max context item chars must be non-negative")
+	default:
+		return nil
+	}
+}
+
+func answerRetrievalSummary(report *AnswerRetrieval) string {
+	if report == nil {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("Selected %d of %d retrieved hits", report.Selected, report.Retrieved)}
+	if report.Dropped > 0 {
+		parts = append(parts, fmt.Sprintf("dropped %d", report.Dropped))
+	}
+	if report.Truncated {
+		parts = append(parts, "truncated to fit context budget")
+	}
+	return strings.Join(parts, "; ") + "."
+}
+
+func answerHitContent(hit store.SearchHit) string {
+	content := strings.TrimSpace(hit.Evidence)
+	if content == "" {
+		content = answerContentFromHighlights(hit.Highlights)
+	}
+	if content == "" {
+		content = answerTargetLabel(hit.Target)
+	}
+	return content
+}
+
+func answerHitWithContextContent(hit store.SearchHit, content string, originalChars int, contentChars int, truncated bool) store.SearchHit {
+	hit.Evidence = strings.TrimSpace(content)
+	if hit.Metadata == nil {
+		hit.Metadata = map[string]string{}
+	}
+	hit.Metadata["context_chars"] = fmt.Sprint(contentChars)
+	if originalChars != contentChars {
+		hit.Metadata["context_original_chars"] = fmt.Sprint(originalChars)
+	}
+	if truncated {
+		hit.Metadata["context_truncated"] = "true"
+	}
+	return hit
+}
+
+func answerHitTargetKey(hit store.SearchHit) string {
+	target := hit.Target
+	parts := []string{
+		string(target.Kind),
+		target.Path,
+		target.Name,
+		fmt.Sprint(target.Line),
+		target.Method,
+		target.RoutePath,
+		target.Value,
+	}
+	allEmpty := true
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" && part != "0" {
+			allEmpty = false
+			break
+		}
+	}
+	if allEmpty {
+		return ""
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func answerHitFileKey(hit store.SearchHit) string {
+	if strings.TrimSpace(hit.Target.Path) != "" {
+		return strings.TrimSpace(hit.Target.Path)
+	}
+	return ""
+}
+
+func answerTrimToRunes(text string, max int) string {
+	text = strings.TrimSpace(text)
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	if max <= 3 {
+		return strings.TrimSpace(string(runes[:max]))
+	}
+	return strings.TrimSpace(string(runes[:max-3])) + "..."
 }
 
 // LocalAnswerEvaluator provides a deterministic, offline baseline evaluator. It

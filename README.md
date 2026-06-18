@@ -371,7 +371,10 @@ set. `--profile explain-code|review-change|plan-implementation|risk-analysis|tes
 workflow profile that preconfigures template, retrieval defaults, and grounding policy; explicit
 flags still override profile defaults. Retrieval can be scoped/tuned with the same provider-neutral
 filter and fusion controls used by `hybrid-search` (`--target-kind`, `--file-pattern`,
-`--metadata`, `--text-weight`, `--vector-weight`, `--graph-weight`, `--expand-from`). Use
+`--metadata`, `--text-weight`, `--vector-weight`, `--graph-weight`, `--expand-from`). Retrieved
+context can also be post-processed before answering with `--min-score`, `--dedupe`,
+`--max-per-file`, `--max-context-item-chars`, and `--max-context-chars`; the JSON/Markdown result
+includes a `retrieval` report. Use
 `--format markdown` for agent-readable answer output with a `Sources` section, or `--json` for
 machine-readable payloads. Provider-backed answers include a local citation grounding audit
 (citation-label coverage, not semantic fact-checking) in `grounding`; `--require-citations` turns
@@ -389,6 +392,7 @@ code-context answer-profiles
 code-context answer "Where is status served?" --context-only
 code-context answer "Where is status served?" --context-only --format markdown
 code-context answer "Where is status served?" --context-only --target-kind symbol --text-weight 0.7 --vector-weight 0.3
+code-context answer "Where is status served?" --context-only --dedupe --max-per-file 2 --max-context-chars 6000 --json
 code-context answer "Where is status served?" --template explain --format markdown
 code-context answer "Where is status served?" --profile review-change --format markdown
 code-context answer "Where is status served?" --answer-provider openai-compatible --answer-base-url http://localhost:11434/v1 --answer-model qwen2.5-coder
@@ -726,7 +730,11 @@ when both are present, and `answer-templates` / `/api/answer-templates` / MCP
 `answer-profiles` / `/api/answer-profiles` / MCP `answer_profiles`, and can be selected with
 `profile`. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
 `graph_weight`, `expand_from`, and `expand_max_depth` so callers can scope and tune retrieval
-without dropping to backend-specific APIs. MCP answer tools can return `format: "markdown"` for a
+without dropping to backend-specific APIs. They can then post-process the selected answer context
+through the provider-neutral `AnswerReranker` hook with `min_context_score`, `dedupe_context`,
+`max_per_file`, `max_context_item_chars`, and `max_context_chars`; results include a `retrieval`
+report describing selected, dropped, and truncated context. MCP answer tools can return
+`format: "markdown"` for a
 ready-to-display answer with sources, or JSON for structured consumers. Provider-backed answers run
 a deterministic citation-label audit that reports valid, missing, and uncited source labels under
 `grounding`; `require_citations` or `min_citation_coverage` marks this audit as required for callers
@@ -772,7 +780,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources`, provider-backed `grounding`, and optional local `evaluation` |
+| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `min_context_score?`, `dedupe_context?`, `max_per_file?`, `max_context_chars?`, `max_context_item_chars?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources`, `retrieval`, provider-backed `grounding`, and optional local `evaluation` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | — | List built-in provider-neutral answer workflow profiles |
 | GET | `/api/provider-diagnostics` | — | Check embedding and answer provider configuration without network calls |

@@ -1178,6 +1178,11 @@ func newAnswerCmd() *cobra.Command {
 	var textWeight float64
 	var vectorWeight float64
 	var graphWeight float64
+	var minContextScore float64
+	var dedupeContext bool
+	var maxPerFile int
+	var maxContextChars int
+	var maxContextItemChars int
 	cmd := &cobra.Command{
 		Use:   "answer <question>",
 		Short: "Answer a question using retrieved code-context evidence",
@@ -1216,6 +1221,11 @@ func newAnswerCmd() *cobra.Command {
 				GraphWeight:         graphWeight,
 				ExpandFrom:          expandFrom,
 				ExpandMaxDepth:      expandDepth,
+				MinContextScore:     minContextScore,
+				DedupeContext:       dedupeContext,
+				MaxPerFile:          maxPerFile,
+				MaxContextChars:     maxContextChars,
+				MaxContextItemChars: maxContextItemChars,
 				ContextOnly:         contextOnly,
 				RequireCitations:    requireCitations,
 				MinCitationCoverage: minCitationCoverage,
@@ -1290,6 +1300,11 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().Float64Var(&textWeight, "text-weight", 0, "answer retrieval text score weight; defaults with other weights when all are zero")
 	cmd.Flags().Float64Var(&vectorWeight, "vector-weight", 0, "answer retrieval vector score weight; defaults with other weights when all are zero")
 	cmd.Flags().Float64Var(&graphWeight, "graph-weight", 0, "answer retrieval graph score weight; defaults with other weights when all are zero")
+	cmd.Flags().Float64Var(&minContextScore, "min-score", 0, "drop retrieved answer context hits below this score")
+	cmd.Flags().BoolVar(&dedupeContext, "dedupe", false, "deduplicate answer context by target before calling the answer provider")
+	cmd.Flags().IntVar(&maxPerFile, "max-per-file", 0, "maximum answer context items per source file (0 keeps all)")
+	cmd.Flags().IntVar(&maxContextChars, "max-context-chars", 0, "maximum total answer context characters before provider call (0 unlimited)")
+	cmd.Flags().IntVar(&maxContextItemChars, "max-context-item-chars", 0, "maximum characters per answer context item (0 unlimited)")
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0, "override answer max completion tokens")
 	cmd.Flags().Float64Var(&temperature, "temperature", 0, "override answer sampling temperature")
 	cmd.Flags().StringVar(&format, "format", "text", "answer output format (text|markdown|json)")
