@@ -585,6 +585,7 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 type AnswerOptions struct {
 	Query               string                `json:"query,omitempty"`
 	Question            string                `json:"question,omitempty"`
+	Profile             string                `json:"profile,omitempty"`
 	Template            string                `json:"template,omitempty"`
 	SystemPrompt        string                `json:"system_prompt,omitempty"`
 	Messages            []store.AnswerMessage `json:"messages,omitempty"`
@@ -616,6 +617,7 @@ type AnswerResult struct {
 	Answer      string                `json:"answer,omitempty"`
 	Provider    string                `json:"provider,omitempty"`
 	Model       string                `json:"model,omitempty"`
+	Profile     string                `json:"profile,omitempty"`
 	Template    string                `json:"template,omitempty"`
 	ContextOnly bool                  `json:"context_only,omitempty"`
 	Context     []store.AnswerContext `json:"context,omitempty"`
@@ -644,6 +646,20 @@ type AnswerTemplateInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Prompt      string `json:"prompt,omitempty"`
+}
+
+type AnswerProfileInfo struct {
+	Name                string             `json:"name"`
+	Description         string             `json:"description"`
+	Template            string             `json:"template,omitempty"`
+	Filter              store.SearchFilter `json:"filter,omitempty"`
+	Limit               int                `json:"limit,omitempty"`
+	TextWeight          float64            `json:"text_weight,omitempty"`
+	VectorWeight        float64            `json:"vector_weight,omitempty"`
+	GraphWeight         float64            `json:"graph_weight,omitempty"`
+	ExpandMaxDepth      int                `json:"expand_max_depth,omitempty"`
+	RequireCitations    bool               `json:"require_citations,omitempty"`
+	MinCitationCoverage float64            `json:"min_citation_coverage,omitempty"`
 }
 
 func FormatAnswerMarkdown(result *AnswerResult) string {
@@ -729,6 +745,10 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	if question == "" {
 		return nil, fmt.Errorf("answer question is required")
 	}
+	profile, opts, err := applyAnswerProfile(opts)
+	if err != nil {
+		return nil, err
+	}
 	template, systemPrompt, err := resolveAnswerPrompt(opts.Template, opts.SystemPrompt)
 	if err != nil {
 		return nil, err
@@ -744,6 +764,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	}
 	result := &AnswerResult{
 		Question:    question,
+		Profile:     profile,
 		Template:    template,
 		ContextOnly: opts.ContextOnly,
 		Context:     contextItems,
@@ -791,6 +812,11 @@ func (e *Engine) AnswerContextWithOptions(ctx context.Context, opts AnswerOption
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return nil, nil, fmt.Errorf("answer question is required")
+	}
+	var err error
+	_, opts, err = applyAnswerProfile(opts)
+	if err != nil {
+		return nil, nil, err
 	}
 	limit := opts.Limit
 	if limit <= 0 {
@@ -852,6 +878,15 @@ const (
 	AnswerTemplatePlan    = "plan"
 )
 
+const (
+	AnswerProfileGeneral            = "general"
+	AnswerProfileExplainCode        = "explain-code"
+	AnswerProfileReviewChange       = "review-change"
+	AnswerProfilePlanImplementation = "plan-implementation"
+	AnswerProfileRiskAnalysis       = "risk-analysis"
+	AnswerProfileTestPlan           = "test-plan"
+)
+
 func AnswerTemplates() []string {
 	infos := AnswerTemplateCatalog(false)
 	names := make([]string, 0, len(infos))
@@ -878,6 +913,146 @@ func AnswerTemplateCatalog(includePrompts bool) []AnswerTemplateInfo {
 		infos = append(infos, info)
 	}
 	return infos
+}
+
+func AnswerProfiles() []string {
+	infos := AnswerProfileCatalog()
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	return names
+}
+
+func AnswerProfileCatalog() []AnswerProfileInfo {
+	return []AnswerProfileInfo{
+		{
+			Name:        AnswerProfileGeneral,
+			Description: "General evidence-grounded answer with balanced default retrieval.",
+			Template:    AnswerTemplateGeneral,
+			Limit:       8,
+		},
+		{
+			Name:                AnswerProfileExplainCode,
+			Description:         "Explain code behavior, location, and interactions with slightly broader context.",
+			Template:            AnswerTemplateExplain,
+			Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol, store.TargetFile, store.TargetDocument, store.TargetText}},
+			Limit:               10,
+			TextWeight:          0.50,
+			VectorWeight:        0.30,
+			GraphWeight:         0.20,
+			ExpandMaxDepth:      1,
+			MinCitationCoverage: 0.10,
+		},
+		{
+			Name:                AnswerProfileReviewChange,
+			Description:         "Review correctness, risk, tests, docs, and follow-up actions using code/doc/route evidence.",
+			Template:            AnswerTemplateReview,
+			Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol, store.TargetFile, store.TargetRoute, store.TargetDocument}},
+			Limit:               12,
+			TextWeight:          0.55,
+			VectorWeight:        0.20,
+			GraphWeight:         0.25,
+			ExpandMaxDepth:      2,
+			RequireCitations:    true,
+			MinCitationCoverage: 0.10,
+		},
+		{
+			Name:                AnswerProfilePlanImplementation,
+			Description:         "Plan implementation steps with likely files/symbols, risks, and validation commands.",
+			Template:            AnswerTemplatePlan,
+			Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol, store.TargetFile, store.TargetRoute, store.TargetDocument}},
+			Limit:               12,
+			TextWeight:          0.45,
+			VectorWeight:        0.25,
+			GraphWeight:         0.30,
+			ExpandMaxDepth:      2,
+			RequireCitations:    true,
+			MinCitationCoverage: 0.10,
+		},
+		{
+			Name:                AnswerProfileRiskAnalysis,
+			Description:         "Analyze implementation risk using code, route, graph, and documentation evidence.",
+			Template:            AnswerTemplateReview,
+			Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol, store.TargetFile, store.TargetRoute, store.TargetDocument}},
+			Limit:               12,
+			TextWeight:          0.45,
+			VectorWeight:        0.20,
+			GraphWeight:         0.35,
+			ExpandMaxDepth:      2,
+			RequireCitations:    true,
+			MinCitationCoverage: 0.10,
+		},
+		{
+			Name:                AnswerProfileTestPlan,
+			Description:         "Produce a test plan from code and documentation evidence.",
+			Template:            AnswerTemplatePlan,
+			Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol, store.TargetFile, store.TargetDocument}},
+			Limit:               10,
+			TextWeight:          0.60,
+			VectorWeight:        0.20,
+			GraphWeight:         0.20,
+			ExpandMaxDepth:      1,
+			RequireCitations:    true,
+			MinCitationCoverage: 0.10,
+		},
+	}
+}
+
+func applyAnswerProfile(opts AnswerOptions) (string, AnswerOptions, error) {
+	profileName := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(opts.Profile, "_", "-")))
+	if profileName == "" {
+		return "", opts, nil
+	}
+	for _, profile := range AnswerProfileCatalog() {
+		if profile.Name != profileName {
+			continue
+		}
+		opts.Profile = profileName
+		opts = applyAnswerProfileDefaults(opts, profile)
+		return profileName, opts, nil
+	}
+	return "", opts, fmt.Errorf("unsupported answer profile %q (supported: %s)", profileName, strings.Join(AnswerProfiles(), ", "))
+}
+
+func applyAnswerProfileDefaults(opts AnswerOptions, profile AnswerProfileInfo) AnswerOptions {
+	if strings.TrimSpace(opts.Template) == "" {
+		opts.Template = profile.Template
+	}
+	if opts.Limit <= 0 && profile.Limit > 0 {
+		opts.Limit = profile.Limit
+	}
+	if opts.TextWeight == 0 && opts.VectorWeight == 0 && opts.GraphWeight == 0 {
+		opts.TextWeight = profile.TextWeight
+		opts.VectorWeight = profile.VectorWeight
+		opts.GraphWeight = profile.GraphWeight
+	}
+	if opts.ExpandMaxDepth <= 0 && profile.ExpandMaxDepth > 0 {
+		opts.ExpandMaxDepth = profile.ExpandMaxDepth
+	}
+	if len(opts.Filter.TargetKinds) == 0 && len(profile.Filter.TargetKinds) > 0 {
+		opts.Filter.TargetKinds = append([]store.TargetKind(nil), profile.Filter.TargetKinds...)
+	}
+	if strings.TrimSpace(opts.Filter.FilePattern) == "" {
+		opts.Filter.FilePattern = profile.Filter.FilePattern
+	}
+	if len(profile.Filter.Metadata) > 0 {
+		if opts.Filter.Metadata == nil {
+			opts.Filter.Metadata = map[string]string{}
+		}
+		for k, v := range profile.Filter.Metadata {
+			if _, ok := opts.Filter.Metadata[k]; !ok {
+				opts.Filter.Metadata[k] = v
+			}
+		}
+	}
+	if !opts.RequireCitations {
+		opts.RequireCitations = profile.RequireCitations
+	}
+	if opts.MinCitationCoverage == 0 && profile.MinCitationCoverage > 0 {
+		opts.MinCitationCoverage = profile.MinCitationCoverage
+	}
+	return opts
 }
 
 func resolveAnswerPrompt(template string, systemPrompt string) (string, string, error) {

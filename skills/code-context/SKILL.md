@@ -62,8 +62,10 @@ code-context hybrid-search "handler health check"
 
 # 7. Build provider-neutral answer context without external model calls
 code-context answer-templates
+code-context answer-profiles
 code-context answer "How is status served?" --context-only
 code-context answer "How is status served?" --template explain --format markdown
+code-context answer "How is status served?" --profile review-change --format markdown
 code-context answer "How is status served?" --require-citations --json
 code-context answer "How is status served?" --min-citation-coverage 0.5 --json
 
@@ -175,7 +177,11 @@ stable citation/source metadata (`[1]`, `[2]`, ...), and callers can override `s
 prior `messages` without coupling to a specific backend. Callers can also select prompt presets via
 `template`/`--template` (`general`, `explain`, `review`, `plan`); explicit `system_prompt` still
 overrides the preset text. Use CLI `answer-templates`, HTTP `/api/answer-templates`, or MCP
-`answer_templates` to discover the current catalog. Answer retrieval can be scoped/tuned with provider-neutral `filter`,
+`answer_templates` to discover the current catalog. Callers can also select workflow profiles via
+`profile`/`--profile` (`explain-code`, `review-change`, `plan-implementation`, `risk-analysis`,
+`test-plan`) to preconfigure template, retrieval defaults, and grounding policy. Use CLI
+`answer-profiles`, HTTP `/api/answer-profiles`, or MCP `answer_profiles` to discover profiles.
+Answer retrieval can be scoped/tuned with provider-neutral `filter`,
 source weights, and graph `expand_from`/`expand_max_depth` controls. Use CLI `--format markdown` or
 MCP `format: "markdown"` for agent-readable answers with a `Sources` section; use JSON for
 structured consumers. Provider-backed answers include a deterministic `grounding` citation-label
@@ -493,8 +499,9 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/text` | `q`, `file?`, `limit?` | Text search |
 | POST | `/api/vector` | JSON `VectorSearchQuery` | Provider-backed vector search |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
+| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
+| GET | `/api/answer-profiles` | | List built-in provider-neutral answer workflow profiles |
 
 ### Symbol Endpoints
 

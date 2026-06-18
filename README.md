@@ -367,7 +367,9 @@ evidence without any external model call. Results include a provider-neutral `so
 stable citation labels (`[1]`, `[2]`, ...), and `--system-prompt` can override the default answer
 instruction without changing retrieval. `--template general|explain|review|plan` selects a reusable
 provider-neutral answer prompt preset; `--system-prompt` still has highest priority when both are
-set. Retrieval can be scoped/tuned with the same provider-neutral
+set. `--profile explain-code|review-change|plan-implementation|risk-analysis|test-plan` selects a
+workflow profile that preconfigures template, retrieval defaults, and grounding policy; explicit
+flags still override profile defaults. Retrieval can be scoped/tuned with the same provider-neutral
 filter and fusion controls used by `hybrid-search` (`--target-kind`, `--file-pattern`,
 `--metadata`, `--text-weight`, `--vector-weight`, `--graph-weight`, `--expand-from`). Use
 `--format markdown` for agent-readable answer output with a `Sources` section, or `--json` for
@@ -376,13 +378,16 @@ machine-readable payloads. Provider-backed answers include a local citation grou
 missing/unknown retrieved-source citations into a CLI failure after printing the result.
 `--min-citation-coverage 0.5` can require a minimum cited-source coverage ratio.
 Use `answer-templates` or `GET /api/answer-templates` to discover available built-in templates.
+Use `answer-profiles` or `GET /api/answer-profiles` to discover workflow profiles.
 
 ```bash
 code-context answer-templates
+code-context answer-profiles
 code-context answer "Where is status served?" --context-only
 code-context answer "Where is status served?" --context-only --format markdown
 code-context answer "Where is status served?" --context-only --target-kind symbol --text-weight 0.7 --vector-weight 0.3
 code-context answer "Where is status served?" --template explain --format markdown
+code-context answer "Where is status served?" --profile review-change --format markdown
 code-context answer "Where is status served?" --answer-provider openai-compatible --answer-base-url http://localhost:11434/v1 --answer-model qwen2.5-coder
 code-context answer "Where is status served?" --system-prompt "Answer briefly and cite sources."
 code-context answer "Where is status served?" --require-citations --json
@@ -702,7 +707,9 @@ results include provider-neutral citation/source metadata, and requests can over
 retrieval backend-neutral. They can also select reusable provider-neutral prompt presets with
 `template: "general" | "explain" | "review" | "plan"`; `system_prompt` overrides the preset text
 when both are present, and `answer-templates` / `/api/answer-templates` / MCP
-`answer_templates` exposes the current catalog. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
+`answer_templates` exposes the current catalog. Workflow profiles are discoverable via
+`answer-profiles` / `/api/answer-profiles` / MCP `answer_profiles`, and can be selected with
+`profile`. Answer requests also accept `filter`, `text_weight`, `vector_weight`,
 `graph_weight`, `expand_from`, and `expand_max_depth` so callers can scope and tune retrieval
 without dropping to backend-specific APIs. MCP answer tools can return `format: "markdown"` for a
 ready-to-display answer with sources, or JSON for structured consumers. Provider-backed answers run
@@ -746,8 +753,9 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources` and provider-backed `grounding` |
+| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources` and provider-backed `grounding` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
+| GET | `/api/answer-profiles` | — | List built-in provider-neutral answer workflow profiles |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

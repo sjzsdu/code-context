@@ -294,6 +294,43 @@ func TestAnswerTemplatesEndpoint(t *testing.T) {
 	}
 }
 
+func TestAnswerProfilesEndpoint(t *testing.T) {
+	ts, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(ts.URL + "/api/answer-profiles")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	var payload struct {
+		Profiles []engine.AnswerProfileInfo `json:"profiles"`
+		Count    int                        `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Count != len(payload.Profiles) || payload.Count == 0 {
+		t.Fatalf("payload = %#v, want non-empty matching count", payload)
+	}
+	var found bool
+	for _, profile := range payload.Profiles {
+		if profile.Name == engine.AnswerProfileReviewChange {
+			found = true
+			if profile.Template != engine.AnswerTemplateReview {
+				t.Fatalf("review profile = %#v, want review template", profile)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("profiles = %#v, want review-change", payload.Profiles)
+	}
+}
+
 func TestSearchMissingParam(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

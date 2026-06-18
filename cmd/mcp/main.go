@@ -108,6 +108,7 @@ type AnswerArgs struct {
 	Query               string                `json:"query,omitempty"`
 	Question            string                `json:"question,omitempty"`
 	Format              string                `json:"format,omitempty"`
+	Profile             string                `json:"profile,omitempty"`
 	Template            string                `json:"template,omitempty"`
 	SystemPrompt        string                `json:"system_prompt,omitempty"`
 	Messages            []store.AnswerMessage `json:"messages,omitempty"`
@@ -128,6 +129,8 @@ type AnswerArgs struct {
 type AnswerTemplatesArgs struct {
 	IncludePrompts bool `json:"include_prompts,omitempty"`
 }
+
+type AnswerProfilesArgs struct{}
 
 type SearchArgs struct {
 	Query string `json:"query"`
@@ -545,6 +548,15 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(out), nil, nil
 		})
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer_profiles", Description: "List built-in provider-neutral answer workflow profiles"},
+		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerProfilesArgs) (*mcp.CallToolResult, any, error) {
+			out, err := runAnswerProfilesTool()
+			if err != nil {
+				return nil, nil, err
+			}
+			return textResult(out), nil, nil
+		})
+
 	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_callers", Description: "Show functions/methods that call a symbol name"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args ContextArgs) (*mcp.CallToolResult, any, error) {
 			calls, err := eng.Callers(ctx, args.Symbol)
@@ -817,6 +829,17 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 		output, err := runAnswerTemplatesTool(args)
 		if err != nil {
 			return nil, nil, fmt.Errorf("answer_templates failed: %w", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
+	})
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "answer_profiles",
+		Description: "List built-in provider-neutral answer workflow profiles",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerProfilesArgs) (*mcp.CallToolResult, any, error) {
+		output, err := runAnswerProfilesTool()
+		if err != nil {
+			return nil, nil, fmt.Errorf("answer_profiles failed: %w", err)
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: output}}}, nil, nil
 	})
@@ -1530,6 +1553,7 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 	}
 	result, err := eng.Answer(ctx, engine.AnswerOptions{
 		Question:            question,
+		Profile:             strings.TrimSpace(args.Profile),
 		Template:            strings.TrimSpace(args.Template),
 		SystemPrompt:        strings.TrimSpace(args.SystemPrompt),
 		Messages:            args.Messages,
@@ -1562,6 +1586,11 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 func runAnswerTemplatesTool(args AnswerTemplatesArgs) (string, error) {
 	templates := engine.AnswerTemplateCatalog(args.IncludePrompts)
 	return marshalIndentedJSON(map[string]any{"templates": templates, "count": len(templates)})
+}
+
+func runAnswerProfilesTool() (string, error) {
+	profiles := engine.AnswerProfileCatalog()
+	return marshalIndentedJSON(map[string]any{"profiles": profiles, "count": len(profiles)})
 }
 
 func runGraphTool(ctx context.Context, eng *engine.Engine, args GraphArgs) (string, error) {

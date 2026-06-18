@@ -112,6 +112,7 @@ func main() {
 		newHybridSearchCmd(),
 		newAnswerCmd(),
 		newAnswerTemplatesCmd(),
+		newAnswerProfilesCmd(),
 		newFindDefCmd(),
 		newGitFilesCmd(),
 		newGitDiffCmd(),
@@ -1118,6 +1119,7 @@ func newAnswerCmd() *cobra.Command {
 	var jsonOut bool
 	var maxTokens int
 	var temperature float64
+	var profile string
 	var template string
 	var systemPrompt string
 	var format string
@@ -1157,6 +1159,7 @@ func newAnswerCmd() *cobra.Command {
 			}
 			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
 				Question:            strings.TrimSpace(strings.Join(args, " ")),
+				Profile:             strings.TrimSpace(profile),
 				Template:            strings.TrimSpace(template),
 				SystemPrompt:        strings.TrimSpace(systemPrompt),
 				Filter:              filter,
@@ -1218,6 +1221,7 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
 	cmd.Flags().BoolVar(&requireCitations, "require-citations", false, "mark citation grounding as required and fail when generated answers lack valid retrieved-source citations")
 	cmd.Flags().Float64Var(&minCitationCoverage, "min-citation-coverage", 0, "minimum fraction of retrieved sources that must be cited by a generated answer (0..1)")
+	cmd.Flags().StringVar(&profile, "profile", "", "answer workflow profile (general|explain-code|review-change|plan-implementation|risk-analysis|test-plan); explicit flags override profile defaults")
 	cmd.Flags().StringVar(&template, "template", "", "answer prompt template (general|explain|review|plan); overridden by --system-prompt")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")
 	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "filter retrieval target kinds; repeat or comma-separate (symbol,document,file,text)")
@@ -1259,6 +1263,43 @@ func newAnswerTemplatesCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&includePrompts, "include-prompts", false, "include full system prompt text")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer template catalog")
+	return cmd
+}
+
+func newAnswerProfilesCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "answer-profiles",
+		Short: "List built-in provider-neutral answer workflow profiles",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profiles := engine.AnswerProfileCatalog()
+			if jsonOut {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(map[string]any{"profiles": profiles, "count": len(profiles)})
+			}
+			for _, profile := range profiles {
+				fmt.Printf("%s\t%s\n", profile.Name, profile.Description)
+				if profile.Template != "" {
+					fmt.Printf("  template: %s\n", profile.Template)
+				}
+				if profile.Limit > 0 {
+					fmt.Printf("  retrieval: limit=%d weights=%.2f/%.2f/%.2f expand_depth=%d\n",
+						profile.Limit,
+						profile.TextWeight,
+						profile.VectorWeight,
+						profile.GraphWeight,
+						profile.ExpandMaxDepth,
+					)
+				}
+				if profile.RequireCitations || profile.MinCitationCoverage > 0 {
+					fmt.Printf("  grounding: require=%t min_coverage=%.2f\n", profile.RequireCitations, profile.MinCitationCoverage)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print JSON answer profile catalog")
 	return cmd
 }
 

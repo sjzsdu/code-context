@@ -216,7 +216,7 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 
 	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{
 		Question:    "Foo",
-		Template:    engine.AnswerTemplateExplain,
+		Profile:     engine.AnswerProfileExplainCode,
 		ContextOnly: true,
 		Format:      "json",
 		Limit:       3,
@@ -225,9 +225,23 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 		t.Fatalf("run answer tool json: %v", err)
 	}
 	if !strings.Contains(out, "\"question\": \"Foo\"") ||
+		!strings.Contains(out, "\"profile\": \"explain-code\"") ||
 		!strings.Contains(out, "\"template\": \"explain\"") ||
 		!strings.Contains(out, "\"sources\"") {
 		t.Fatalf("expected JSON answer context, got:\n%s", out)
+	}
+}
+
+func TestRunAnswerProfilesTool(t *testing.T) {
+	out, err := runAnswerProfilesTool()
+	if err != nil {
+		t.Fatalf("run answer profiles tool: %v", err)
+	}
+	if !strings.Contains(out, "\"profiles\"") ||
+		!strings.Contains(out, "\"name\": \"review-change\"") ||
+		!strings.Contains(out, "\"name\": \"plan-implementation\"") ||
+		!strings.Contains(out, "\"template\"") {
+		t.Fatalf("expected answer profiles JSON, got:\n%s", out)
 	}
 }
 

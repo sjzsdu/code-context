@@ -57,6 +57,25 @@ func TestAnswerTemplateCatalog(t *testing.T) {
 	}
 }
 
+func TestAnswerProfileCatalog(t *testing.T) {
+	infos := AnswerProfileCatalog()
+	if len(infos) != len(AnswerProfiles()) {
+		t.Fatalf("catalog len = %d, names len = %d", len(infos), len(AnswerProfiles()))
+	}
+	var foundReview bool
+	for _, info := range infos {
+		if info.Name == AnswerProfileReviewChange {
+			foundReview = true
+			if info.Template != AnswerTemplateReview || !info.RequireCitations || info.MinCitationCoverage <= 0 {
+				t.Fatalf("review profile = %#v, want review template and grounding defaults", info)
+			}
+		}
+	}
+	if !foundReview {
+		t.Fatalf("profiles = %#v, want review-change", infos)
+	}
+}
+
 func TestStatusIncludesEmbeddingCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := NewWithOptions(root, Options{
@@ -218,6 +237,58 @@ func TestAnswerRetrievalOptionsPassThroughToHybridSearch(t *testing.T) {
 	}
 }
 
+func TestAnswerProfileAppliesDefaults(t *testing.T) {
+	hybridStore := &fakeHybridStore{}
+	eng := &Engine{store: hybridStore, embedder: fakeEmbedder{}}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:    "hello",
+		Profile:     AnswerProfileExplainCode,
+		ContextOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Answer with profile: %v", err)
+	}
+	if result.Profile != AnswerProfileExplainCode || result.Template != AnswerTemplateExplain {
+		t.Fatalf("profile/template = %q/%q", result.Profile, result.Template)
+	}
+	if hybridStore.textQuery.Limit < 10 {
+		t.Fatalf("text query limit = %d, want profile limit applied", hybridStore.textQuery.Limit)
+	}
+	if len(hybridStore.textQuery.Filter.TargetKinds) == 0 || hybridStore.textQuery.Filter.TargetKinds[0] != store.TargetSymbol {
+		t.Fatalf("text query filter = %#v, want profile target kinds", hybridStore.textQuery.Filter)
+	}
+	if hybridStore.vectorQuery.QueryText != "hello" {
+		t.Fatalf("vector query = %#v, want profile vector weight path", hybridStore.vectorQuery)
+	}
+}
+
+func TestAnswerProfileExplicitOptionsOverrideDefaults(t *testing.T) {
+	hybridStore := &fakeHybridStore{}
+	eng := &Engine{store: hybridStore, embedder: fakeEmbedder{}}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:     "hello",
+		Profile:      AnswerProfilePlanImplementation,
+		Template:     AnswerTemplateExplain,
+		ContextOnly:  true,
+		TextWeight:   1,
+		VectorWeight: 0,
+		GraphWeight:  0,
+		Filter:       store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetMemory}},
+	})
+	if err != nil {
+		t.Fatalf("Answer with profile override: %v", err)
+	}
+	if result.Profile != AnswerProfilePlanImplementation || result.Template != AnswerTemplateExplain {
+		t.Fatalf("profile/template = %q/%q", result.Profile, result.Template)
+	}
+	if len(hybridStore.textQuery.Filter.TargetKinds) != 1 || hybridStore.textQuery.Filter.TargetKinds[0] != store.TargetMemory {
+		t.Fatalf("text query filter = %#v, want explicit filter", hybridStore.textQuery.Filter)
+	}
+	if hybridStore.vectorQuery.QueryText != "" {
+		t.Fatalf("vector query = %#v, want vector path skipped by explicit weights", hybridStore.vectorQuery)
+	}
+}
+
 func TestAnswerDelegatesToProvider(t *testing.T) {
 	answerer := &fakeAnswerer{}
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
@@ -336,6 +407,18 @@ func TestAnswerRejectsInvalidMinCitationCoverage(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "min citation coverage") {
 		t.Fatalf("Answer error = %v, want min citation coverage validation", err)
+	}
+}
+
+func TestAnswerRejectsUnknownProfile(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
+	_, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:    "hello",
+		Profile:     "unknown",
+		ContextOnly: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported answer profile") {
+		t.Fatalf("Answer error = %v, want unsupported answer profile", err)
 	}
 }
 
