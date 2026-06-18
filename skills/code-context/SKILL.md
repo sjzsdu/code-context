@@ -69,6 +69,7 @@ code-context answer "How is status served?" --template explain --format markdown
 code-context answer "How is status served?" --profile review-change --format markdown
 code-context answer "How is status served?" --require-citations --json
 code-context answer "How is status served?" --min-citation-coverage 0.5 --json
+code-context answer "How is status served?" --evaluate --min-evaluation-score 0.7 --json
 
 # 8. Get detailed context
 code-context context Engine
@@ -188,7 +189,10 @@ MCP `format: "markdown"` for agent-readable answers with a `Sources` section; us
 structured consumers. Provider-backed answers include a deterministic `grounding` citation-label
 audit (not semantic fact-checking) with valid/missing/uncited source labels; CLI
 `--require-citations` / `--min-citation-coverage` or JSON/MCP `require_citations` /
-`min_citation_coverage` marks the audit as required for hard-gate callers.
+`min_citation_coverage` marks the audit as required for hard-gate callers. CLI `--evaluate` or
+JSON/MCP `evaluate` runs the local provider-neutral `AnswerEvaluator` hook, which reports answer
+presence, evidence-overlap, and citation-grounding checks under `evaluation`; `--min-evaluation-score`
+or `min_evaluation_score` makes that score a caller-visible gate.
 
 ## Recommended Dogfood Workflow
 
@@ -500,7 +504,7 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/text` | `q`, `file?`, `limit?` | Text search |
 | POST | `/api/vector` | JSON `VectorSearchQuery` | Provider-backed vector search |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
+| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer`; optional local evaluation appears under `evaluation` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | | List built-in provider-neutral answer workflow profiles |
 | GET | `/api/provider-diagnostics` | | Local embedding/answer provider configuration checks |

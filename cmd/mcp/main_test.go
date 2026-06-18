@@ -247,6 +247,27 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 	}
 }
 
+func TestRunAnswerToolJSONIncludesEvaluation(t *testing.T) {
+	eng, cleanup := newTestEngine(t)
+	defer cleanup()
+
+	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{
+		Question:    "Foo",
+		ContextOnly: true,
+		Evaluate:    true,
+		Format:      "json",
+		Limit:       3,
+	})
+	if err != nil {
+		t.Fatalf("run answer tool json evaluation: %v", err)
+	}
+	if !strings.Contains(out, "\"evaluation\"") ||
+		!strings.Contains(out, "\"evaluator\": \"local-rule\"") ||
+		!strings.Contains(out, "\"name\": \"answer_present\"") {
+		t.Fatalf("expected JSON evaluation report, got:\n%s", out)
+	}
+}
+
 func TestRunAnswerProfilesTool(t *testing.T) {
 	out, err := runAnswerProfilesTool()
 	if err != nil {

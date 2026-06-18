@@ -377,6 +377,9 @@ machine-readable payloads. Provider-backed answers include a local citation grou
 (citation-label coverage, not semantic fact-checking) in `grounding`; `--require-citations` turns
 missing/unknown retrieved-source citations into a CLI failure after printing the result.
 `--min-citation-coverage 0.5` can require a minimum cited-source coverage ratio.
+Use `--evaluate` to include a deterministic local answer evaluation report with answer presence,
+evidence-overlap, and citation-grounding checks. `--min-evaluation-score 0.7` turns that local
+evaluation score into a CLI success gate without calling any extra model.
 Use `answer-templates` or `GET /api/answer-templates` to discover available built-in templates.
 Use `answer-profiles` or `GET /api/answer-profiles` to discover workflow profiles.
 
@@ -392,6 +395,7 @@ code-context answer "Where is status served?" --answer-provider openai-compatibl
 code-context answer "Where is status served?" --system-prompt "Answer briefly and cite sources."
 code-context answer "Where is status served?" --require-citations --json
 code-context answer "Where is status served?" --min-citation-coverage 0.5 --json
+code-context answer "Where is status served?" --evaluate --min-evaluation-score 0.7 --json
 ```
 
 ### `find-def <name>` — Find definition of a symbol
@@ -726,7 +730,11 @@ without dropping to backend-specific APIs. MCP answer tools can return `format: 
 ready-to-display answer with sources, or JSON for structured consumers. Provider-backed answers run
 a deterministic citation-label audit that reports valid, missing, and uncited source labels under
 `grounding`; `require_citations` or `min_citation_coverage` marks this audit as required for callers
-that want a hard gate.
+that want a hard gate. Callers can also set `evaluate` / `--evaluate` to run the built-in local
+`AnswerEvaluator` hook, which scores answer presence, evidence-overlap, and citation grounding under
+`evaluation`; `min_evaluation_score` / `--min-evaluation-score` makes that score a caller-visible
+quality gate. The hook is provider-neutral, so future semantic or LLM judge implementations can plug
+in without changing Answer callers.
 The built-in
 `openai-compatible` answer adapter posts to
 `{base_url}/chat/completions`; additional answer providers can implement `store.Answerer` without
@@ -764,7 +772,7 @@ Start the server with `code-context serve`, then:
 | GET | `/api/text` | `q`, `file?`, `limit?` | Full-text search in source |
 | POST | `/api/vector` | JSON `VectorSearchQuery` with `query_text` or `vector` | Provider-backed vector search when supported |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` with `query`, `vector?`, weights, and `expand_from?` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources` and provider-backed `grounding` |
+| POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources`, provider-backed `grounding`, and optional local `evaluation` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | — | List built-in provider-neutral answer workflow profiles |
 | GET | `/api/provider-diagnostics` | — | Check embedding and answer provider configuration without network calls |

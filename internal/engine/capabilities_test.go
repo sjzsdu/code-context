@@ -467,6 +467,63 @@ func TestAnswerRejectsInvalidMinCitationCoverage(t *testing.T) {
 	}
 }
 
+func TestAnswerEvaluationReportsLocalChecks(t *testing.T) {
+	answerer := &fakeAnswerer{answer: "Result uses text evidence from the retrieved symbol [1]."}
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:           "hello",
+		Evaluate:           true,
+		MinEvaluationScore: 0.5,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if result.Evaluation == nil {
+		t.Fatalf("evaluation = nil")
+	}
+	if !result.Evaluation.Passed || result.Evaluation.Score < 0.5 {
+		t.Fatalf("evaluation = %#v, want passing score", result.Evaluation)
+	}
+	if result.Evaluation.Evaluator != "local-rule" {
+		t.Fatalf("evaluator = %q", result.Evaluation.Evaluator)
+	}
+	if !strings.Contains(FormatAnswerMarkdown(result), "## Evaluation") {
+		t.Fatalf("markdown did not include evaluation section")
+	}
+}
+
+func TestAnswerEvaluationUsesInjectedEvaluator(t *testing.T) {
+	evaluator := &fakeAnswerEvaluator{}
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: &fakeAnswerer{}, evaluator: evaluator}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question: "hello",
+		Evaluate: true,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !evaluator.called {
+		t.Fatalf("custom evaluator was not called")
+	}
+	if evaluator.input.Question != "hello" || len(evaluator.input.Context) == 0 {
+		t.Fatalf("evaluator input = %#v", evaluator.input)
+	}
+	if result.Evaluation == nil || result.Evaluation.Evaluator != "fake-evaluator" {
+		t.Fatalf("evaluation = %#v", result.Evaluation)
+	}
+}
+
+func TestAnswerRejectsInvalidMinEvaluationScore(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: &fakeAnswerer{}}
+	_, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:           "hello",
+		MinEvaluationScore: 1.5,
+	})
+	if err == nil || !strings.Contains(err.Error(), "min evaluation score") {
+		t.Fatalf("Answer error = %v, want min evaluation score validation", err)
+	}
+}
+
 func TestAnswerRejectsUnknownProfile(t *testing.T) {
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
 	_, err := eng.Answer(context.Background(), AnswerOptions{
@@ -711,6 +768,22 @@ func (a *fakeAnswerer) Answer(_ context.Context, req store.AnswerRequest) (*stor
 
 func (a *fakeAnswerer) AnswerModel() store.AnswerModelInfo {
 	return store.AnswerModelInfo{Provider: "fake", Model: "fake-chat"}
+}
+
+type fakeAnswerEvaluator struct {
+	called bool
+	input  AnswerEvaluationInput
+}
+
+func (e *fakeAnswerEvaluator) EvaluateAnswer(_ context.Context, input AnswerEvaluationInput) (*AnswerEvaluation, error) {
+	e.called = true
+	e.input = input
+	return &AnswerEvaluation{
+		Evaluator: "fake-evaluator",
+		Score:     1,
+		Passed:    true,
+		Summary:   "fake evaluation passed",
+	}, nil
 }
 
 type fakeVectorStore struct {

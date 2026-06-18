@@ -31,6 +31,7 @@ type Engine struct {
 	store       store.Store
 	embedder    store.Embedder
 	answerer    store.Answerer
+	evaluator   AnswerEvaluator
 	options     Options
 	parser      parser.Parser
 	indexer     *indexer.Indexer
@@ -59,9 +60,10 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 }
 
 type Options struct {
-	Store     store.Options
-	Embedding embeddingpkg.Options
-	Answer    answerpkg.Options
+	Store           store.Options
+	Embedding       embeddingpkg.Options
+	Answer          answerpkg.Options
+	AnswerEvaluator AnswerEvaluator
 }
 
 func NewWithOptions(root string, opts Options) (*Engine, error) {
@@ -107,6 +109,10 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("configure answer provider: %w", err)
 	}
+	evaluator := opts.AnswerEvaluator
+	if evaluator == nil {
+		evaluator = LocalAnswerEvaluator{}
+	}
 
 	if err := s.Init(context.Background()); err != nil {
 		return nil, fmt.Errorf("init store: %w", err)
@@ -118,16 +124,17 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 	g := graph.New(s)
 
 	return &Engine{
-		root:     root,
-		dbPath:   storeLocation,
-		store:    s,
-		embedder: embedder,
-		answerer: answerer,
-		options:  opts,
-		parser:   p,
-		indexer:  idx,
-		search:   sr,
-		graph:    g,
+		root:      root,
+		dbPath:    storeLocation,
+		store:     s,
+		embedder:  embedder,
+		answerer:  answerer,
+		evaluator: evaluator,
+		options:   opts,
+		parser:    p,
+		indexer:   idx,
+		search:    sr,
+		graph:     g,
 	}, nil
 }
 
@@ -601,6 +608,8 @@ type AnswerOptions struct {
 	ContextOnly         bool                  `json:"context_only,omitempty"`
 	RequireCitations    bool                  `json:"require_citations,omitempty"`
 	MinCitationCoverage float64               `json:"min_citation_coverage,omitempty"`
+	Evaluate            bool                  `json:"evaluate,omitempty"`
+	MinEvaluationScore  float64               `json:"min_evaluation_score,omitempty"`
 	MaxTokens           int                   `json:"max_tokens,omitempty"`
 	Temperature         *float64              `json:"temperature,omitempty"`
 }
@@ -626,6 +635,7 @@ type AnswerResult struct {
 	Sources     []AnswerSource        `json:"sources,omitempty"`
 	Hits        []store.SearchHit     `json:"hits,omitempty"`
 	Grounding   *AnswerGrounding      `json:"grounding,omitempty"`
+	Evaluation  *AnswerEvaluation     `json:"evaluation,omitempty"`
 	Usage       *store.AnswerUsage    `json:"usage,omitempty"`
 	Summary     string                `json:"summary"`
 }
@@ -642,6 +652,38 @@ type AnswerGrounding struct {
 	MissingCitations []string `json:"missing_citations,omitempty"`
 	UncitedCitations []string `json:"uncited_citations,omitempty"`
 	Summary          string   `json:"summary"`
+}
+
+type AnswerEvaluation struct {
+	Evaluator string                  `json:"evaluator,omitempty"`
+	Score     float64                 `json:"score"`
+	MinScore  float64                 `json:"min_score,omitempty"`
+	Passed    bool                    `json:"passed"`
+	Summary   string                  `json:"summary"`
+	Checks    []AnswerEvaluationCheck `json:"checks,omitempty"`
+}
+
+type AnswerEvaluationCheck struct {
+	Name    string  `json:"name"`
+	Status  string  `json:"status"` // pass, warn, fail
+	Score   float64 `json:"score"`
+	Message string  `json:"message"`
+}
+
+type AnswerEvaluationInput struct {
+	Question  string
+	Answer    string
+	Context   []store.AnswerContext
+	Sources   []AnswerSource
+	Grounding *AnswerGrounding
+	MinScore  float64
+}
+
+// AnswerEvaluator is a provider-neutral hook for judging generated answers.
+// The default implementation is deterministic and local; future providers can
+// plug in semantic or LLM-based judges without changing Answer callers.
+type AnswerEvaluator interface {
+	EvaluateAnswer(ctx context.Context, input AnswerEvaluationInput) (*AnswerEvaluation, error)
 }
 
 type AnswerTemplateInfo struct {
@@ -732,6 +774,20 @@ func FormatAnswerMarkdown(result *AnswerResult) string {
 			fmt.Fprintf(&b, "- uncited sources: %s\n", strings.Join(result.Grounding.UncitedCitations, ", "))
 		}
 	}
+	if result.Evaluation != nil {
+		b.WriteString("\n## Evaluation\n")
+		fmt.Fprintf(&b, "- %s\n", result.Evaluation.Summary)
+		if result.Evaluation.Evaluator != "" {
+			fmt.Fprintf(&b, "- evaluator: %s\n", result.Evaluation.Evaluator)
+		}
+		for _, check := range result.Evaluation.Checks {
+			fmt.Fprintf(&b, "- %s: %s (%.0f%%)", check.Name, check.Status, check.Score*100)
+			if strings.TrimSpace(check.Message) != "" {
+				fmt.Fprintf(&b, " — %s", check.Message)
+			}
+			b.WriteByte('\n')
+		}
+	}
 	if result.Usage != nil && (result.Usage.PromptTokens > 0 || result.Usage.CompletionTokens > 0 || result.Usage.TotalTokens > 0) {
 		fmt.Fprintf(&b, "\n## Usage\n- prompt_tokens: %d\n- completion_tokens: %d\n- total_tokens: %d\n",
 			result.Usage.PromptTokens,
@@ -759,6 +815,10 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	if err != nil {
 		return nil, err
 	}
+	minEvaluationScore, err := normalizeAnswerMinEvaluationScore(opts.MinEvaluationScore)
+	if err != nil {
+		return nil, err
+	}
 
 	contextItems, hits, err := e.AnswerContextWithOptions(ctx, opts)
 	if err != nil {
@@ -776,6 +836,18 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	}
 	if opts.ContextOnly {
 		result.Summary += " (context-only; answer provider was not called)"
+		if opts.Evaluate || minEvaluationScore > 0 {
+			evaluation, err := e.evaluateAnswer(ctx, AnswerEvaluationInput{
+				Question: question,
+				Context:  contextItems,
+				Sources:  result.Sources,
+				MinScore: minEvaluationScore,
+			})
+			if err != nil {
+				return nil, err
+			}
+			result.Evaluation = evaluation
+		}
 		return result, nil
 	}
 	if e.answerer == nil {
@@ -800,9 +872,31 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 		result.Model = info.Model
 	}
 	result.Grounding = auditAnswerGrounding(result.Answer, contextItems, opts.RequireCitations, minCitationCoverage)
+	if opts.Evaluate || minEvaluationScore > 0 {
+		evaluation, err := e.evaluateAnswer(ctx, AnswerEvaluationInput{
+			Question:  question,
+			Answer:    result.Answer,
+			Context:   contextItems,
+			Sources:   result.Sources,
+			Grounding: result.Grounding,
+			MinScore:  minEvaluationScore,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result.Evaluation = evaluation
+	}
 	result.Usage = response.Usage
 	result.Summary = fmt.Sprintf("Answered question %q using %d retrieved context items", question, len(contextItems))
 	return result, nil
+}
+
+func (e *Engine) evaluateAnswer(ctx context.Context, input AnswerEvaluationInput) (*AnswerEvaluation, error) {
+	evaluator := e.evaluator
+	if evaluator == nil {
+		evaluator = LocalAnswerEvaluator{}
+	}
+	return evaluator.EvaluateAnswer(ctx, input)
 }
 
 func (e *Engine) AnswerContext(ctx context.Context, question string, limit int) ([]store.AnswerContext, []store.SearchHit, error) {
@@ -1184,6 +1278,201 @@ func answerGroundingSummary(report *AnswerGrounding, answer string) string {
 	default:
 		return "Answer citation audit found no valid retrieved-source citations."
 	}
+}
+
+// LocalAnswerEvaluator provides a deterministic, offline baseline evaluator. It
+// intentionally avoids provider-specific APIs and network calls; higher-fidelity
+// evaluators can implement AnswerEvaluator and be injected through Options.
+type LocalAnswerEvaluator struct{}
+
+func (LocalAnswerEvaluator) EvaluateAnswer(_ context.Context, input AnswerEvaluationInput) (*AnswerEvaluation, error) {
+	minScore, err := normalizeAnswerMinEvaluationScore(input.MinScore)
+	if err != nil {
+		return nil, err
+	}
+	checks := make([]AnswerEvaluationCheck, 0, 3)
+	addCheck := func(name, status string, score float64, message string) {
+		checks = append(checks, AnswerEvaluationCheck{
+			Name:    name,
+			Status:  status,
+			Score:   clampAnswerEvaluationScore(score),
+			Message: message,
+		})
+	}
+
+	answerPresent := strings.TrimSpace(input.Answer) != ""
+	if answerPresent {
+		addCheck("answer_present", "pass", 1, "Answer text is present.")
+	} else {
+		addCheck("answer_present", "fail", 0, "No answer text was available to evaluate.")
+	}
+
+	overlap := answerEvidenceOverlap(input.Answer, input.Context)
+	switch {
+	case len(input.Context) == 0:
+		addCheck("evidence_overlap", "warn", 0, "No retrieved context was available for evidence-overlap evaluation.")
+	case !answerPresent:
+		addCheck("evidence_overlap", "fail", 0, "Cannot compare evidence overlap without answer text.")
+	case overlap >= 0.10:
+		addCheck("evidence_overlap", "pass", overlap, fmt.Sprintf("Answer terms overlap %.0f%% with retrieved evidence.", overlap*100))
+	case overlap > 0:
+		addCheck("evidence_overlap", "warn", overlap, fmt.Sprintf("Answer has weak evidence-term overlap (%.0f%%).", overlap*100))
+	default:
+		addCheck("evidence_overlap", "warn", 0, "Answer has no measurable term overlap with retrieved evidence.")
+	}
+
+	citationScore, citationStatus, citationMessage := answerEvaluationCitationCheck(input.Grounding, len(input.Context))
+	addCheck("citation_grounding", citationStatus, citationScore, citationMessage)
+
+	score := weightedAnswerEvaluationScore(checks)
+	passed := answerPresent && (minScore <= 0 || score >= minScore)
+	if input.Grounding != nil && input.Grounding.Required && !input.Grounding.Passed {
+		passed = false
+	}
+	if hasAnswerEvaluationFailure(checks) && minScore > 0 {
+		passed = false
+	}
+
+	summary := fmt.Sprintf("Answer evaluation score %.0f%%.", score*100)
+	if minScore > 0 {
+		if passed {
+			summary = fmt.Sprintf("Answer evaluation score %.0f%% meets required %.0f%%.", score*100, minScore*100)
+		} else {
+			summary = fmt.Sprintf("Answer evaluation score %.0f%% is below required %.0f%%.", score*100, minScore*100)
+		}
+	} else if !answerPresent {
+		summary = "Answer evaluation did not pass because no answer text was available."
+	} else if !passed {
+		summary = "Answer evaluation did not pass required grounding checks."
+	}
+	return &AnswerEvaluation{
+		Evaluator: "local-rule",
+		Score:     score,
+		MinScore:  minScore,
+		Passed:    passed,
+		Summary:   summary,
+		Checks:    checks,
+	}, nil
+}
+
+func normalizeAnswerMinEvaluationScore(score float64) (float64, error) {
+	if score < 0 || score > 1 {
+		return 0, fmt.Errorf("min evaluation score must be between 0 and 1")
+	}
+	return score, nil
+}
+
+func answerEvaluationCitationCheck(grounding *AnswerGrounding, contextCount int) (float64, string, string) {
+	if grounding == nil {
+		if contextCount == 0 {
+			return 0, "warn", "No retrieved context was available for citation evaluation."
+		}
+		return 0.5, "warn", "No citation grounding report was available."
+	}
+	if grounding.Passed {
+		return 1, "pass", grounding.Summary
+	}
+	if len(grounding.ValidCitations) > 0 && len(grounding.MissingCitations) == 0 {
+		return 0.75, "warn", grounding.Summary
+	}
+	if len(grounding.ValidCitations) > 0 {
+		return 0.5, "warn", grounding.Summary
+	}
+	if grounding.Required {
+		return 0, "fail", grounding.Summary
+	}
+	return 0, "warn", grounding.Summary
+}
+
+func weightedAnswerEvaluationScore(checks []AnswerEvaluationCheck) float64 {
+	weights := map[string]float64{
+		"answer_present":     0.20,
+		"evidence_overlap":   0.45,
+		"citation_grounding": 0.35,
+	}
+	totalWeight := 0.0
+	total := 0.0
+	for _, check := range checks {
+		weight := weights[check.Name]
+		if weight <= 0 {
+			weight = 1
+		}
+		totalWeight += weight
+		total += weight * clampAnswerEvaluationScore(check.Score)
+	}
+	if totalWeight == 0 {
+		return 0
+	}
+	return clampAnswerEvaluationScore(total / totalWeight)
+}
+
+func hasAnswerEvaluationFailure(checks []AnswerEvaluationCheck) bool {
+	for _, check := range checks {
+		if check.Status == "fail" {
+			return true
+		}
+	}
+	return false
+}
+
+func clampAnswerEvaluationScore(score float64) float64 {
+	switch {
+	case score < 0:
+		return 0
+	case score > 1:
+		return 1
+	default:
+		return score
+	}
+}
+
+var answerEvaluationTokenPattern = regexp.MustCompile(`[\p{L}\p{N}_./:-]+`)
+
+func answerEvidenceOverlap(answer string, contextItems []store.AnswerContext) float64 {
+	answerTokens := answerEvaluationTokens(answer)
+	if len(answerTokens) == 0 || len(contextItems) == 0 {
+		return 0
+	}
+	contextTokens := map[string]struct{}{}
+	for _, item := range contextItems {
+		for token := range answerEvaluationTokens(strings.Join([]string{
+			item.Title,
+			item.Content,
+			item.Evidence,
+			answerTargetLabel(item.Target),
+		}, "\n")) {
+			contextTokens[token] = struct{}{}
+		}
+	}
+	if len(contextTokens) == 0 {
+		return 0
+	}
+	overlap := 0
+	for token := range answerTokens {
+		if _, ok := contextTokens[token]; ok {
+			overlap++
+		}
+	}
+	return float64(overlap) / float64(len(answerTokens))
+}
+
+func answerEvaluationTokens(text string) map[string]struct{} {
+	tokens := map[string]struct{}{}
+	for _, raw := range answerEvaluationTokenPattern.FindAllString(strings.ToLower(text), -1) {
+		token := strings.Trim(raw, " \t\r\n.,;:()[]{}<>\"'`")
+		if len([]rune(token)) < 3 || answerEvaluationStopWords[token] {
+			continue
+		}
+		tokens[token] = struct{}{}
+	}
+	return tokens
+}
+
+var answerEvaluationStopWords = map[string]bool{
+	"and": true, "are": true, "but": true, "for": true, "from": true, "how": true,
+	"into": true, "not": true, "the": true, "this": true, "that": true, "using": true,
+	"was": true, "were": true, "what": true, "when": true, "where": true, "which": true,
+	"with": true, "you": true, "your": true,
 }
 
 func answerCitationLabel(rank int) string {

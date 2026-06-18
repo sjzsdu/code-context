@@ -1161,6 +1161,8 @@ func newAnswerCmd() *cobra.Command {
 	var contextOnly bool
 	var requireCitations bool
 	var minCitationCoverage float64
+	var evaluate bool
+	var minEvaluationScore float64
 	var jsonOut bool
 	var maxTokens int
 	var temperature float64
@@ -1217,6 +1219,8 @@ func newAnswerCmd() *cobra.Command {
 				ContextOnly:         contextOnly,
 				RequireCitations:    requireCitations,
 				MinCitationCoverage: minCitationCoverage,
+				Evaluate:            evaluate,
+				MinEvaluationScore:  minEvaluationScore,
 				MaxTokens:           maxTokens,
 				Temperature:         tempPtr,
 			})
@@ -1245,6 +1249,10 @@ func newAnswerCmd() *cobra.Command {
 					fmt.Println()
 					fmt.Println("Grounding:", result.Grounding.Summary)
 				}
+				if result.Evaluation != nil {
+					fmt.Println()
+					fmt.Println("Evaluation:", result.Evaluation.Summary)
+				}
 			case "markdown", "md":
 				fmt.Println(engine.FormatAnswerMarkdown(result))
 			case "json":
@@ -1259,6 +1267,9 @@ func newAnswerCmd() *cobra.Command {
 			if (requireCitations || minCitationCoverage > 0) && result.Grounding != nil && !result.Grounding.Passed {
 				return fmt.Errorf("answer citation requirement failed: %s", result.Grounding.Summary)
 			}
+			if minEvaluationScore > 0 && result.Evaluation != nil && !result.Evaluation.Passed {
+				return fmt.Errorf("answer evaluation failed: %s", result.Evaluation.Summary)
+			}
 			return nil
 		},
 	}
@@ -1266,6 +1277,8 @@ func newAnswerCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
 	cmd.Flags().BoolVar(&requireCitations, "require-citations", false, "mark citation grounding as required and fail when generated answers lack valid retrieved-source citations")
 	cmd.Flags().Float64Var(&minCitationCoverage, "min-citation-coverage", 0, "minimum fraction of retrieved sources that must be cited by a generated answer (0..1)")
+	cmd.Flags().BoolVar(&evaluate, "evaluate", false, "run local provider-neutral answer evaluation and include the report")
+	cmd.Flags().Float64Var(&minEvaluationScore, "min-evaluation-score", 0, "minimum local answer evaluation score required for success (0..1)")
 	cmd.Flags().StringVar(&profile, "profile", "", "answer workflow profile (general|explain-code|review-change|plan-implementation|risk-analysis|test-plan); explicit flags override profile defaults")
 	cmd.Flags().StringVar(&template, "template", "", "answer prompt template (general|explain|review|plan); overridden by --system-prompt")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")

@@ -122,6 +122,8 @@ type AnswerArgs struct {
 	ContextOnly         bool                  `json:"context_only,omitempty"`
 	RequireCitations    bool                  `json:"require_citations,omitempty"`
 	MinCitationCoverage float64               `json:"min_citation_coverage,omitempty"`
+	Evaluate            bool                  `json:"evaluate,omitempty"`
+	MinEvaluationScore  float64               `json:"min_evaluation_score,omitempty"`
 	MaxTokens           int                   `json:"max_tokens,omitempty"`
 	Temperature         *float64              `json:"temperature,omitempty"`
 }
@@ -536,7 +538,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(withStaleWarning(ctx, eng, out+recommendedCalls("code_context_context", "code_context_graph_traverse"))), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true or min_citation_coverage to mark citation grounding as required"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_answer", Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true/min_citation_coverage for grounding gates or evaluate=true/min_evaluation_score for local answer evaluation"},
 		func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 			if strings.TrimSpace(args.Format) == "" {
 				args.Format = "markdown"
@@ -822,7 +824,7 @@ func registerTools(srv *mcp.Server, eng *engine.Engine) {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "answer",
-		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true or min_citation_coverage to mark citation grounding as required",
+		Description: "Answer a question using retrieved code-context evidence; set context_only=true to avoid external model calls; set require_citations=true/min_citation_coverage for grounding gates or evaluate=true/min_evaluation_score for local answer evaluation",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args AnswerArgs) (*mcp.CallToolResult, any, error) {
 		output, err := runAnswerTool(ctx, eng, args)
 		if err != nil {
@@ -1584,6 +1586,8 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 		ContextOnly:         args.ContextOnly,
 		RequireCitations:    args.RequireCitations,
 		MinCitationCoverage: args.MinCitationCoverage,
+		Evaluate:            args.Evaluate,
+		MinEvaluationScore:  args.MinEvaluationScore,
 		MaxTokens:           args.MaxTokens,
 		Temperature:         args.Temperature,
 	})
