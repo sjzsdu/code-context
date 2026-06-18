@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -4020,6 +4021,7 @@ func (e *Engine) ProviderDiagnostics(ctx context.Context) (*api.ProviderDiagnost
 		e.embeddingProviderCheck(),
 		e.answerProviderCheck(),
 	}
+	checks = append(checks, e.answerProfileChecks()...)
 	ok := true
 	warns := 0
 	for _, check := range checks {
@@ -4030,11 +4032,11 @@ func (e *Engine) ProviderDiagnostics(ctx context.Context) (*api.ProviderDiagnost
 			warns++
 		}
 	}
-	summary := "provider configuration ok"
+	summary := "provider/profile configuration ok"
 	if !ok {
-		summary = "provider configuration has errors"
+		summary = "provider/profile configuration has errors"
 	} else if warns > 0 {
-		summary = fmt.Sprintf("provider configuration ok with %d warnings", warns)
+		summary = fmt.Sprintf("provider/profile configuration ok with %d warnings", warns)
 	}
 	return &api.ProviderDiagnosticsReport{OK: ok, Summary: summary, Checks: checks}, nil
 }
@@ -4119,6 +4121,117 @@ func (e *Engine) answerProviderCheck() api.ProviderConfigCheck {
 		return check
 	}
 	return check
+}
+
+func (e *Engine) answerProfileChecks() []api.ProviderConfigCheck {
+	if e == nil || len(e.options.AnswerProfiles) == 0 {
+		return nil
+	}
+	checks := make([]api.ProviderConfigCheck, 0, len(e.options.AnswerProfiles))
+	seen := map[string]int{}
+	for i, profile := range e.options.AnswerProfiles {
+		name := normalizeAnswerProfileName(profile.Name)
+		check := api.ProviderConfigCheck{
+			Kind:    "answer_profile",
+			Enabled: true,
+			Profile: name,
+			Status:  "ok",
+		}
+		errors, warnings := validateAnswerProfileInfo(profile)
+		if name == "" {
+			check.Profile = fmt.Sprintf("#%d", i+1)
+		} else if previous, ok := seen[name]; ok {
+			warnings = append(warnings, fmt.Sprintf("duplicate normalized profile name also appears at position %d; later definitions override earlier ones", previous+1))
+		}
+		if name != "" {
+			seen[name] = i
+		}
+		switch {
+		case len(errors) > 0:
+			check.Status = "error"
+			check.Message = fmt.Sprintf("answer profile %q has invalid settings: %s", check.Profile, strings.Join(errors, "; "))
+			check.Actions = []string{"run code-context config inspect", "fix answer.profiles entry before selecting this profile"}
+		case len(warnings) > 0:
+			check.Status = "warn"
+			check.Message = fmt.Sprintf("answer profile %q has warnings: %s", check.Profile, strings.Join(warnings, "; "))
+			check.Actions = []string{"review answer.profiles in user/project config"}
+		default:
+			check.Message = fmt.Sprintf("answer profile %q is valid", check.Profile)
+		}
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+func validateAnswerProfileInfo(profile AnswerProfileInfo) ([]string, []string) {
+	var errs []string
+	var warnings []string
+	if normalizeAnswerProfileName(profile.Name) == "" {
+		errs = append(errs, "name is required")
+	}
+	if template := strings.TrimSpace(strings.ToLower(profile.Template)); template != "" {
+		if _, ok := answerTemplateDescription(template); !ok {
+			errs = append(errs, fmt.Sprintf("unsupported template %q (supported: %s)", template, strings.Join(AnswerTemplates(), ", ")))
+		}
+	}
+	for _, targetKind := range profile.Filter.TargetKinds {
+		if !isSupportedAnswerProfileTargetKind(targetKind) {
+			errs = append(errs, fmt.Sprintf("unsupported target kind %q (supported: %s)", targetKind, strings.Join(supportedAnswerProfileTargetKinds(), ", ")))
+		}
+	}
+	if pattern := strings.TrimSpace(profile.Filter.FilePattern); pattern != "" {
+		if _, err := pathpkg.Match(pattern, ""); err != nil {
+			warnings = append(warnings, fmt.Sprintf("file_pattern %q is not a valid glob (%v); it will only work as a literal substring fallback", pattern, err))
+		}
+	}
+	if profile.Limit < 0 {
+		errs = append(errs, "limit must be non-negative")
+	}
+	if profile.ExpandMaxDepth < 0 {
+		errs = append(errs, "expand_max_depth must be non-negative")
+	}
+	if profile.MinContextScore < 0 {
+		errs = append(errs, "min_context_score must be non-negative")
+	}
+	if profile.MaxPerFile < 0 {
+		errs = append(errs, "max_per_file must be non-negative")
+	}
+	if profile.MaxContextChars < 0 {
+		errs = append(errs, "max_context_chars must be non-negative")
+	}
+	if profile.MaxContextItemChars < 0 {
+		errs = append(errs, "max_context_item_chars must be non-negative")
+	}
+	if profile.MinCitationCoverage < 0 || profile.MinCitationCoverage > 1 {
+		errs = append(errs, "min_citation_coverage must be between 0 and 1")
+	}
+	if profile.MinEvaluationScore < 0 || profile.MinEvaluationScore > 1 {
+		errs = append(errs, "min_evaluation_score must be between 0 and 1")
+	}
+	if profile.TextWeight < 0 || profile.VectorWeight < 0 || profile.GraphWeight < 0 {
+		errs = append(errs, "text_weight, vector_weight, and graph_weight must be non-negative")
+	}
+	return errs, warnings
+}
+
+func isSupportedAnswerProfileTargetKind(kind store.TargetKind) bool {
+	for _, supported := range supportedAnswerProfileTargetKinds() {
+		if string(kind) == supported {
+			return true
+		}
+	}
+	return false
+}
+
+func supportedAnswerProfileTargetKinds() []string {
+	return []string{
+		string(store.TargetFile),
+		string(store.TargetSymbol),
+		string(store.TargetRoute),
+		string(store.TargetDocument),
+		string(store.TargetText),
+		string(store.TargetMemory),
+	}
 }
 
 type EmbeddingPlan struct {
@@ -4754,7 +4867,14 @@ func (e *Engine) Doctor(ctx context.Context) (*api.DoctorReport, error) {
 		add("providers", "error", providerErr.Error())
 	} else {
 		for _, check := range providers.Checks {
-			add(check.Kind+"_provider", check.Status, check.Message)
+			name := check.Kind + "_provider"
+			if check.Kind == "answer_profile" {
+				name = "answer_profile"
+				if check.Profile != "" {
+					name += ":" + check.Profile
+				}
+			}
+			add(name, check.Status, check.Message)
 		}
 	}
 	ok := true

@@ -187,7 +187,9 @@ overrides the preset text. Use CLI `answer-templates`, HTTP `/api/answer-templat
 `answer-profiles`, HTTP `/api/answer-profiles`, or MCP `answer_profiles` to discover built-in and
 configured profiles. Project/user config can define `answer.profiles` entries that extend or
 override built-ins by normalized name; profiles can include retrieval, rerank, grounding, and
-evaluation defaults.
+evaluation defaults. `provider-doctor`, HTTP `/api/provider-diagnostics`, and MCP provider
+diagnostics also validate configured profiles so unsupported templates, target kinds, and numeric
+ranges are caught before selecting a profile at runtime.
 Answer retrieval can be scoped/tuned with provider-neutral `filter`,
 source weights, and graph `expand_from`/`expand_max_depth` controls. Retrieved context can then be
 post-processed through the provider-neutral `AnswerReranker` hook with CLI `--min-score`,

@@ -606,20 +606,20 @@ answer:
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
-  profiles:
-    # - name: project-review
-    #   description: Project-specific review profile
-    #   template: review
-    #   limit: 8
-    #   filter:
-    #     target_kinds: [symbol, file, document]
-    #   dedupe_context: true
-    #   max_per_file: 2
-    #   max_context_chars: 6000
-    #   require_citations: true
-    #   min_citation_coverage: 0.2
-    #   evaluate: true
-    #   min_evaluation_score: 0.6
+  # profiles:
+  #   - name: project-review
+  #     description: Project-specific review profile
+  #     template: review
+  #     limit: 8
+  #     filter:
+  #       target_kinds: [symbol, file, document]
+  #     dedupe_context: true
+  #     max_per_file: 2
+  #     max_context_chars: 6000
+  #     require_citations: true
+  #     min_citation_coverage: 0.2
+  #     evaluate: true
+  #     min_evaluation_score: 0.6
 server:
   port: 9090
 watch:
@@ -874,7 +874,7 @@ func newProviderDoctorCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "provider-doctor",
-		Short: "Check embedding and answer provider configuration without network calls",
+		Short: "Check provider and configured answer profile settings without network calls",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			eng, err := newEngine()
 			if err != nil {
@@ -901,6 +901,9 @@ func newProviderDoctorCmd() *cobra.Command {
 				}
 				if c.BaseURL != "" {
 					fmt.Printf(" base_url=%s", c.BaseURL)
+				}
+				if c.Profile != "" {
+					fmt.Printf(" profile=%s", c.Profile)
 				}
 				fmt.Printf(": %s\n", c.Message)
 				for _, action := range c.Actions {

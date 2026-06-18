@@ -1155,6 +1155,9 @@ func TestOnboardCmdCreatesConfigAndRefusesOverwrite(t *testing.T) {
 	if !strings.Contains(string(data), "store:") || !strings.Contains(string(data), "watch:") {
 		t.Fatalf("generated config missing expected sections:\n%s", string(data))
 	}
+	if strings.Contains(string(data), "\n  profiles:") {
+		t.Fatalf("generated config should keep answer.profiles commented so it does not clear user profiles:\n%s", string(data))
+	}
 
 	cmd = newOnboardCmd()
 	cmd.SetArgs([]string{"--dir", tmpDir})

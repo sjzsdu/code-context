@@ -232,6 +232,82 @@ func TestProviderDiagnosticsReportsOpenAIAPIKeyErrors(t *testing.T) {
 	}
 }
 
+func TestProviderDiagnosticsIncludesAnswerProfileChecks(t *testing.T) {
+	root := t.TempDir()
+	eng, err := NewWithOptions(root, Options{
+		Store: store.Options{
+			Backend: store.BackendSQLite,
+			SQLite:  store.SQLiteOptions{Path: filepath.Join(root, "index.db")},
+		},
+		AnswerProfiles: []AnswerProfileInfo{
+			{
+				Name:        "custom_review",
+				Description: "valid custom profile",
+				Template:    AnswerTemplateReview,
+				Filter:      store.SearchFilter{TargetKinds: []store.TargetKind{store.TargetSymbol}},
+				Limit:       4,
+			},
+			{
+				Name:                "bad-profile",
+				Template:            "not-a-template",
+				Filter:              store.SearchFilter{TargetKinds: []store.TargetKind{"unknown-kind"}},
+				Limit:               -1,
+				MinCitationCoverage: 1.5,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+	defer eng.Close()
+
+	report, err := eng.ProviderDiagnostics(context.Background())
+	if err != nil {
+		t.Fatalf("ProviderDiagnostics: %v", err)
+	}
+	if report.OK {
+		t.Fatalf("report.OK = true, want false for invalid answer profile: %#v", report)
+	}
+	var foundValid, foundInvalid bool
+	for _, check := range report.Checks {
+		if check.Kind != "answer_profile" {
+			continue
+		}
+		switch check.Profile {
+		case "custom-review":
+			foundValid = true
+			if check.Status != "ok" || !strings.Contains(check.Message, "valid") {
+				t.Fatalf("valid profile check = %#v", check)
+			}
+		case "bad-profile":
+			foundInvalid = true
+			if check.Status != "error" ||
+				!strings.Contains(check.Message, "unsupported template") ||
+				!strings.Contains(check.Message, "unsupported target kind") ||
+				!strings.Contains(check.Message, "min_citation_coverage") {
+				t.Fatalf("invalid profile check = %#v", check)
+			}
+		}
+	}
+	if !foundValid || !foundInvalid {
+		t.Fatalf("checks = %#v, want valid and invalid answer_profile checks", report.Checks)
+	}
+
+	doctor, err := eng.Doctor(context.Background())
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	var foundDoctorProfile bool
+	for _, check := range doctor.Checks {
+		if check.Name == "answer_profile:bad-profile" && check.Status == "error" {
+			foundDoctorProfile = true
+		}
+	}
+	if !foundDoctorProfile {
+		t.Fatalf("doctor checks = %#v, want answer_profile:bad-profile error", doctor.Checks)
+	}
+}
+
 func TestEmbedUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))

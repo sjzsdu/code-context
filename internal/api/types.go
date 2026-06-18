@@ -294,13 +294,15 @@ type ProviderConfigCheck struct {
 	Provider string   `json:"provider,omitempty"`
 	Model    string   `json:"model,omitempty"`
 	BaseURL  string   `json:"base_url,omitempty"`
+	Profile  string   `json:"profile,omitempty"`
 	Status   string   `json:"status"` // ok, warn, error
 	Message  string   `json:"message"`
 	Actions  []string `json:"actions,omitempty"`
 }
 
-// ProviderDiagnosticsReport summarizes embedding/answer provider configuration
-// health. It is deterministic and local: it does not call external providers.
+// ProviderDiagnosticsReport summarizes embedding/answer provider and related
+// answer-profile configuration health. It is deterministic and local: it does
+// not call external providers.
 type ProviderDiagnosticsReport struct {
 	OK      bool                  `json:"ok"`
 	Summary string                `json:"summary"`

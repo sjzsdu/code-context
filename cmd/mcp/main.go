@@ -484,7 +484,7 @@ func registerAgentTools(srv *mcp.Server, eng *engine.Engine) {
 			return textResult(out), nil, nil
 		})
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_provider_diagnostics", Description: "Check embedding and answer provider configuration without network calls"},
+	mcp.AddTool(srv, &mcp.Tool{Name: "code_context_provider_diagnostics", Description: "Check provider and configured answer profile settings without network calls"},
 		func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 			out, err := runProviderDiagnosticsTool(ctx, eng)
 			if err != nil {

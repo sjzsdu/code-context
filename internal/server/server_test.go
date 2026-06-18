@@ -649,6 +649,47 @@ func TestProviderDiagnosticsEndpoint(t *testing.T) {
 	}
 }
 
+func TestProviderDiagnosticsEndpointIncludesAnswerProfileChecks(t *testing.T) {
+	root := t.TempDir()
+	eng, err := engine.NewWithOptions(root, engine.Options{
+		Store: store.Options{Backend: store.BackendSQLite, SQLite: store.SQLiteOptions{Path: filepath.Join(root, "index.db")}},
+		AnswerProfiles: []engine.AnswerProfileInfo{{
+			Name:        "custom-review",
+			Description: "configured custom profile",
+			Template:    engine.AnswerTemplateReview,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer eng.Close()
+	s := New(eng, 0)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/provider-diagnostics")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var payload api.ProviderDiagnosticsReport
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	var found bool
+	for _, check := range payload.Checks {
+		if check.Kind == "answer_profile" && check.Profile == "custom-review" && check.Status == "ok" {
+			found = true
+		}
+	}
+	if !payload.OK || !found {
+		t.Fatalf("expected ok answer_profile diagnostics, got %+v", payload)
+	}
+}
+
 func TestEmbeddingPlanEndpoint(t *testing.T) {
 	ts, cleanup := setupTestServer(t)
 	defer cleanup()

@@ -598,9 +598,10 @@ code-context provider-doctor
 code-context provider-doctor --json
 ```
 
-Runs deterministic local checks for embedding and answer provider configuration without making
-network calls or exposing secrets. It reports disabled providers, missing hosted API keys, resolved
-models/base URLs, and suggested follow-up actions.
+Runs deterministic local checks for embedding and answer provider configuration plus configured
+Answer profiles without making network calls or exposing secrets. It reports disabled providers,
+missing hosted API keys, resolved models/base URLs, invalid profile templates/filters/ranges, and
+suggested follow-up actions.
 
 ### `freshness` / `doctor` / `rebuild` — Index health and repair
 
@@ -746,7 +747,9 @@ when both are present, and `answer-templates` / `/api/answer-templates` / MCP
 `profile`. Built-in profiles can be extended or overridden from user/project config under
 `answer.profiles`; project config wins over user config for the same normalized profile name.
 Configured profiles can include retrieval, rerank, grounding, and evaluation defaults. Answer
-requests also accept `filter`, `text_weight`, `vector_weight`,
+profile definitions are also checked by `provider-doctor`, `/api/provider-diagnostics`, and MCP
+provider diagnostics so bad templates, target kinds, or numeric ranges are caught before runtime.
+Requests also accept `filter`, `text_weight`, `vector_weight`,
 `graph_weight`, `expand_from`, and `expand_max_depth` so callers can scope and tune retrieval
 without dropping to backend-specific APIs. They can then post-process the selected answer context
 through the provider-neutral `AnswerReranker` hook with `min_context_score`, `dedupe_context`,
@@ -801,7 +804,7 @@ Start the server with `code-context serve`, then:
 | POST | `/api/answer` | JSON `AnswerOptions` with `question`/`query`, `context_only?`, `limit?`, `filter?`, weights, `expand_from?`, `profile?`, `template?`, `min_context_score?`, `dedupe_context?`, `max_per_file?`, `max_context_chars?`, `max_context_item_chars?`, `require_citations?`, `min_citation_coverage?`, `evaluate?`, `min_evaluation_score?`, `system_prompt?`, `messages?` | Build RAG context and optionally call the configured answer provider; JSON result includes `sources`, `retrieval`, provider-backed `grounding`, and optional local `evaluation` |
 | GET | `/api/answer-templates` | `include_prompts?` | List built-in provider-neutral answer templates |
 | GET | `/api/answer-profiles` | — | List built-in and configured provider-neutral answer workflow profiles |
-| GET | `/api/provider-diagnostics` | — | Check embedding and answer provider configuration without network calls |
+| GET | `/api/provider-diagnostics` | — | Check provider and configured Answer profile settings without network calls |
 | GET | `/api/imports` | `file` | Get imports of a file |
 | GET | `/api/importers` | `source` | Find files importing a source |
 | GET | `/api/callers` | `name` | Show heuristic callers of a symbol |

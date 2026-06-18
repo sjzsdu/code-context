@@ -423,6 +423,8 @@ provider_doctor_cli="$(run_code_context provider-doctor --json)"
 printf '%s\n' "$provider_doctor_cli"
 grep -q '"kind": "embedding"' <<<"$provider_doctor_cli"
 grep -q '"kind": "answer"' <<<"$provider_doctor_cli"
+grep -q '"kind": "answer_profile"' <<<"$provider_doctor_cli"
+grep -q '"profile": "smoke-custom"' <<<"$provider_doctor_cli"
 grep -q '"provider": "openai-compatible"' <<<"$provider_doctor_cli"
 
 answer_context_cli="$(run_code_context answer "Where is HealthMessage used?" --context-only --json --profile explain-code --limit 5 --target-kind symbol --text-weight 0.6 --vector-weight 0.4 --dedupe --max-per-file 2 --max-context-item-chars 800 --max-context-chars 2000)"
@@ -594,6 +596,8 @@ provider_doctor_api="$(curl -fsS "http://127.0.0.1:${HTTP_PORT}/api/provider-dia
 printf '%s\n' "$provider_doctor_api"
 grep -q '"kind":"embedding"' <<<"$provider_doctor_api"
 grep -q '"kind":"answer"' <<<"$provider_doctor_api"
+grep -q '"kind":"answer_profile"' <<<"$provider_doctor_api"
+grep -q '"profile":"smoke-custom"' <<<"$provider_doctor_api"
 grep -q '"provider":"openai-compatible"' <<<"$provider_doctor_api"
 
 traverse_api="$(curl -fsS -X POST "http://127.0.0.1:${HTTP_PORT}/api/graph/traverse" -H 'Content-Type: application/json' --data '{"target":"text:Health","edge_kinds":["similar"],"filter":{"target_kinds":["symbol"]},"include_paths":true,"direction":"outbound","limit":10}')"
