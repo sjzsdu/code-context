@@ -276,6 +276,47 @@ func TestAnswerGroundingAuditsCitations(t *testing.T) {
 	}
 }
 
+func TestAnswerGroundingHonorsMinCoverage(t *testing.T) {
+	answerer := &fakeAnswerer{answer: "Use the lexical match [1]."}
+	eng := &Engine{store: &fakeHybridRankStore{}, embedder: fakeEmbedder{}, answerer: answerer}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:            "hello",
+		MinCitationCoverage: 0.75,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if result.Grounding == nil {
+		t.Fatalf("grounding = nil")
+	}
+	if !result.Grounding.Required || result.Grounding.Passed || !result.Grounding.Grounded {
+		t.Fatalf("grounding flags = %#v", result.Grounding)
+	}
+	if result.Grounding.MinCoverage != 0.75 {
+		t.Fatalf("min coverage = %v", result.Grounding.MinCoverage)
+	}
+	if result.Grounding.Coverage >= result.Grounding.MinCoverage {
+		t.Fatalf("coverage = %v, want below %v", result.Grounding.Coverage, result.Grounding.MinCoverage)
+	}
+	if len(result.Grounding.UncitedCitations) == 0 {
+		t.Fatalf("uncited citations = %#v, want at least one", result.Grounding.UncitedCitations)
+	}
+	if !strings.Contains(result.Grounding.Summary, "below required") {
+		t.Fatalf("grounding summary = %q", result.Grounding.Summary)
+	}
+}
+
+func TestAnswerRejectsInvalidMinCitationCoverage(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: &fakeAnswerer{}}
+	_, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:            "hello",
+		MinCitationCoverage: 1.5,
+	})
+	if err == nil || !strings.Contains(err.Error(), "min citation coverage") {
+		t.Fatalf("Answer error = %v, want min citation coverage validation", err)
+	}
+}
+
 func TestAnswerRejectsUnknownTemplate(t *testing.T) {
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
 	_, err := eng.Answer(context.Background(), AnswerOptions{

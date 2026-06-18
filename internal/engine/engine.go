@@ -583,22 +583,23 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 }
 
 type AnswerOptions struct {
-	Query            string                `json:"query,omitempty"`
-	Question         string                `json:"question,omitempty"`
-	Template         string                `json:"template,omitempty"`
-	SystemPrompt     string                `json:"system_prompt,omitempty"`
-	Messages         []store.AnswerMessage `json:"messages,omitempty"`
-	Filter           store.SearchFilter    `json:"filter,omitempty"`
-	Limit            int                   `json:"limit,omitempty"`
-	TextWeight       float64               `json:"text_weight,omitempty"`
-	VectorWeight     float64               `json:"vector_weight,omitempty"`
-	GraphWeight      float64               `json:"graph_weight,omitempty"`
-	ExpandFrom       []store.TargetRef     `json:"expand_from,omitempty"`
-	ExpandMaxDepth   int                   `json:"expand_max_depth,omitempty"`
-	ContextOnly      bool                  `json:"context_only,omitempty"`
-	RequireCitations bool                  `json:"require_citations,omitempty"`
-	MaxTokens        int                   `json:"max_tokens,omitempty"`
-	Temperature      *float64              `json:"temperature,omitempty"`
+	Query               string                `json:"query,omitempty"`
+	Question            string                `json:"question,omitempty"`
+	Template            string                `json:"template,omitempty"`
+	SystemPrompt        string                `json:"system_prompt,omitempty"`
+	Messages            []store.AnswerMessage `json:"messages,omitempty"`
+	Filter              store.SearchFilter    `json:"filter,omitempty"`
+	Limit               int                   `json:"limit,omitempty"`
+	TextWeight          float64               `json:"text_weight,omitempty"`
+	VectorWeight        float64               `json:"vector_weight,omitempty"`
+	GraphWeight         float64               `json:"graph_weight,omitempty"`
+	ExpandFrom          []store.TargetRef     `json:"expand_from,omitempty"`
+	ExpandMaxDepth      int                   `json:"expand_max_depth,omitempty"`
+	ContextOnly         bool                  `json:"context_only,omitempty"`
+	RequireCitations    bool                  `json:"require_citations,omitempty"`
+	MinCitationCoverage float64               `json:"min_citation_coverage,omitempty"`
+	MaxTokens           int                   `json:"max_tokens,omitempty"`
+	Temperature         *float64              `json:"temperature,omitempty"`
 }
 
 type AnswerSource struct {
@@ -627,6 +628,7 @@ type AnswerResult struct {
 
 type AnswerGrounding struct {
 	Required         bool     `json:"required,omitempty"`
+	MinCoverage      float64  `json:"min_coverage,omitempty"`
 	SourceCount      int      `json:"source_count"`
 	HasCitations     bool     `json:"has_citations"`
 	Grounded         bool     `json:"grounded"`
@@ -693,6 +695,9 @@ func FormatAnswerMarkdown(result *AnswerResult) string {
 	if result.Grounding != nil {
 		b.WriteString("\n## Grounding\n")
 		fmt.Fprintf(&b, "- %s\n", result.Grounding.Summary)
+		if result.Grounding.MinCoverage > 0 {
+			fmt.Fprintf(&b, "- min coverage: %.0f%%\n", result.Grounding.MinCoverage*100)
+		}
 		if len(result.Grounding.ValidCitations) > 0 {
 			fmt.Fprintf(&b, "- cited: %s\n", strings.Join(result.Grounding.ValidCitations, ", "))
 		}
@@ -719,6 +724,10 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 		return nil, fmt.Errorf("answer question is required")
 	}
 	template, systemPrompt, err := resolveAnswerPrompt(opts.Template, opts.SystemPrompt)
+	if err != nil {
+		return nil, err
+	}
+	minCitationCoverage, err := normalizeAnswerMinCitationCoverage(opts.MinCitationCoverage)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +770,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	if result.Model == "" {
 		result.Model = info.Model
 	}
-	result.Grounding = auditAnswerGrounding(result.Answer, contextItems, opts.RequireCitations)
+	result.Grounding = auditAnswerGrounding(result.Answer, contextItems, opts.RequireCitations, minCitationCoverage)
 	result.Usage = response.Usage
 	result.Summary = fmt.Sprintf("Answered question %q using %d retrieved context items", question, len(contextItems))
 	return result, nil
@@ -882,10 +891,18 @@ func answerTemplatePrompt(template string) (string, bool) {
 
 var answerCitationPattern = regexp.MustCompile(`\[(\d+)\]`)
 
-func auditAnswerGrounding(answer string, contextItems []store.AnswerContext, required bool) *AnswerGrounding {
+func normalizeAnswerMinCitationCoverage(coverage float64) (float64, error) {
+	if coverage < 0 || coverage > 1 {
+		return 0, fmt.Errorf("min citation coverage must be between 0 and 1")
+	}
+	return coverage, nil
+}
+
+func auditAnswerGrounding(answer string, contextItems []store.AnswerContext, required bool, minCoverage float64) *AnswerGrounding {
 	answer = strings.TrimSpace(answer)
 	report := &AnswerGrounding{
-		Required:    required,
+		Required:    required || minCoverage > 0,
+		MinCoverage: minCoverage,
 		SourceCount: len(contextItems),
 	}
 	known := make(map[string]bool, len(contextItems))
@@ -928,7 +945,7 @@ func auditAnswerGrounding(answer string, contextItems []store.AnswerContext, req
 		report.Coverage = float64(len(report.ValidCitations)) / float64(report.SourceCount)
 	}
 	report.Grounded = len(report.ValidCitations) > 0 && len(report.MissingCitations) == 0
-	report.Passed = report.Grounded
+	report.Passed = report.Grounded && (minCoverage <= 0 || report.Coverage >= minCoverage)
 	report.Summary = answerGroundingSummary(report, answer)
 	return report
 }
@@ -943,6 +960,8 @@ func answerGroundingSummary(report *AnswerGrounding, answer string) string {
 		return "Answer did not cite any retrieved sources."
 	case len(report.MissingCitations) > 0:
 		return fmt.Sprintf("Answer cited unknown sources: %s.", strings.Join(report.MissingCitations, ", "))
+	case report.MinCoverage > 0 && report.Coverage < report.MinCoverage:
+		return fmt.Sprintf("Answer cited %.0f%% of retrieved sources, below required %.0f%%.", report.Coverage*100, report.MinCoverage*100)
 	case len(report.ValidCitations) > 0:
 		return fmt.Sprintf("Answer cited %d of %d retrieved sources.", len(report.ValidCitations), report.SourceCount)
 	default:
