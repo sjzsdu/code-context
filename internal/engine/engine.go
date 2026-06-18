@@ -584,6 +584,7 @@ func (e *Engine) Embed(ctx context.Context, inputs []store.EmbeddingInput) ([]st
 type AnswerOptions struct {
 	Query          string                `json:"query,omitempty"`
 	Question       string                `json:"question,omitempty"`
+	Template       string                `json:"template,omitempty"`
 	SystemPrompt   string                `json:"system_prompt,omitempty"`
 	Messages       []store.AnswerMessage `json:"messages,omitempty"`
 	Filter         store.SearchFilter    `json:"filter,omitempty"`
@@ -612,6 +613,7 @@ type AnswerResult struct {
 	Answer      string                `json:"answer,omitempty"`
 	Provider    string                `json:"provider,omitempty"`
 	Model       string                `json:"model,omitempty"`
+	Template    string                `json:"template,omitempty"`
 	ContextOnly bool                  `json:"context_only,omitempty"`
 	Context     []store.AnswerContext `json:"context,omitempty"`
 	Sources     []AnswerSource        `json:"sources,omitempty"`
@@ -687,6 +689,10 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	if question == "" {
 		return nil, fmt.Errorf("answer question is required")
 	}
+	template, systemPrompt, err := resolveAnswerPrompt(opts.Template, opts.SystemPrompt)
+	if err != nil {
+		return nil, err
+	}
 
 	contextItems, hits, err := e.AnswerContextWithOptions(ctx, opts)
 	if err != nil {
@@ -694,6 +700,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	}
 	result := &AnswerResult{
 		Question:    question,
+		Template:    template,
 		ContextOnly: opts.ContextOnly,
 		Context:     contextItems,
 		Sources:     answerSourcesFromContext(contextItems),
@@ -710,7 +717,7 @@ func (e *Engine) Answer(ctx context.Context, opts AnswerOptions) (*AnswerResult,
 	info := e.answerer.AnswerModel()
 	response, err := e.answerer.Answer(ctx, store.AnswerRequest{
 		Question:     question,
-		SystemPrompt: strings.TrimSpace(opts.SystemPrompt),
+		SystemPrompt: systemPrompt,
 		Messages:     opts.Messages,
 		Context:      contextItems,
 		MaxTokens:    opts.MaxTokens,
@@ -791,6 +798,56 @@ func answerQuestion(opts AnswerOptions) string {
 		question = strings.TrimSpace(opts.Query)
 	}
 	return question
+}
+
+const (
+	AnswerTemplateGeneral = "general"
+	AnswerTemplateExplain = "explain"
+	AnswerTemplateReview  = "review"
+	AnswerTemplatePlan    = "plan"
+)
+
+func AnswerTemplates() []string {
+	return []string{
+		AnswerTemplateGeneral,
+		AnswerTemplateExplain,
+		AnswerTemplateReview,
+		AnswerTemplatePlan,
+	}
+}
+
+func resolveAnswerPrompt(template string, systemPrompt string) (string, string, error) {
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	template = strings.TrimSpace(strings.ToLower(template))
+	if template == "" {
+		if systemPrompt != "" {
+			return "", systemPrompt, nil
+		}
+		return "", "", nil
+	}
+	prompt, ok := answerTemplatePrompt(template)
+	if !ok {
+		return "", "", fmt.Errorf("unsupported answer template %q (supported: %s)", template, strings.Join(AnswerTemplates(), ", "))
+	}
+	if systemPrompt != "" {
+		return template, systemPrompt, nil
+	}
+	return template, prompt, nil
+}
+
+func answerTemplatePrompt(template string) (string, bool) {
+	switch template {
+	case AnswerTemplateGeneral:
+		return "Answer using the supplied code-context evidence. Cite sources with the provided labels such as [1]. If the evidence is insufficient, say what is missing instead of inventing.", true
+	case AnswerTemplateExplain:
+		return "Explain the relevant code behavior using only the supplied code-context evidence. Organize the response around what it does, where it lives, and how the pieces interact. Cite sources with the provided labels such as [1]. If evidence is missing, state the gap.", true
+	case AnswerTemplateReview:
+		return "Review the supplied code-context evidence for correctness, risk, test impact, documentation impact, and follow-up actions. Be concrete and cite sources with the provided labels such as [1]. If evidence is insufficient for a claim, say so.", true
+	case AnswerTemplatePlan:
+		return "Create an implementation plan from the supplied code-context evidence. Include ordered steps, files or symbols likely involved, risks, and validation commands when evidence supports them. Cite sources with the provided labels such as [1].", true
+	default:
+		return "", false
+	}
 }
 
 func answerCitationLabel(rank int) string {

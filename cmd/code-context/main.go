@@ -1115,6 +1115,7 @@ func newAnswerCmd() *cobra.Command {
 	var jsonOut bool
 	var maxTokens int
 	var temperature float64
+	var template string
 	var systemPrompt string
 	var format string
 	var filePattern string
@@ -1153,6 +1154,7 @@ func newAnswerCmd() *cobra.Command {
 			}
 			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
 				Question:       strings.TrimSpace(strings.Join(args, " ")),
+				Template:       strings.TrimSpace(template),
 				SystemPrompt:   strings.TrimSpace(systemPrompt),
 				Filter:         filter,
 				Limit:          limit,
@@ -1200,6 +1202,7 @@ func newAnswerCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&limit, "limit", 8, "max retrieved context items")
 	cmd.Flags().BoolVar(&contextOnly, "context-only", false, "only retrieve and print context; do not call an answer provider")
+	cmd.Flags().StringVar(&template, "template", "", "answer prompt template (general|explain|review|plan); overridden by --system-prompt")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "override the answer provider system prompt")
 	cmd.Flags().StringSliceVar(&targetKinds, "target-kind", nil, "filter retrieval target kinds; repeat or comma-separate (symbol,document,file,text)")
 	cmd.Flags().StringVar(&filePattern, "file-pattern", "", "filter retrieval hits whose path matches this substring or glob")

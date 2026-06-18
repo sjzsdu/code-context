@@ -201,6 +201,7 @@ func TestAnswerDelegatesToProvider(t *testing.T) {
 	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
 	result, err := eng.Answer(context.Background(), AnswerOptions{
 		Question:     "hello",
+		Template:     AnswerTemplateReview,
 		SystemPrompt: "custom system prompt",
 		Messages:     []store.AnswerMessage{{Role: "assistant", Content: "prior"}},
 		Limit:        3,
@@ -211,6 +212,9 @@ func TestAnswerDelegatesToProvider(t *testing.T) {
 	}
 	if result.Answer != "fake answer" || result.Provider != "fake" || result.Model != "fake-chat" {
 		t.Fatalf("result = %#v", result)
+	}
+	if result.Template != AnswerTemplateReview {
+		t.Fatalf("template = %q, want %q", result.Template, AnswerTemplateReview)
 	}
 	if answerer.request.Question != "hello" || answerer.request.MaxTokens != 128 {
 		t.Fatalf("request = %#v", answerer.request)
@@ -223,6 +227,37 @@ func TestAnswerDelegatesToProvider(t *testing.T) {
 	}
 	if answerer.request.Context[0].Citation != "[1]" {
 		t.Fatalf("request context citation = %#v", answerer.request.Context)
+	}
+}
+
+func TestAnswerTemplatePassesPresetPrompt(t *testing.T) {
+	answerer := &fakeAnswerer{}
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}, answerer: answerer}
+	result, err := eng.Answer(context.Background(), AnswerOptions{
+		Question: "hello",
+		Template: AnswerTemplatePlan,
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if result.Template != AnswerTemplatePlan {
+		t.Fatalf("template = %q, want %q", result.Template, AnswerTemplatePlan)
+	}
+	if !strings.Contains(answerer.request.SystemPrompt, "implementation plan") ||
+		!strings.Contains(answerer.request.SystemPrompt, "[1]") {
+		t.Fatalf("system prompt = %q, want plan template with citation instruction", answerer.request.SystemPrompt)
+	}
+}
+
+func TestAnswerRejectsUnknownTemplate(t *testing.T) {
+	eng := &Engine{store: &fakeHybridStore{}, embedder: fakeEmbedder{}}
+	_, err := eng.Answer(context.Background(), AnswerOptions{
+		Question:    "hello",
+		Template:    "unknown",
+		ContextOnly: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported answer template") {
+		t.Fatalf("Answer error = %v, want unsupported answer template", err)
 	}
 }
 

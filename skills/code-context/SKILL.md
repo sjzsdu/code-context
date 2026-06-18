@@ -62,6 +62,7 @@ code-context hybrid-search "handler health check"
 
 # 7. Build provider-neutral answer context without external model calls
 code-context answer "How is status served?" --context-only
+code-context answer "How is status served?" --template explain --format markdown
 
 # 8. Get detailed context
 code-context context Engine
@@ -168,10 +169,12 @@ Answer/RAG support follows the same provider-neutral rule: `answer`, `POST /api/
 `Answerer` only when `answer.provider` is enabled. Use `--context-only` or JSON
 `{"context_only": true}` to inspect evidence without any external model call. Answer results expose
 stable citation/source metadata (`[1]`, `[2]`, ...), and callers can override `system_prompt` or pass
-prior `messages` without coupling to a specific backend. Answer retrieval can be scoped/tuned with
-provider-neutral `filter`, source weights, and graph `expand_from`/`expand_max_depth` controls. Use
-CLI `--format markdown` or MCP `format: "markdown"` for agent-readable answers with a `Sources`
-section; use JSON for structured consumers.
+prior `messages` without coupling to a specific backend. Callers can also select prompt presets via
+`template`/`--template` (`general`, `explain`, `review`, `plan`); explicit `system_prompt` still
+overrides the preset text. Answer retrieval can be scoped/tuned with provider-neutral `filter`,
+source weights, and graph `expand_from`/`expand_max_depth` controls. Use CLI `--format markdown` or
+MCP `format: "markdown"` for agent-readable answers with a `Sources` section; use JSON for
+structured consumers.
 
 ## Recommended Dogfood Workflow
 
@@ -483,7 +486,7 @@ Start server: `code-context serve --port 9090`
 | GET | `/api/text` | `q`, `file?`, `limit?` | Text search |
 | POST | `/api/vector` | JSON `VectorSearchQuery` | Provider-backed vector search |
 | POST | `/api/hybrid` | JSON `HybridSearchQuery` | Provider-neutral text/vector/graph fusion |
-| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
+| POST | `/api/answer` | JSON `AnswerOptions` (`question`, `context_only?`, `filter?`, weights, `template?`, `system_prompt?`, `messages?`) | Build answer context and optionally call configured `Answerer` |
 
 ### Symbol Endpoints
 

@@ -214,11 +214,19 @@ func TestRunAnswerToolJSONContextOnly(t *testing.T) {
 	eng, cleanup := newTestEngine(t)
 	defer cleanup()
 
-	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{Question: "Foo", ContextOnly: true, Format: "json", Limit: 3})
+	out, err := runAnswerTool(context.Background(), eng, AnswerArgs{
+		Question:    "Foo",
+		Template:    engine.AnswerTemplateExplain,
+		ContextOnly: true,
+		Format:      "json",
+		Limit:       3,
+	})
 	if err != nil {
 		t.Fatalf("run answer tool json: %v", err)
 	}
-	if !strings.Contains(out, "\"question\": \"Foo\"") || !strings.Contains(out, "\"sources\"") {
+	if !strings.Contains(out, "\"question\": \"Foo\"") ||
+		!strings.Contains(out, "\"template\": \"explain\"") ||
+		!strings.Contains(out, "\"sources\"") {
 		t.Fatalf("expected JSON answer context, got:\n%s", out)
 	}
 }

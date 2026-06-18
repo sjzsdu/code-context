@@ -108,6 +108,7 @@ type AnswerArgs struct {
 	Query          string                `json:"query,omitempty"`
 	Question       string                `json:"question,omitempty"`
 	Format         string                `json:"format,omitempty"`
+	Template       string                `json:"template,omitempty"`
 	SystemPrompt   string                `json:"system_prompt,omitempty"`
 	Messages       []store.AnswerMessage `json:"messages,omitempty"`
 	Filter         store.SearchFilter    `json:"filter,omitempty"`
@@ -1503,6 +1504,7 @@ func runAnswerTool(ctx context.Context, eng *engine.Engine, args AnswerArgs) (st
 	}
 	result, err := eng.Answer(ctx, engine.AnswerOptions{
 		Question:       question,
+		Template:       strings.TrimSpace(args.Template),
 		SystemPrompt:   strings.TrimSpace(args.SystemPrompt),
 		Messages:       args.Messages,
 		Filter:         args.Filter,
