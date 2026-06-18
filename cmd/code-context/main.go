@@ -53,6 +53,7 @@ var (
 	answerAPIKey        string
 	answerAPIKeyEnv     string
 	answerModel         string
+	answerReranker      string
 	answerTimeout       time.Duration
 	answerMaxTokens     int
 	answerTemperature   float64
@@ -106,6 +107,7 @@ func main() {
 	cmd.PersistentFlags().StringVar(&answerAPIKey, "answer-api-key", "", "answer API key")
 	cmd.PersistentFlags().StringVar(&answerAPIKeyEnv, "answer-api-key-env", "", "environment variable containing the answer API key")
 	cmd.PersistentFlags().StringVar(&answerModel, "answer-model", "", "answer model name")
+	cmd.PersistentFlags().StringVar(&answerReranker, "answer-reranker", "", "answer context reranker (local|semantic; default: local)")
 	cmd.PersistentFlags().DurationVar(&answerTimeout, "answer-timeout", 0, "answer request timeout")
 	cmd.PersistentFlags().IntVar(&answerMaxTokens, "answer-max-tokens", 0, "answer max completion tokens")
 	cmd.PersistentFlags().Float64Var(&answerTemperature, "answer-temperature", 0, "answer sampling temperature")
@@ -214,7 +216,8 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 		!cmd.Flags().Changed("embedding-timeout") || !cmd.Flags().Changed("embedding-batch-size") ||
 		!cmd.Flags().Changed("answer-provider") || !cmd.Flags().Changed("answer-base-url") ||
 		!cmd.Flags().Changed("answer-api-key") || !cmd.Flags().Changed("answer-api-key-env") ||
-		!cmd.Flags().Changed("answer-model") || !cmd.Flags().Changed("answer-timeout") ||
+		!cmd.Flags().Changed("answer-model") || !cmd.Flags().Changed("answer-reranker") ||
+		!cmd.Flags().Changed("answer-timeout") ||
 		!cmd.Flags().Changed("answer-max-tokens") || !cmd.Flags().Changed("answer-temperature") {
 
 		if loaded == nil && loadErr != config.ErrNotFound {
@@ -296,6 +299,9 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 			if !cmd.Flags().Changed("answer-model") && loaded.Config.Answer.Model != "" {
 				answerModel = loaded.Config.Answer.Model
 			}
+			if !cmd.Flags().Changed("answer-reranker") && loaded.Config.Answer.Reranker != "" {
+				answerReranker = loaded.Config.Answer.Reranker
+			}
 			if !cmd.Flags().Changed("answer-timeout") && loaded.Config.Answer.Timeout > 0 {
 				answerTimeout = loaded.Config.Answer.Timeout
 			}
@@ -317,10 +323,11 @@ func applyPersistentDefaults(cmd *cobra.Command, cfg *runtimeConfig) {
 
 func newEngine() (*engine.Engine, error) {
 	return engine.NewWithOptions(root, engine.Options{
-		Store:          storeOptions(),
-		Embedding:      embeddingOptions(),
-		Answer:         answerOptions(),
-		AnswerProfiles: answerProfiles,
+		Store:                  storeOptions(),
+		Embedding:              embeddingOptions(),
+		Answer:                 answerOptions(),
+		AnswerRerankerProvider: answerReranker,
+		AnswerProfiles:         answerProfiles,
 	})
 }
 
@@ -551,6 +558,9 @@ func applyCLIOverridesToInspectConfig(cfg *config.Config) {
 	if answerModel != "" {
 		cfg.Answer.Model = answerModel
 	}
+	if answerReranker != "" {
+		cfg.Answer.Reranker = answerReranker
+	}
 	if answerTimeout > 0 {
 		cfg.Answer.Timeout = answerTimeout
 	}
@@ -635,6 +645,7 @@ answer:
   base_url: ""
   api_key_env: ANSWER_API_KEY
   model: ""
+  reranker: local
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2

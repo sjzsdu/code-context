@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -62,12 +63,13 @@ func NewWithStoreOptions(root string, storeOpts store.Options) (*Engine, error) 
 }
 
 type Options struct {
-	Store           store.Options
-	Embedding       embeddingpkg.Options
-	Answer          answerpkg.Options
-	AnswerReranker  AnswerReranker
-	AnswerEvaluator AnswerEvaluator
-	AnswerProfiles  []AnswerProfileInfo
+	Store                  store.Options
+	Embedding              embeddingpkg.Options
+	Answer                 answerpkg.Options
+	AnswerRerankerProvider string
+	AnswerReranker         AnswerReranker
+	AnswerEvaluator        AnswerEvaluator
+	AnswerProfiles         []AnswerProfileInfo
 }
 
 func NewWithOptions(root string, opts Options) (*Engine, error) {
@@ -119,7 +121,11 @@ func NewWithOptions(root string, opts Options) (*Engine, error) {
 	}
 	reranker := opts.AnswerReranker
 	if reranker == nil {
-		reranker = LocalAnswerReranker{}
+		reranker, err = newAnswerReranker(opts.AnswerRerankerProvider, embedder)
+		if err != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("configure answer reranker: %w", err)
+		}
 	}
 
 	if err := s.Init(context.Background()); err != nil {
@@ -1091,6 +1097,15 @@ const (
 	AnswerProfileTestPlan           = "test-plan"
 )
 
+const (
+	AnswerRerankerLocal    = "local"
+	AnswerRerankerSemantic = "semantic"
+)
+
+func AnswerRerankers() []string {
+	return []string{AnswerRerankerLocal, AnswerRerankerSemantic}
+}
+
 func AnswerTemplates() []string {
 	infos := AnswerTemplateCatalog(false)
 	names := make([]string, 0, len(infos))
@@ -1395,6 +1410,22 @@ func answerTemplateDescription(template string) (string, bool) {
 
 var answerCitationPattern = regexp.MustCompile(`\[(\d+)\]`)
 
+func newAnswerReranker(provider string, embedder store.Embedder) (AnswerReranker, error) {
+	provider = normalizeAnswerRerankerProvider(provider)
+	switch provider {
+	case "", AnswerRerankerLocal:
+		return LocalAnswerReranker{}, nil
+	case AnswerRerankerSemantic:
+		return SemanticAnswerReranker{Embedder: embedder}, nil
+	default:
+		return nil, fmt.Errorf("unsupported answer reranker %q (supported: %s)", provider, strings.Join(AnswerRerankers(), ", "))
+	}
+}
+
+func normalizeAnswerRerankerProvider(provider string) string {
+	return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(provider, "_", "-")))
+}
+
 func normalizeAnswerMinCitationCoverage(coverage float64) (float64, error) {
 	if coverage < 0 || coverage > 1 {
 		return 0, fmt.Errorf("min citation coverage must be between 0 and 1")
@@ -1452,6 +1483,158 @@ func auditAnswerGrounding(answer string, contextItems []store.AnswerContext, req
 	report.Passed = report.Grounded && (minCoverage <= 0 || report.Coverage >= minCoverage)
 	report.Summary = answerGroundingSummary(report, answer)
 	return report
+}
+
+// SemanticAnswerReranker uses the configured Embedder to rerank retrieved
+// answer context by semantic similarity to the question, then delegates to the
+// local reranker for score filters, dedupe, per-file limits, and context
+// budgets. It is still provider-neutral: any Embedder implementation can be
+// used, and no storage backend details leak into the reranker.
+type SemanticAnswerReranker struct {
+	Embedder store.Embedder
+}
+
+func (r SemanticAnswerReranker) RerankAnswerHits(ctx context.Context, input AnswerRerankInput) (*AnswerRerankResult, error) {
+	if r.Embedder == nil {
+		return nil, fmt.Errorf("semantic answer reranker requires an embedding provider")
+	}
+	if len(input.Hits) == 0 {
+		return (LocalAnswerReranker{}).RerankAnswerHits(ctx, input)
+	}
+	if err := validateAnswerRerankOptions(input.Options); err != nil {
+		return nil, err
+	}
+
+	embeddingInputs := make([]store.EmbeddingInput, 0, len(input.Hits)+1)
+	embeddingInputs = append(embeddingInputs, store.EmbeddingInput{
+		ID:   "question",
+		Text: strings.TrimSpace(input.Question),
+		Kind: store.EmbeddingInputQuery,
+	})
+	for i, hit := range input.Hits {
+		content := answerHitContent(hit)
+		if content == "" {
+			content = answerTargetLabel(hit.Target)
+		}
+		content = answerTrimToRunes(content, 4000)
+		embeddingInputs = append(embeddingInputs, store.EmbeddingInput{
+			ID:     fmt.Sprintf("hit-%d", i),
+			Text:   content,
+			Kind:   answerRerankEmbeddingKind(hit.Target.Kind),
+			Target: hit.Target,
+		})
+	}
+	vectors, err := r.Embedder.Embed(ctx, embeddingInputs)
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) != len(embeddingInputs) {
+		return nil, fmt.Errorf("semantic answer reranker expected %d embedding vectors, got %d", len(embeddingInputs), len(vectors))
+	}
+	questionVector := vectors[0].Values
+	scored := make([]semanticRerankHit, 0, len(input.Hits))
+	maxOriginal := 0.0
+	for _, hit := range input.Hits {
+		if hit.Score > maxOriginal {
+			maxOriginal = hit.Score
+		}
+	}
+	for i, hit := range input.Hits {
+		semanticScore := answerCosineSimilarity01(questionVector, vectors[i+1].Values)
+		originalScore := answerNormalizedOriginalScore(hit.Score, maxOriginal)
+		finalScore := 0.75*semanticScore + 0.25*originalScore
+		if hit.Metadata == nil {
+			hit.Metadata = map[string]string{}
+		}
+		hit.Metadata["rerank_provider"] = AnswerRerankerSemantic
+		hit.Metadata["semantic_score"] = fmt.Sprintf("%.4f", semanticScore)
+		hit.Metadata["rerank_original_score"] = fmt.Sprintf("%.4f", hit.Score)
+		hit.Metadata["rerank_score"] = fmt.Sprintf("%.4f", finalScore)
+		hit.Score = finalScore
+		scored = append(scored, semanticRerankHit{hit: hit, originalIndex: i})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].hit.Score == scored[j].hit.Score {
+			return scored[i].originalIndex < scored[j].originalIndex
+		}
+		return scored[i].hit.Score > scored[j].hit.Score
+	})
+	rerankedHits := make([]store.SearchHit, 0, len(scored))
+	for _, item := range scored {
+		rerankedHits = append(rerankedHits, item.hit)
+	}
+	result, err := (LocalAnswerReranker{}).RerankAnswerHits(ctx, AnswerRerankInput{
+		Question: input.Question,
+		Hits:     rerankedHits,
+		Options:  input.Options,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Retrieval != nil {
+		result.Retrieval.Retriever = "semantic-reranker"
+		result.Retrieval.Summary = answerRetrievalSummary(result.Retrieval)
+	}
+	return result, nil
+}
+
+type semanticRerankHit struct {
+	hit           store.SearchHit
+	originalIndex int
+}
+
+func answerRerankEmbeddingKind(kind store.TargetKind) store.EmbeddingInputKind {
+	switch kind {
+	case store.TargetDocument:
+		return store.EmbeddingInputDocument
+	case store.TargetFile, store.TargetSymbol, store.TargetRoute, store.TargetText, store.TargetMemory:
+		return store.EmbeddingInputCode
+	default:
+		return store.EmbeddingInputCode
+	}
+}
+
+func answerCosineSimilarity01(a []float32, b []float32) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	var dot, normA, normB float64
+	for i := 0; i < n; i++ {
+		av := float64(a[i])
+		bv := float64(b[i])
+		dot += av * bv
+		normA += av * av
+		normB += bv * bv
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	cosine := dot / (math.Sqrt(normA) * math.Sqrt(normB))
+	if cosine < -1 {
+		cosine = -1
+	}
+	if cosine > 1 {
+		cosine = 1
+	}
+	return (cosine + 1) / 2
+}
+
+func answerNormalizedOriginalScore(score float64, maxScore float64) float64 {
+	if maxScore <= 0 {
+		return 0
+	}
+	normalized := score / maxScore
+	if normalized < 0 {
+		return 0
+	}
+	if normalized > 1 {
+		return 1
+	}
+	return normalized
 }
 
 func answerGroundingSummary(report *AnswerGrounding, answer string) string {
@@ -4021,6 +4204,9 @@ func (e *Engine) ProviderDiagnostics(ctx context.Context) (*api.ProviderDiagnost
 		e.embeddingProviderCheck(),
 		e.answerProviderCheck(),
 	}
+	if check := e.answerRerankerCheck(); check != nil {
+		checks = append(checks, *check)
+	}
 	checks = append(checks, e.answerProfileChecks()...)
 	ok := true
 	warns := 0
@@ -4121,6 +4307,42 @@ func (e *Engine) answerProviderCheck() api.ProviderConfigCheck {
 		return check
 	}
 	return check
+}
+
+func (e *Engine) answerRerankerCheck() *api.ProviderConfigCheck {
+	if e == nil {
+		return nil
+	}
+	provider := normalizeAnswerRerankerProvider(e.options.AnswerRerankerProvider)
+	if provider == "" {
+		return nil
+	}
+	check := api.ProviderConfigCheck{
+		Kind:     "answer_reranker",
+		Enabled:  true,
+		Provider: provider,
+		Status:   "ok",
+	}
+	switch provider {
+	case AnswerRerankerLocal:
+		check.Message = "local answer reranker configured"
+	case AnswerRerankerSemantic:
+		if e.embedder == nil {
+			check.Status = "error"
+			check.Message = "semantic answer reranker requires an embedding provider"
+			check.Actions = []string{"configure embedding.provider before selecting answer.reranker=semantic", "or set answer.reranker=local"}
+			return &check
+		}
+		info := e.embedder.EmbeddingModel()
+		check.Model = info.Model
+		check.BaseURL = info.BaseURL
+		check.Message = fmt.Sprintf("semantic answer reranker uses embedding provider %s model=%s", info.Provider, info.Model)
+	default:
+		check.Status = "error"
+		check.Message = fmt.Sprintf("unsupported answer reranker %q", provider)
+		check.Actions = []string{"set answer.reranker to local or semantic"}
+	}
+	return &check
 }
 
 func (e *Engine) answerProfileChecks() []api.ProviderConfigCheck {

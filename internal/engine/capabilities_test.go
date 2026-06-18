@@ -308,6 +308,23 @@ func TestProviderDiagnosticsIncludesAnswerProfileChecks(t *testing.T) {
 	}
 }
 
+func TestProviderDiagnosticsIncludesSemanticRerankerCheck(t *testing.T) {
+	eng := &Engine{
+		embedder: semanticTestEmbedder{},
+		options:  Options{AnswerRerankerProvider: AnswerRerankerSemantic},
+	}
+	check := eng.answerRerankerCheck()
+	if check == nil || check.Kind != "answer_reranker" || check.Provider != AnswerRerankerSemantic || check.Status != "ok" {
+		t.Fatalf("semantic reranker check = %#v", check)
+	}
+
+	eng = &Engine{options: Options{AnswerRerankerProvider: AnswerRerankerSemantic}}
+	check = eng.answerRerankerCheck()
+	if check == nil || check.Status != "error" || !strings.Contains(check.Message, "requires an embedding provider") {
+		t.Fatalf("semantic reranker missing embedder check = %#v", check)
+	}
+}
+
 func TestEmbedUnsupportedCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := New(root, filepath.Join(root, "index.db"))
@@ -330,6 +347,30 @@ func TestEmbedDelegatesToProvider(t *testing.T) {
 	}
 	if len(vectors) != 1 || vectors[0].ID != "q" || len(vectors[0].Values) != 1 {
 		t.Fatalf("vectors = %#v", vectors)
+	}
+}
+
+func TestSemanticAnswerRerankerUsesEmbeddingSimilarity(t *testing.T) {
+	reranker := SemanticAnswerReranker{Embedder: semanticTestEmbedder{}}
+	result, err := reranker.RerankAnswerHits(context.Background(), AnswerRerankInput{
+		Question: "security authentication",
+		Hits: []store.SearchHit{
+			{Target: testTarget(store.TargetSymbol, "billing.go", "Billing", 1), Score: 0.9, Evidence: "invoice payment total"},
+			{Target: testTarget(store.TargetSymbol, "auth.go", "Auth", 1), Score: 0.1, Evidence: "security authentication token"},
+		},
+		Options: AnswerRerankOptions{Limit: 2},
+	})
+	if err != nil {
+		t.Fatalf("RerankAnswerHits: %v", err)
+	}
+	if result.Retrieval == nil || result.Retrieval.Retriever != "semantic-reranker" {
+		t.Fatalf("retrieval = %#v, want semantic reranker", result.Retrieval)
+	}
+	if len(result.Hits) != 2 || result.Hits[0].Target.Name != "Auth" {
+		t.Fatalf("hits = %#v, want semantic auth hit first", result.Hits)
+	}
+	if result.Hits[0].Metadata["rerank_provider"] != AnswerRerankerSemantic || result.Hits[0].Metadata["semantic_score"] == "" {
+		t.Fatalf("semantic metadata = %#v", result.Hits[0].Metadata)
 	}
 }
 
@@ -1002,6 +1043,25 @@ func (fakeEmbedder) Embed(_ context.Context, inputs []store.EmbeddingInput) ([]s
 
 func (fakeEmbedder) EmbeddingModel() store.EmbeddingModelInfo {
 	return store.EmbeddingModelInfo{Provider: "fake", Model: "fake", Dimensions: 1}
+}
+
+type semanticTestEmbedder struct{}
+
+func (semanticTestEmbedder) Embed(_ context.Context, inputs []store.EmbeddingInput) ([]store.EmbeddingVector, error) {
+	out := make([]store.EmbeddingVector, 0, len(inputs))
+	for _, input := range inputs {
+		vector := []float32{0, 1}
+		text := strings.ToLower(input.Text)
+		if strings.Contains(text, "security") || strings.Contains(text, "auth") || strings.Contains(text, "token") {
+			vector = []float32{1, 0}
+		}
+		out = append(out, store.EmbeddingVector{ID: input.ID, Values: vector, Model: "semantic-test", Dimensions: 2})
+	}
+	return out, nil
+}
+
+func (semanticTestEmbedder) EmbeddingModel() store.EmbeddingModelInfo {
+	return store.EmbeddingModelInfo{Provider: "fake", Model: "semantic-test", Dimensions: 2}
 }
 
 type fakeAnswerer struct {

@@ -71,6 +71,7 @@ type AnswerConfig struct {
 	APIKey      string                `json:"api_key" yaml:"api_key"`
 	APIKeyEnv   string                `json:"api_key_env" yaml:"api_key_env"`
 	Model       string                `json:"model" yaml:"model"`
+	Reranker    string                `json:"reranker" yaml:"reranker"`
 	Timeout     time.Duration         `json:"timeout" yaml:"timeout"`
 	MaxTokens   int                   `json:"max_tokens" yaml:"max_tokens"`
 	Temperature float64               `json:"temperature" yaml:"temperature"`
@@ -159,6 +160,7 @@ type configFields struct {
 	AnswerAPIKey                 bool
 	AnswerAPIKeyEnv              bool
 	AnswerModel                  bool
+	AnswerReranker               bool
 	AnswerTimeout                bool
 	AnswerMaxTokens              bool
 	AnswerTemperature            bool
@@ -398,6 +400,7 @@ func fieldsFromMap(raw map[string]any) configFields {
 		f.AnswerAPIKey = has(answer, "api_key")
 		f.AnswerAPIKeyEnv = has(answer, "api_key_env")
 		f.AnswerModel = has(answer, "model")
+		f.AnswerReranker = has(answer, "reranker")
 		f.AnswerTimeout = has(answer, "timeout")
 		f.AnswerMaxTokens = has(answer, "max_tokens")
 		f.AnswerTemperature = has(answer, "temperature")
@@ -529,6 +532,10 @@ func mergeConfig(dst *Config, dstFields *configFields, src Config, srcFields con
 	if srcFields.AnswerModel {
 		dst.Answer.Model = src.Answer.Model
 		dstFields.AnswerModel = true
+	}
+	if srcFields.AnswerReranker {
+		dst.Answer.Reranker = src.Answer.Reranker
+		dstFields.AnswerReranker = true
 	}
 	if srcFields.AnswerTimeout {
 		dst.Answer.Timeout = src.Answer.Timeout

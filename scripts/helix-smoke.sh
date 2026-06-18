@@ -250,6 +250,7 @@ run_code_context_model() {
     --answer-provider openai-compatible \
     --answer-base-url "http://127.0.0.1:${ANSWER_PORT}/v1" \
     --answer-model smoke-answer \
+    --answer-reranker semantic \
     "$@"
 }
 
@@ -427,6 +428,8 @@ printf '%s\n' "$provider_doctor_cli"
 grep -q '"kind": "embedding"' <<<"$provider_doctor_cli"
 grep -q '"kind": "answer"' <<<"$provider_doctor_cli"
 grep -q '"kind": "answer_profile"' <<<"$provider_doctor_cli"
+grep -q '"kind": "answer_reranker"' <<<"$provider_doctor_cli"
+grep -q '"provider": "semantic"' <<<"$provider_doctor_cli"
 grep -q '"profile": "smoke-custom"' <<<"$provider_doctor_cli"
 grep -q '"provider": "openai-compatible"' <<<"$provider_doctor_cli"
 
@@ -600,6 +603,8 @@ printf '%s\n' "$provider_doctor_api"
 grep -q '"kind":"embedding"' <<<"$provider_doctor_api"
 grep -q '"kind":"answer"' <<<"$provider_doctor_api"
 grep -q '"kind":"answer_profile"' <<<"$provider_doctor_api"
+grep -q '"kind":"answer_reranker"' <<<"$provider_doctor_api"
+grep -q '"provider":"semantic"' <<<"$provider_doctor_api"
 grep -q '"profile":"smoke-custom"' <<<"$provider_doctor_api"
 grep -q '"provider":"openai-compatible"' <<<"$provider_doctor_api"
 

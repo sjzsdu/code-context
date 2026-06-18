@@ -161,6 +161,7 @@ Supported options:
 | `answer.api_key` | string | Answer API key |
 | `answer.api_key_env` | string | Environment variable containing the answer API key |
 | `answer.model` | string | Chat/answer model name |
+| `answer.reranker` | string | Answer context reranker: `local` or `semantic` (semantic uses the configured embedder) |
 | `answer.timeout` | duration | Answer request timeout |
 | `answer.max_tokens` | int | Default max completion tokens |
 | `answer.temperature` | number | Default answer sampling temperature |
@@ -205,6 +206,7 @@ answer:
   # base_url: http://localhost:11434/v1
   # model: qwen2.5-coder
   api_key_env: ANSWER_API_KEY
+  reranker: local
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -398,7 +400,10 @@ filter and fusion controls used by `hybrid-search` (`--target-kind`, `--file-pat
 `--metadata`, `--text-weight`, `--vector-weight`, `--graph-weight`, `--expand-from`). Retrieved
 context can also be post-processed before answering with `--min-score`, `--dedupe`,
 `--max-per-file`, `--max-context-item-chars`, and `--max-context-chars`; the JSON/Markdown result
-includes a `retrieval` report. Use
+includes a `retrieval` report. Set `answer.reranker: semantic` or `--answer-reranker semantic` to
+rerank retrieved context by embedding similarity before those local constraints are applied; it
+requires a configured embedding provider and remains behind the provider-neutral `AnswerReranker`
+interface. Use
 `--format markdown` for agent-readable answer output with a `Sources` section, or `--json` for
 machine-readable payloads. Provider-backed answers include a local citation grounding audit
 (citation-label coverage, not semantic fact-checking) in `grounding`; `--require-citations` turns
@@ -693,6 +698,7 @@ code-context test-impact --state unstaged
 | `--answer-api-key` | | | Answer API key |
 | `--answer-api-key-env` | | | Environment variable containing the answer API key |
 | `--answer-model` | | | Chat/answer model name |
+| `--answer-reranker` | | `local` | Answer context reranker (`local` or `semantic`) |
 | `--answer-timeout` | | `60s` | Answer request timeout when provider is enabled |
 | `--answer-max-tokens` | | `1024` | Default answer max completion tokens |
 | `--answer-temperature` | | `0.2` | Default answer sampling temperature |
@@ -767,7 +773,10 @@ Requests also accept `filter`, `text_weight`, `vector_weight`,
 without dropping to backend-specific APIs. They can then post-process the selected answer context
 through the provider-neutral `AnswerReranker` hook with `min_context_score`, `dedupe_context`,
 `max_per_file`, `max_context_item_chars`, and `max_context_chars`; results include a `retrieval`
-report describing selected, dropped, and truncated context. MCP answer tools can return
+report describing selected, dropped, and truncated context. The built-in semantic reranker can be
+enabled with `answer.reranker: semantic` / `--answer-reranker semantic`; it uses the configured
+`Embedder` to reorder hits by question/context similarity, then applies the same local constraints.
+MCP answer tools can return
 `format: "markdown"` for a
 ready-to-display answer with sources, or JSON for structured consumers. Provider-backed answers run
 a deterministic citation-label audit that reports valid, missing, and uncited source labels under

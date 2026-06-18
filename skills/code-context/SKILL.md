@@ -119,6 +119,7 @@ answer:
   # base_url: http://localhost:11434/v1
   # model: qwen2.5-coder
   api_key_env: ANSWER_API_KEY
+  reranker: local
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -203,7 +204,9 @@ source weights, and graph `expand_from`/`expand_max_depth` controls. Retrieved c
 post-processed through the provider-neutral `AnswerReranker` hook with CLI `--min-score`,
 `--dedupe`, `--max-per-file`, `--max-context-item-chars`, and `--max-context-chars` or JSON/MCP
 `min_context_score`, `dedupe_context`, `max_per_file`, `max_context_item_chars`, and
-`max_context_chars`; results include a `retrieval` report. Use CLI `--format markdown` or
+`max_context_chars`. Set `answer.reranker: semantic` or pass `--answer-reranker semantic` to use
+the configured `Embedder` as a semantic reranking provider before local constraints are applied;
+results include a `retrieval` report. Use CLI `--format markdown` or
 MCP `format: "markdown"` for agent-readable answers with a `Sources` section; use JSON for
 structured consumers. Provider-backed answers include a deterministic `grounding` citation-label
 audit (not semantic fact-checking) with valid/missing/uncited source labels; CLI

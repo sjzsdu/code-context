@@ -46,6 +46,7 @@ var (
 	answerAPIKey        string
 	answerAPIKeyEnv     string
 	answerModel         string
+	answerReranker      string
 	answerTimeout       time.Duration
 	answerMaxTokens     int
 	answerTemperature   float64
@@ -218,6 +219,7 @@ func main() {
 	flag.StringVar(&answerAPIKey, "answer-api-key", "", "answer API key")
 	flag.StringVar(&answerAPIKeyEnv, "answer-api-key-env", "", "environment variable containing the answer API key")
 	flag.StringVar(&answerModel, "answer-model", "", "answer model name")
+	flag.StringVar(&answerReranker, "answer-reranker", "", "answer context reranker (local|semantic; default: local)")
 	flag.DurationVar(&answerTimeout, "answer-timeout", 0, "answer request timeout")
 	flag.IntVar(&answerMaxTokens, "answer-max-tokens", 0, "answer max completion tokens")
 	flag.Float64Var(&answerTemperature, "answer-temperature", 0, "answer sampling temperature")
@@ -226,10 +228,11 @@ func main() {
 
 	// Initialize the engine
 	eng, err := engine.NewWithOptions(root, engine.Options{
-		Store:          mcpStoreOptions(),
-		Embedding:      mcpEmbeddingOptions(),
-		Answer:         mcpAnswerOptions(),
-		AnswerProfiles: answerProfiles,
+		Store:                  mcpStoreOptions(),
+		Embedding:              mcpEmbeddingOptions(),
+		Answer:                 mcpAnswerOptions(),
+		AnswerRerankerProvider: answerReranker,
+		AnswerProfiles:         answerProfiles,
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize engine: %v", err)
@@ -349,6 +352,9 @@ func applyConfigDefaults() {
 	}
 	if !visited["answer-model"] && loaded.Config.Answer.Model != "" {
 		answerModel = loaded.Config.Answer.Model
+	}
+	if !visited["answer-reranker"] && loaded.Config.Answer.Reranker != "" {
+		answerReranker = loaded.Config.Answer.Reranker
 	}
 	if !visited["answer-timeout"] && loaded.Config.Answer.Timeout > 0 {
 		answerTimeout = loaded.Config.Answer.Timeout

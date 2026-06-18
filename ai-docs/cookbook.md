@@ -22,6 +22,7 @@ embedding:
   provider: none
 answer:
   provider: none
+  reranker: local
 ```
 
 Recommended commands:
@@ -65,6 +66,8 @@ answer:
   provider: openai-compatible
   base_url: http://localhost:11434/v1
   model: qwen2.5-coder
+  # Use semantic when embedding.provider is configured; local is deterministic/offline.
+  reranker: semantic
   timeout: 60s
   max_tokens: 1024
   temperature: 0.2
@@ -116,6 +119,7 @@ answer:
   base_url: https://answer.example.com/v1
   api_key_env: ANSWER_API_KEY
   model: gpt-4.1-mini
+  reranker: semantic
   timeout: 60s
   max_tokens: 2048
   temperature: 0.2
@@ -137,8 +141,14 @@ calling hosted APIs or exposing secret values.
 Profiles let a repository define reusable Answer/RAG behavior without binding callers to Helix or a
 specific LLM provider.
 
+If `answer.reranker: semantic` is configured, Answer first embeds the question and candidate context
+with the configured `Embedder`, reorders hits by semantic similarity, and then applies local
+dedupe/per-file/context-budget constraints. Use `answer.reranker: local` when no embedding provider
+is configured.
+
 ```yaml
 answer:
+  reranker: semantic
   profiles:
     - name: project-review
       description: Project review with concise evidence and local gates
