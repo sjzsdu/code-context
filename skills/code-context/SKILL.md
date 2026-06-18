@@ -132,6 +132,9 @@ watch:
 
 `watch.*` settings apply both to the standalone `watch` command and to `serve --watch` background refresh.
 
+For ready-to-copy recipes covering SQLite-only, Helix, local models, hosted providers, Answer
+profiles, embedding migration, HTTP/MCP, and smoke validation, see `ai-docs/cookbook.md`.
+
 SQLite is the default storage backend; `store.backend: helix` enables the HelixDB-backed store.
 If no Helix URL is configured, the Helix Go SDK uses its local default endpoint (`http://localhost:6969`).
 Helix data is scoped by `project_id`; when omitted, the CLI/MCP server use the absolute root path.

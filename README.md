@@ -123,6 +123,10 @@ Supported user config names:
 - `~/.code-context/config.yml`
 - `~/.code-context/config.json`
 
+For copy-paste-ready setups covering SQLite-only, Helix, local models, hosted providers, Answer
+profiles, embedding migration, HTTP/MCP, and smoke validation, see
+[`ai-docs/cookbook.md`](ai-docs/cookbook.md).
+
 SQLite remains the default storage backend. `store.backend: helix` enables the HelixDB-backed
 store; if `store.helix.url` / `--helix-url` is omitted, the Helix Go SDK uses its local default
 endpoint (`http://localhost:6969`).
