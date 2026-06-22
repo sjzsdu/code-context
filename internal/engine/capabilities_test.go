@@ -107,6 +107,56 @@ func TestAnswerProfileCatalogWithCustomProfiles(t *testing.T) {
 	}
 }
 
+func TestApplyAnswerProfileDefaultsToGeneral(t *testing.T) {
+	profile, opts, err := applyAnswerProfileFromCatalog(AnswerOptions{}, AnswerProfileCatalog(), AnswerProfiles())
+	if err != nil {
+		t.Fatalf("applyAnswerProfileFromCatalog: %v", err)
+	}
+	if profile != AnswerProfileGeneral {
+		t.Fatalf("profile = %q, want %q", profile, AnswerProfileGeneral)
+	}
+	if opts.Limit != 8 {
+		t.Fatalf("limit = %d, want general default 8", opts.Limit)
+	}
+	if opts.Template != AnswerTemplateGeneral {
+		t.Fatalf("template = %q, want %q", opts.Template, AnswerTemplateGeneral)
+	}
+}
+
+func TestApplyAnswerProfileDefaultsToCustomGeneralOverride(t *testing.T) {
+	catalog := AnswerProfileCatalogWithCustom([]AnswerProfileInfo{{
+		Name:           "general",
+		Description:    "custom general",
+		Template:       AnswerTemplatePlan,
+		Limit:          5,
+		DedupeContext:  true,
+		MaxPerFile:     1,
+		TextWeight:     0.6,
+		VectorWeight:   0.3,
+		GraphWeight:    0.1,
+		ExpandMaxDepth: 1,
+	}})
+	profile, opts, err := applyAnswerProfileFromCatalog(AnswerOptions{}, catalog, AnswerProfiles())
+	if err != nil {
+		t.Fatalf("applyAnswerProfileFromCatalog: %v", err)
+	}
+	if profile != AnswerProfileGeneral {
+		t.Fatalf("profile = %q, want %q", profile, AnswerProfileGeneral)
+	}
+	if opts.Template != AnswerTemplatePlan {
+		t.Fatalf("template = %q, want %q", opts.Template, AnswerTemplatePlan)
+	}
+	if opts.Limit != 5 {
+		t.Fatalf("limit = %d, want 5", opts.Limit)
+	}
+	if !opts.DedupeContext {
+		t.Fatal("expected dedupe context to be enabled by custom general override")
+	}
+	if opts.MaxPerFile != 1 {
+		t.Fatalf("max_per_file = %d, want 1", opts.MaxPerFile)
+	}
+}
+
 func TestStatusIncludesEmbeddingCapability(t *testing.T) {
 	root := t.TempDir()
 	eng, err := NewWithOptions(root, Options{

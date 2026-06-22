@@ -1248,3 +1248,63 @@ func captureStdout(fn func() error) (string, error) {
 	<-readDone
 	return buf.String(), runErr
 }
+
+func captureStderr(fn func() error) (string, error) {
+	oldStderr := os.Stderr
+	oldProgressWriter := progressWriter
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	os.Stderr = w
+	if progressWriter == oldStderr {
+		progressWriter = w
+	}
+	defer func() {
+		os.Stderr = oldStderr
+		progressWriter = oldProgressWriter
+	}()
+
+	var buf bytes.Buffer
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = buf.ReadFrom(r)
+		_ = r.Close()
+		close(readDone)
+	}()
+
+	runErr := fn()
+	_ = w.Close()
+	<-readDone
+	return buf.String(), runErr
+}
+
+func TestRunWithElapsedProgressReportsElapsedAndDone(t *testing.T) {
+	prevWriter := progressWriter
+	prevInterval := progressUpdateInterval
+	progressWriter = os.Stderr
+	progressUpdateInterval = 10 * time.Millisecond
+	defer func() {
+		progressWriter = prevWriter
+		progressUpdateInterval = prevInterval
+	}()
+
+	out, err := captureStderr(func() error {
+		return runWithElapsedProgress("Running answer workflow", func() error {
+			time.Sleep(25 * time.Millisecond)
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatalf("runWithElapsedProgress: %v", err)
+	}
+	if !strings.Contains(out, "Running answer workflow...") {
+		t.Fatalf("expected progress label in stderr, got:\n%s", out)
+	}
+	if !strings.Contains(out, "elapsed") {
+		t.Fatalf("expected elapsed marker in stderr, got:\n%s", out)
+	}
+	if !strings.Contains(out, "done in") {
+		t.Fatalf("expected completion marker in stderr, got:\n%s", out)
+	}
+}

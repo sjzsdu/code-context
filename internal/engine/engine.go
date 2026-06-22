@@ -1271,7 +1271,7 @@ func (e *Engine) applyAnswerProfile(opts AnswerOptions) (string, AnswerOptions, 
 func applyAnswerProfileFromCatalog(opts AnswerOptions, catalog []AnswerProfileInfo, supported []string) (string, AnswerOptions, error) {
 	profileName := strings.TrimSpace(strings.ToLower(strings.ReplaceAll(opts.Profile, "_", "-")))
 	if profileName == "" {
-		return "", opts, nil
+		profileName = AnswerProfileGeneral
 	}
 	for _, profile := range catalog {
 		if profile.Name != profileName {

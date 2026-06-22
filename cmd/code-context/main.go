@@ -61,6 +61,8 @@ var (
 	answerMaxTokens        int
 	answerTemperature      float64
 	answerProfiles         []engine.AnswerProfileInfo
+	progressWriter         = os.Stderr
+	progressUpdateInterval = time.Second
 )
 
 type runtimeConfig struct {
@@ -178,6 +180,47 @@ func main() {
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func runWithElapsedProgress(label string, fn func() error) error {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return fn()
+	}
+
+	start := time.Now()
+	fmt.Fprintf(progressWriter, "%s... 0s elapsed", label)
+
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(progressUpdateInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Fprintf(progressWriter, "\r%s... %s elapsed", label, formatProgressElapsed(time.Since(start)))
+			}
+		}
+	}()
+
+	err := fn()
+	close(done)
+
+	status := "done"
+	if err != nil {
+		status = "failed"
+	}
+	fmt.Fprintf(progressWriter, "\r%s... %s in %s\n", label, status, formatProgressElapsed(time.Since(start)))
+	return err
+}
+
+func formatProgressElapsed(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	return d.Round(time.Second).String()
 }
 
 func loadRuntimeConfig(startDir string) (*runtimeConfig, error) {
@@ -1191,7 +1234,11 @@ func newVectorSearchCmd() *cobra.Command {
 				if queryText == "" {
 					return fmt.Errorf("query text is required unless --vector is provided")
 				}
-				hits, err = eng.SearchVectorText(context.Background(), queryText, query)
+				err = runWithElapsedProgress("Embedding query for vector search", func() error {
+					var searchErr error
+					hits, searchErr = eng.SearchVectorText(context.Background(), queryText, query)
+					return searchErr
+				})
 			}
 			if err != nil {
 				return err
@@ -1286,7 +1333,23 @@ func newHybridSearchCmd() *cobra.Command {
 				return fmt.Errorf("query text, --vector, or --expand-from is required")
 			}
 
-			hits, err := eng.SearchHybrid(context.Background(), query)
+			var hits []store.SearchHit
+			progressLabel := ""
+			switch {
+			case query.Query != "" && len(query.Vector) == 0:
+				progressLabel = "Running hybrid search with embedding"
+			case query.Query != "" && len(query.Vector) > 0:
+				progressLabel = "Running hybrid search"
+			}
+			if progressLabel != "" {
+				err = runWithElapsedProgress(progressLabel, func() error {
+					var searchErr error
+					hits, searchErr = eng.SearchHybrid(context.Background(), query)
+					return searchErr
+				})
+			} else {
+				hits, err = eng.SearchHybrid(context.Background(), query)
+			}
 			if err != nil {
 				return err
 			}
@@ -1370,30 +1433,35 @@ func newAnswerCmd() *cobra.Command {
 					expandFrom = append(expandFrom, store.ParseTargetRef(target))
 				}
 			}
-			result, err := eng.Answer(context.Background(), engine.AnswerOptions{
-				Question:            strings.TrimSpace(strings.Join(args, " ")),
-				Profile:             strings.TrimSpace(profile),
-				Template:            strings.TrimSpace(template),
-				SystemPrompt:        strings.TrimSpace(systemPrompt),
-				Filter:              filter,
-				Limit:               limit,
-				TextWeight:          textWeight,
-				VectorWeight:        vectorWeight,
-				GraphWeight:         graphWeight,
-				ExpandFrom:          expandFrom,
-				ExpandMaxDepth:      expandDepth,
-				MinContextScore:     minContextScore,
-				DedupeContext:       dedupeContext,
-				MaxPerFile:          maxPerFile,
-				MaxContextChars:     maxContextChars,
-				MaxContextItemChars: maxContextItemChars,
-				ContextOnly:         contextOnly,
-				RequireCitations:    requireCitations,
-				MinCitationCoverage: minCitationCoverage,
-				Evaluate:            evaluate,
-				MinEvaluationScore:  minEvaluationScore,
-				MaxTokens:           maxTokens,
-				Temperature:         tempPtr,
+			var result *engine.AnswerResult
+			err = runWithElapsedProgress("Running answer workflow", func() error {
+				var answerErr error
+				result, answerErr = eng.Answer(context.Background(), engine.AnswerOptions{
+					Question:            strings.TrimSpace(strings.Join(args, " ")),
+					Profile:             strings.TrimSpace(profile),
+					Template:            strings.TrimSpace(template),
+					SystemPrompt:        strings.TrimSpace(systemPrompt),
+					Filter:              filter,
+					Limit:               limit,
+					TextWeight:          textWeight,
+					VectorWeight:        vectorWeight,
+					GraphWeight:         graphWeight,
+					ExpandFrom:          expandFrom,
+					ExpandMaxDepth:      expandDepth,
+					MinContextScore:     minContextScore,
+					DedupeContext:       dedupeContext,
+					MaxPerFile:          maxPerFile,
+					MaxContextChars:     maxContextChars,
+					MaxContextItemChars: maxContextItemChars,
+					ContextOnly:         contextOnly,
+					RequireCitations:    requireCitations,
+					MinCitationCoverage: minCitationCoverage,
+					Evaluate:            evaluate,
+					MinEvaluationScore:  minEvaluationScore,
+					MaxTokens:           maxTokens,
+					Temperature:         tempPtr,
+				})
+				return answerErr
 			})
 			if err != nil {
 				if errors.Is(err, engine.ErrCapabilityUnsupported) {
@@ -2043,10 +2111,22 @@ func newEmbeddingBackfillCmd() *cobra.Command {
 				return err
 			}
 			defer eng.Close()
-			result, err := eng.BackfillEmbeddings(context.Background(), engine.EmbeddingBackfillOptions{
-				Limit: limit,
-				Apply: apply,
-			})
+			var result *engine.EmbeddingBackfillResult
+			if apply {
+				err = runWithElapsedProgress("Backfilling embeddings", func() error {
+					var backfillErr error
+					result, backfillErr = eng.BackfillEmbeddings(context.Background(), engine.EmbeddingBackfillOptions{
+						Limit: limit,
+						Apply: apply,
+					})
+					return backfillErr
+				})
+			} else {
+				result, err = eng.BackfillEmbeddings(context.Background(), engine.EmbeddingBackfillOptions{
+					Limit: limit,
+					Apply: apply,
+				})
+			}
 			if err != nil {
 				return err
 			}
